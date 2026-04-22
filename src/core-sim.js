@@ -802,26 +802,21 @@ window.SkyHigh.CoreSim = (() => {
         return { type: 'BOSS', crisis: boss };
       }
 
-      // ── DRAIN QUEUED SCHEDULED EVENTS (deferred from boss/double-booked rounds) ──
-      if (state.scheduledEventQueue.length > 0) {
-        const queued = state.scheduledEventQueue.shift();
-        state.activeCrisis = queued;
-        return { type: 'CRISIS', crisis: queued };
-      }
-
-      // ── SKYFORCE SCHEDULED EVENTS — fixed round board decisions ──
-      // Use filter to catch doubles; fire first, queue the rest for next round
-      const scheduledAll = SkyHigh.CRISES.filter(c =>
+      // ── COLLECT THIS ROUND'S SCHEDULED EVENTS (always, before drain) ──
+      // Ensures current-round events get queued even when draining a backlog
+      const thisRoundEvents = SkyHigh.CRISES.filter(c =>
         c.isScheduledEvent &&
         c.triggerRound === state.round &&
         !state.crisisHistory.find(h => h.crisisId === c.id) &&
         !state.scheduledEventQueue.find(q => q.id === c.id)
       );
-      if (scheduledAll.length > 0) {
-        const [first, ...rest] = scheduledAll;
-        if (rest.length > 0) state.scheduledEventQueue.push(...rest);
-        state.activeCrisis = first;
-        return { type: 'CRISIS', crisis: first };
+      if (thisRoundEvents.length > 0) state.scheduledEventQueue.push(...thisRoundEvents);
+
+      // ── DRAIN QUEUED SCHEDULED EVENTS (deferred + current round) ──
+      if (state.scheduledEventQueue.length > 0) {
+        const queued = state.scheduledEventQueue.shift();
+        state.activeCrisis = queued;
+        return { type: 'CRISIS', crisis: queued };
       }
 
       // ── RUNWAY AIRSPACE CRISIS — triggered by active world events ──
