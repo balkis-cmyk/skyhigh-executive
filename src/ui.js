@@ -1657,41 +1657,35 @@ window.SkyHigh.UI = (() => {
     _bindMapEvents() {
       const container = document.getElementById('map-container');
       if (!container) return;
+      container.style.cursor = 'default';
 
-      let isDragging = false;
-      let dragStart  = { x: 0, y: 0 };
-      let hasMoved   = false;
+      // Click only — no drag, no zoom
+      let touchStartX = 0, touchStartY = 0, touchMoved = false;
 
       container.addEventListener('mousedown', e => {
-        if (e.target.closest('.map-overlay-card')) return;
-        isDragging = true;
-        hasMoved   = false;
-        dragStart  = { x: e.clientX, y: e.clientY };
-        container.style.cursor = 'grabbing';
+        if (e.target.closest('[data-no-map-click]')) return;
+        // just track position for click detection
+        e._clickX = e.clientX;
+        e._clickY = e.clientY;
+      });
+
+      container.addEventListener('click', e => {
+        if (e.target.closest('[data-no-map-click]')) return;
+        const rect = container.getBoundingClientRect();
+        UI._onMapClick(e.clientX - rect.left, e.clientY - rect.top);
       });
 
       container.addEventListener('mousemove', e => {
-        if (isDragging) {
-          const dx = e.clientX - dragStart.x;
-          const dy = e.clientY - dragStart.y;
-          if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-            hasMoved = true;
-            SkyHigh.MapEngine.pan(dx, dy);
-            dragStart = { x: e.clientX, y: e.clientY };
-          }
-        }
         const rect = container.getBoundingClientRect();
         SkyHigh.MapEngine.handlePointerMove(e.clientX - rect.left, e.clientY - rect.top);
-
-        // Update hover label
         const hoverLabel = document.getElementById('map-hover-label');
         if (hoverLabel) {
-          const sel2 = SkyHigh.MapEngine.getSelection();
-          if (sel2.hoveredAirport) {
-            hoverLabel.textContent = `${sel2.hoveredAirport.name} (${sel2.hoveredAirport.id})`;
+          const sel = SkyHigh.MapEngine.getSelection();
+          if (sel.hoveredAirport) {
+            hoverLabel.textContent = `${sel.hoveredAirport.name} (${sel.hoveredAirport.id})`;
             hoverLabel.style.display = 'block';
-          } else if (sel2.hoveredCountry) {
-            hoverLabel.textContent = `${sel2.hoveredCountry.emoji || '\uD83C\uDF0D'} ${sel2.hoveredCountry.name}`;
+          } else if (sel.hoveredCountry) {
+            hoverLabel.textContent = `${sel.hoveredCountry.emoji || '🌍'} ${sel.hoveredCountry.name}`;
             hoverLabel.style.display = 'block';
           } else {
             hoverLabel.style.display = 'none';
@@ -1699,74 +1693,37 @@ window.SkyHigh.UI = (() => {
         }
       });
 
-      container.addEventListener('mouseup', e => {
-        if (e.target.closest('.map-overlay-card')) return;
-        if (!hasMoved) {
-          const rect = container.getBoundingClientRect();
-          UI._onMapClick(e.clientX - rect.left, e.clientY - rect.top);
-        }
-        isDragging = false;
-        container.style.cursor = 'grab';
-      });
-
       container.addEventListener('mouseleave', () => {
-        isDragging = false;
-        container.style.cursor = 'grab';
         const hoverLabel = document.getElementById('map-hover-label');
         if (hoverLabel) hoverLabel.style.display = 'none';
       });
 
-      container.addEventListener('wheel', e => {
-        e.preventDefault();
-        const rect   = container.getBoundingClientRect();
-        const factor = e.deltaY < 0 ? 1.15 : 0.87;
-        SkyHigh.MapEngine.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
-      }, { passive: false });
-
-      // Touch
-      let touches = [], lastPinchDist = 0;
-
+      // Touch: single tap only (no pinch, no drag)
       container.addEventListener('touchstart', e => {
-        if (e.target.closest('.map-overlay-card')) return;
-        touches = [...e.touches];
-        if (e.touches.length === 2) {
-          lastPinchDist = Math.hypot(
-            e.touches[0].clientX - e.touches[1].clientX,
-            e.touches[0].clientY - e.touches[1].clientY
-          );
+        if (e.touches.length === 1) {
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+          touchMoved = false;
         }
-        hasMoved = false;
-      });
+      }, { passive: true });
 
       container.addEventListener('touchmove', e => {
-        e.preventDefault();
         if (e.touches.length === 1) {
-          const dx = e.touches[0].clientX - touches[0].clientX;
-          const dy = e.touches[0].clientY - touches[0].clientY;
-          if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-            hasMoved = true;
-            SkyHigh.MapEngine.pan(dx, dy);
-          }
-          touches = [...e.touches];
-        } else if (e.touches.length === 2) {
-          hasMoved = true;
-          const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-          const cx   = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-          const cy   = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-          const rect = container.getBoundingClientRect();
-          SkyHigh.MapEngine.zoomAt(dist / lastPinchDist, cx - rect.left, cy - rect.top);
-          lastPinchDist = dist;
-          touches = [...e.touches];
+          const dx = e.touches[0].clientX - touchStartX;
+          const dy = e.touches[0].clientY - touchStartY;
+          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) touchMoved = true;
         }
-      }, { passive: false });
+      }, { passive: true });
 
       container.addEventListener('touchend', e => {
-        if (!hasMoved && touches.length === 1) {
+        if (!touchMoved && e.changedTouches.length === 1) {
           const rect = container.getBoundingClientRect();
-          UI._onMapClick(touches[0].clientX - rect.left, touches[0].clientY - rect.top);
+          UI._onMapClick(e.changedTouches[0].clientX - rect.left, e.changedTouches[0].clientY - rect.top);
         }
-        touches = [...e.touches];
       });
+
+      // Prevent scroll propagation from the route projection panel
+      document.getElementById('route-projection')?.addEventListener('wheel', e => e.stopPropagation());
     },
 
     _handleMapSelect(type, data) {
@@ -2891,6 +2848,127 @@ window.SkyHigh.UI = (() => {
       UI._updateSplashUserPill(null);
       UI.showScreen('splash');
       UI.toast('Signed out.', 'info', 2000);
+    },
+
+    // ── DESTINATION PICKER ────────────────────────────────────────
+    _destPickerOpen: false,
+
+    showDestinationPicker() {
+      const s = SkyHigh.CoreSim.getState?.();
+      if (!s) return;
+      const hub = SkyHigh.MAP_DATA.getAirport(s.hubAirportId);
+      if (!hub) return;
+
+      const panel = document.getElementById('dest-picker-panel');
+      if (!panel) return;
+
+      UI._destPickerOpen = true;
+      panel.style.display = 'flex';
+      requestAnimationFrame(() => panel.classList.add('dest-picker-visible'));
+
+      // Render airport list sorted by distance
+      UI._renderDestList('', hub);
+
+      // Focus search
+      setTimeout(() => document.getElementById('dest-search-input')?.focus(), 150);
+    },
+
+    hideDestinationPicker() {
+      const panel = document.getElementById('dest-picker-panel');
+      if (!panel) return;
+      panel.classList.remove('dest-picker-visible');
+      setTimeout(() => { panel.style.display = 'none'; }, 280);
+      UI._destPickerOpen = false;
+    },
+
+    _renderDestList(query, hub) {
+      const list = document.getElementById('dest-list');
+      if (!list || !hub) return;
+
+      const airports = SkyHigh.MAP_DATA.airports || [];
+      const s = SkyHigh.CoreSim.getState?.();
+      const openRouteIds = new Set((s?.routes || []).map(r => r.destinationId));
+
+      // Inline haversine distance (km)
+      function calcDist(a, b) {
+        const R = 6371, toRad = d => d * Math.PI / 180;
+        const dLat = toRad(b.lat - a.lat), dLon = toRad(b.lon - a.lon);
+        const x = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+      }
+
+      // Filter and sort by distance
+      let filtered = airports
+        .filter(a => a.id !== hub.id)
+        .map(a => {
+          const dist = calcDist(hub, a);
+          return { ...a, dist };
+        })
+        .sort((a, b) => a.dist - b.dist);
+
+      if (query) {
+        const q = query.toLowerCase();
+        filtered = filtered.filter(a =>
+          a.id.toLowerCase().includes(q) ||
+          a.city.toLowerCase().includes(q) ||
+          (a.name || '').toLowerCase().includes(q)
+        );
+      }
+
+      if (!filtered.length) {
+        list.innerHTML = '<div class="dest-empty">No airports found</div>';
+        return;
+      }
+
+      // Group by distance band
+      const nearby    = filtered.filter(a => a.dist < 2000);
+      const regional  = filtered.filter(a => a.dist >= 2000 && a.dist < 5000);
+      const longhaul  = filtered.filter(a => a.dist >= 5000 && a.dist < 9000);
+      const ultralong = filtered.filter(a => a.dist >= 9000);
+
+      function renderGroup(label, emoji, airports) {
+        if (!airports.length) return '';
+        return `
+          <div class="dest-group-header">${emoji} ${label}</div>
+          ${airports.map(a => {
+            const hasRoute = openRouteIds.has(a.id);
+            return `<div class="dest-item ${hasRoute ? 'dest-item-routed' : ''}" onclick="SkyHigh.UI.selectDestination('${a.id}')">
+              <span class="dest-item-iata">${a.id}</span>
+              <span class="dest-item-city">${a.city}<span class="dest-item-name">${a.name ? ' · ' + a.name : ''}</span></span>
+              <span class="dest-item-dist">${Math.round(a.dist).toLocaleString()} km</span>
+              ${hasRoute ? '<span class="dest-item-tag">Route</span>' : ''}
+            </div>`;
+          }).join('')}`;
+      }
+
+      list.innerHTML = query
+        ? filtered.map(a => {
+            const hasRoute = openRouteIds.has(a.id);
+            return `<div class="dest-item ${hasRoute ? 'dest-item-routed' : ''}" onclick="SkyHigh.UI.selectDestination('${a.id}')">
+              <span class="dest-item-iata">${a.id}</span>
+              <span class="dest-item-city">${a.city}</span>
+              <span class="dest-item-dist">${Math.round(a.dist).toLocaleString()} km</span>
+              ${hasRoute ? '<span class="dest-item-tag">Route</span>' : ''}
+            </div>`;
+          }).join('')
+        : renderGroup('Nearby', '🟢', nearby) +
+          renderGroup('Regional', '🔵', regional) +
+          renderGroup('Long-haul', '🟡', longhaul) +
+          renderGroup('Ultra-long', '🔴', ultralong);
+    },
+
+    selectDestination(airportId) {
+      const apt = SkyHigh.MAP_DATA.getAirport(airportId);
+      if (!apt) return;
+      UI.hideDestinationPicker();
+
+      // Fly to destination
+      SkyHigh.MapEngine.flyTo(apt.lat, apt.lon, 3.5);
+
+      // After fly animation, show airport overlay
+      setTimeout(() => {
+        UI._handleMapSelect('AIRPORT', apt);
+      }, 900);
     },
   };
 

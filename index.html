@@ -756,6 +756,19 @@
       <!-- MAP -->
       <div id="map-container">
 
+        <!-- Destination Picker Panel -->
+        <div id="dest-picker-panel" class="dest-picker-panel" style="display:none" data-no-map-click>
+          <div class="dest-picker-header">
+            <div class="dest-picker-title">✈ Choose Destination</div>
+            <button class="dest-picker-close" onclick="SkyHigh.UI.hideDestinationPicker()">✕</button>
+          </div>
+          <div class="dest-search-wrap">
+            <input id="dest-search-input" class="dest-search-input" type="text" placeholder="Search airport, city…" autocomplete="off"
+              oninput="SkyHigh.UI._renderDestList(this.value, SkyHigh.MAP_DATA.getAirport(SkyHigh.CoreSim.getState()?.hubAirportId))">
+          </div>
+          <div id="dest-list" class="dest-list"></div>
+        </div>
+
         <canvas id="map-canvas"></canvas>
 
         <!-- Hover label for airports and countries -->
@@ -887,7 +900,7 @@
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 19-7z"/></svg>
             <span>Buy Plane</span>
           </div>
-          <div class="fab-btn" onclick="SkyHigh.UI.switchSidebarTab('routes')" title="View all routes">
+          <div class="fab-btn" onclick="SkyHigh.UI.showDestinationPicker()" title="Add new route">
             <div class="fab-badge" id="fab-route-badge">0</div>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12h18M3 6l9-3 9 3M3 18l9 3 9-3"/></svg>
             <span>Route</span>
