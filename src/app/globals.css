@@ -241,8 +241,27 @@
   animation: hub-pulse 2.6s var(--ease-out-quart) infinite;
 }
 
-/* Panel entrance */
+/* Panel entrance — slides from the right edge */
+@keyframes panel-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* City-card entrance — pops from the dot */
+@keyframes city-card-in {
+  from { opacity: 0; transform: translate(6px, -4px) scale(0.96); }
+  to   { opacity: 1; transform: translate(0, 0) scale(1); }
+}
+
+/* Selected-city dot pulse */
+@keyframes city-select-pulse {
+  0%, 100% { r: 11; opacity: 0.5; }
+  50%      { r: 16; opacity: 0.15; }
+}
+.city-select-pulse {
+  animation: city-select-pulse 1.4s var(--ease-out-quart) infinite;
 }

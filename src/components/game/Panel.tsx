@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export interface PanelProps {
@@ -33,19 +34,20 @@ export function Panel({
   return (
     <aside
       className={cn(
-        "pointer-events-auto fixed top-20 bottom-3 right-3 z-30 flex flex-col",
-        "rounded-xl border border-line bg-surface/95 backdrop-blur shadow-[var(--shadow-4)]",
-        "animate-[fade-in_180ms_var(--ease-out-quart)]",
-        width === "narrow" ? "w-[min(440px,calc(100vw-5rem))]" : "w-[min(720px,calc(100vw-5rem))]",
+        "fixed top-16 bottom-3 right-3 z-30 flex flex-col",
+        "rounded-xl border border-line bg-surface/95 backdrop-blur-md",
+        "shadow-[0_24px_60px_-16px_rgba(16,37,63,0.25),0_8px_20px_-8px_rgba(16,37,63,0.12)]",
+        "animate-[panel-in_220ms_var(--ease-out-quart)]",
+        width === "narrow" ? "w-[min(480px,calc(100vw-5.5rem))]" : "w-[min(780px,calc(100vw-5.5rem))]",
       )}
     >
-      <header className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-line">
-        <div>
-          <h2 className="font-display text-[1.375rem] text-ink leading-tight">
+      <header className="flex items-start justify-between gap-3 px-6 pt-5 pb-4 border-b border-line">
+        <div className="min-w-0">
+          <h2 className="font-display text-[1.5rem] text-ink leading-tight truncate">
             {title}
           </h2>
           {subtitle && (
-            <p className="text-[0.8125rem] text-ink-muted mt-0.5 leading-snug">
+            <p className="text-[0.8125rem] text-ink-muted mt-1 leading-snug">
               {subtitle}
             </p>
           )}
@@ -55,13 +57,13 @@ export function Panel({
           <button
             onClick={close}
             aria-label="Close panel"
-            className="w-8 h-8 rounded-md flex items-center justify-center text-ink-2 hover:bg-surface-hover hover:text-ink"
+            className="w-8 h-8 rounded-md flex items-center justify-center text-ink-2 hover:bg-surface-hover hover:text-ink transition-colors"
           >
-            <span className="text-[1.25rem] leading-none">×</span>
+            <X size={18} strokeWidth={2} />
           </button>
         </div>
       </header>
-      <div className="flex-1 min-h-0 overflow-auto px-5 py-4">{children}</div>
+      <div className="flex-1 min-h-0 overflow-auto px-6 py-5">{children}</div>
     </aside>
   );
 }

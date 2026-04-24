@@ -54,8 +54,13 @@ function CanvasInner() {
   const [dest, setDest] = useState<string | null>(null);
 
   function handleCityClick(c: City) {
+    // No origin yet: select it
     if (!origin) return setOrigin(c.code);
-    if (origin && !dest && c.code !== origin) return setDest(c.code);
+    // Clicked the same origin: deselect
+    if (c.code === origin) { setOrigin(null); setDest(null); return; }
+    // Origin set and new city picked: set as destination (modal opens)
+    if (!dest) return setDest(c.code);
+    // Otherwise restart with new origin
     setOrigin(c.code);
     setDest(null);
   }
@@ -91,17 +96,18 @@ function CanvasInner() {
   const meta = currentPanel ? PANEL_META[currentPanel] : null;
 
   return (
-    <main className="flex-1 relative">
-      {/* Full-viewport map */}
-      <div className="absolute inset-0">
+    <main className="flex-1 relative overflow-hidden">
+      {/* Full-viewport map — inset below the top bar + past the nav rail */}
+      <div className="absolute inset-0 top-14 left-14">
         <WorldMap
           team={player}
           selectedOriginCode={origin}
           onCityClick={handleCityClick}
+          onClearSelection={() => { setOrigin(null); setDest(null); }}
         />
       </div>
 
-      {/* Floating chrome */}
+      {/* Attached chrome */}
       <TopBar />
       <NavRail />
 
