@@ -246,6 +246,33 @@
   from { opacity: 0; transform: translateX(16px); }
   to   { opacity: 1; transform: translateX(0); }
 }
+
+/* Toast entrance — slides in from the bottom-right */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Print styles — exportable endgame report */
+@media print {
+  @page { margin: 1.5cm; }
+  body { background: #fff !important; overflow: visible !important; }
+  main { overflow: visible !important; }
+  /* Hide interactive chrome when printing */
+  header button,
+  footer,
+  nav,
+  .hub-pulse,
+  .city-select-pulse,
+  [aria-label="Close panel"],
+  .fixed {
+    display: none !important;
+  }
+  /* Collapse cards into flow */
+  .rounded-lg, .rounded-xl, .rounded-md {
+    border-radius: 4px !important;
+  }
+}
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }

@@ -4,7 +4,13 @@ import { useState } from "react";
 import { Button, Input, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney } from "@/lib/format";
-import { computeAirlineValue, effectiveBorrowingRate, maxBorrowingUsd } from "@/lib/engine";
+import {
+  computeAirlineValue,
+  effectiveBorrowingRate,
+  maxBorrowingUsd,
+  runQuarterClose,
+} from "@/lib/engine";
+import { useMemo } from "react";
 
 export function FinancialsPanel() {
   const s = useGame();
@@ -79,6 +85,9 @@ export function FinancialsPanel() {
         </section>
       )}
 
+      {/* Projected P&L — dry-run of this quarter close */}
+      {player && <ProjectedPL /> }
+
       {player.financialsByQuarter.length > 0 && (
         <section>
           <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">Quarterly history</div>
@@ -132,6 +141,68 @@ export function FinancialsPanel() {
         </ModalFooter>
       </Modal>
     </div>
+  );
+}
+
+function ProjectedPL() {
+  const s = useGame();
+  const player = selectPlayer(s);
+  const projected = useMemo(() => {
+    if (!player) return null;
+    const clone = {
+      ...player,
+      flags: new Set(player.flags),
+      deferredEvents: [...(player.deferredEvents ?? [])],
+      fleet: player.fleet.map((f) => ({ ...f })),
+      routes: player.routes.map((r) => ({ ...r })),
+    };
+    return runQuarterClose(clone as typeof player, {
+      baseInterestRatePct: s.baseInterestRatePct,
+      fuelIndex: s.fuelIndex,
+      quarter: s.currentQuarter,
+    });
+  }, [player, s.baseInterestRatePct, s.fuelIndex, s.currentQuarter]);
+
+  if (!projected || !player) return null;
+  const p = projected;
+
+  return (
+    <section>
+      <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+        Projected P&amp;L · Q{s.currentQuarter}
+      </div>
+      <div className="rounded-md border border-line bg-surface p-4 text-[0.8125rem] space-y-1">
+        <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1.5">Revenue</div>
+        <Row k="Passenger + cargo revenue" v={fmtMoney(p.revenue)} tone="pos" />
+
+        <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mt-3 mb-1.5">Operating costs</div>
+        <Row k="Fuel" v={fmtMoney(p.fuelCost)} tone="neg" />
+        <Row k="Slot fees" v={fmtMoney(p.slotCost)} tone="neg" />
+        <Row k="Staff" v={fmtMoney(p.staffCost)} tone="neg" />
+        <Row k="Other slider spend" v={fmtMoney(p.otherSliderCost)} tone="neg" />
+        <Row k="Maintenance + hub fees" v={fmtMoney(p.maintenanceCost)} tone="neg" />
+
+        <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mt-3 mb-1.5">Non-operating</div>
+        <Row k="Depreciation" v={fmtMoney(p.depreciation)} tone="neg" />
+        <Row k="Debt interest" v={fmtMoney(p.interest)} tone="neg" />
+        {p.rcfInterest > 0 && <Row k="RCF interest (2× base)" v={fmtMoney(p.rcfInterest)} tone="neg" />}
+
+        <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mt-3 mb-1.5">Taxes</div>
+        <Row k="Passenger departure tax" v={fmtMoney(p.passengerTax)} tone="neg" />
+        <Row k="Fuel excise (8%)" v={fmtMoney(p.fuelExcise)} tone="neg" />
+        {p.carbonLevy > 0 && <Row k="Carbon levy" v={fmtMoney(p.carbonLevy)} tone="neg" />}
+        <Row k="Corporate tax (20% on pretax)" v={fmtMoney(p.tax)} tone="neg" />
+
+        <div className="mt-3 pt-2 border-t border-line">
+          <Row
+            k="Net profit (projected)"
+            v={fmtMoney(p.netProfit)}
+            tone={p.netProfit >= 0 ? "pos" : "neg"}
+            bold
+          />
+        </div>
+      </div>
+    </section>
   );
 }
 

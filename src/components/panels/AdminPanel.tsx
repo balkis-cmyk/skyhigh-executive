@@ -113,17 +113,43 @@ export function AdminPanel() {
 
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
-          Fuel & rates
+          Fuel market · base rate
         </div>
-        <div className="grid grid-cols-2 gap-2 text-[0.8125rem]">
+        <div className="space-y-1.5 text-[0.8125rem] mb-2">
+          <Row k="Fuel index" v={s.fuelIndex.toFixed(0)} />
+          <Row k="Base rate" v={`${s.baseInterestRatePct.toFixed(1)}%`} />
+        </div>
+        <div className="grid grid-cols-4 gap-1 text-[0.75rem] mb-2">
           <Button size="sm" variant="secondary" onClick={() =>
             useGame.setState({ fuelIndex: Math.max(50, s.fuelIndex - 10) })}>
-            Fuel −10
+            −10
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() =>
+            useGame.setState({ fuelIndex: Math.max(50, s.fuelIndex - 5) })}>
+            −5
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() =>
+            useGame.setState({ fuelIndex: Math.min(200, s.fuelIndex + 5) })}>
+            +5
           </Button>
           <Button size="sm" variant="secondary" onClick={() =>
             useGame.setState({ fuelIndex: Math.min(200, s.fuelIndex + 10) })}>
-            Fuel +10
+            +10
           </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-1 text-[0.75rem] mb-2">
+          <Button size="sm" variant="secondary" onClick={() => {
+            useGame.setState({ fuelIndex: Math.min(200, s.fuelIndex + 25) });
+          }}>
+            Fuel spike +25
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => {
+            useGame.setState({ fuelIndex: 100 });
+          }}>
+            Reset to 100
+          </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-1 text-[0.75rem]">
           <Button size="sm" variant="secondary" onClick={() =>
             useGame.setState({ baseInterestRatePct: Math.max(0, s.baseInterestRatePct - 0.5) })}>
             Rate −0.5%
@@ -245,6 +271,50 @@ export function AdminPanel() {
         )}
       </section>
 
+      {/* MVP scoring (PRD §15) */}
+      <section>
+        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+          MVP scoring · Live sim outcome entry
+        </div>
+        <div className="space-y-1">
+          {player.members.map((m) => (
+            <div
+              key={m.role}
+              className="flex items-center gap-2 text-[0.8125rem] py-1.5 border-b border-line last:border-0"
+            >
+              <span className="font-mono text-[0.6875rem] text-primary w-10 shrink-0">
+                {m.role}
+              </span>
+              <input
+                className="flex-1 h-7 px-2 rounded-md border border-line bg-surface text-ink text-[0.8125rem] min-w-0"
+                value={m.name}
+                onChange={(e) => s.renameMember(m.role, e.target.value)}
+              />
+              <span className="tabular font-mono text-ink shrink-0 w-10 text-right">
+                {m.mvpPts}
+              </span>
+              <button
+                onClick={() => s.awardMvp(m.role, 5)}
+                className="w-6 h-6 shrink-0 rounded-sm bg-surface border border-line text-ink-2 hover:bg-surface-hover text-[0.625rem]"
+              >
+                +5
+              </button>
+              <button
+                onClick={() => s.awardMvp(m.role, 10)}
+                className="w-6 h-6 shrink-0 rounded-sm bg-surface border border-line text-ink-2 hover:bg-surface-hover text-[0.625rem]"
+              >
+                +10
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="text-[0.6875rem] text-ink-muted mt-2">
+          Award MVP points per live-sim outcome (L0 Brand Building, L1 Strike,
+          L2 Talent Heist, L3 Whistleblower, L4 Podium, L6 Elevator, L7 Crisis
+          Ops, L5 Project Aurora). Endgame declares the top individual.
+        </div>
+      </section>
+
       {s.currentQuarter === 13 && !player.flags.has("flash_deal_claimed") && (
         <section className="rounded-md border border-accent bg-[var(--accent-soft)] p-3">
           <div className="font-semibold text-ink text-[0.875rem] mb-1">
@@ -279,10 +349,48 @@ export function AdminPanel() {
         </section>
       )}
 
-      <section className="pt-3 border-t border-line">
+      {/* Second-hand market admin (A13) */}
+      <section>
+        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+          Second-hand market · admin inject
+        </div>
+        <div className="grid grid-cols-2 gap-1 text-[0.75rem] mb-2">
+          <Button size="sm" variant="secondary"
+            onClick={() => s.adminInjectSecondHand("A320", 14_000_000)}>
+            List A320 · $14M
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => s.adminInjectSecondHand("B777-200ER", 52_000_000)}>
+            List 777 · $52M
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => s.adminInjectSecondHand("B787-9", 46_000_000)}>
+            List 787-9 · $46M
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => s.adminInjectSecondHand("A330-200", 38_000_000)}>
+            List A330 · $38M
+          </Button>
+        </div>
+        <div className="text-[0.6875rem] text-ink-muted">
+          {s.secondHandListings.length} active listing{s.secondHandListings.length === 1 ? "" : "s"}
+        </div>
+      </section>
+
+      <section className="pt-3 border-t border-line grid grid-cols-2 gap-2">
+        <Button
+          variant="secondary"
+          onClick={() => {
+            if (confirm("Start demo mode? This resets and seeds sample data.")) {
+              s.resetGame();
+              s.startDemo();
+            }
+          }}
+        >
+          Demo mode
+        </Button>
         <Button
           variant="danger"
-          className="w-full"
           onClick={() => {
             if (confirm("Reset the simulation? All state is wiped.")) {
               s.resetGame();

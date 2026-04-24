@@ -18,6 +18,7 @@ export function FleetPanel() {
   if (!player) return null;
 
   const available = AIRCRAFT.filter((a) => a.unlockQuarter <= s.currentQuarter);
+  const listings = s.secondHandListings;
 
   function confirmOrder() {
     if (!ordering) return;
@@ -88,7 +89,7 @@ export function FleetPanel() {
                     {route ? `${route.originCode}→${route.destCode}` : <span className="text-ink-muted">Idle</span>}
                   </span>
                 </div>
-                <div className="flex justify-end gap-1.5 mt-3 pt-2 border-t border-line">
+                <div className="flex justify-end items-center gap-2 mt-3 pt-2 border-t border-line">
                   {!f.ecoUpgrade && (
                     <button
                       className="text-[0.75rem] text-ink-2 hover:text-accent underline"
@@ -101,9 +102,27 @@ export function FleetPanel() {
                     </button>
                   )}
                   {f.ecoUpgrade && <Badge tone="positive">Eco</Badge>}
+                  {f.acquisitionType === "buy" && (
+                    <button
+                      className="text-[0.75rem] text-ink-2 hover:text-ink underline"
+                      onClick={() => {
+                        const priceStr = prompt(`List ${spec.name} for sale. Asking price (book value ${fmtMoney(f.bookValue)} min, 1.5× max):`, String(Math.round(f.bookValue * 1.1)));
+                        if (!priceStr) return;
+                        const price = parseInt(priceStr, 10);
+                        if (!Number.isFinite(price)) return;
+                        const r = s.listSecondHand(f.id, price);
+                        if (!r.ok) alert(r.error);
+                      }}
+                    >
+                      List (2nd-hand)
+                    </button>
+                  )}
                   <button
                     className="text-[0.75rem] text-negative hover:underline"
-                    onClick={() => s.decommissionAircraft(f.id)}
+                    onClick={() => {
+                      if (confirm(`Retire ${spec.name}? This is permanent.`))
+                        s.decommissionAircraft(f.id);
+                    }}
                   >
                     Retire
                   </button>
@@ -112,6 +131,46 @@ export function FleetPanel() {
             );
           })}
         </div>
+      )}
+
+      {listings.length > 0 && (
+        <section className="mt-5">
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Second-hand market · {listings.length} listing{listings.length > 1 ? "s" : ""}
+          </div>
+          <div className="space-y-2">
+            {listings.map((l) => {
+              const spec = AIRCRAFT_BY_ID[l.specId];
+              if (!spec) return null;
+              const remainingLifespan = Math.max(0, l.retirementQuarter - s.currentQuarter);
+              return (
+                <div key={l.id} className="rounded-md border border-line bg-surface-2/50 p-3 text-[0.8125rem]">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-ink">{spec.name}</div>
+                      <div className="text-[0.6875rem] text-ink-muted font-mono">
+                        Seller: {l.sellerTeamId === "admin" ? "ICAN facilitator" : l.sellerTeamId.slice(-6)}
+                        {l.ecoUpgrade && " · Eco-upgraded"}
+                        {" · "}
+                        remaining {remainingLifespan}Q
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => {
+                        const r = s.buySecondHand(l.id);
+                        if (!r.ok) alert(r.error);
+                      }}
+                    >
+                      Buy {fmtMoney(l.askingPriceUsd)}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       <Modal open={buyOpen} onClose={() => { setBuyOpen(false); setError(null); }} className="w-[48rem]">

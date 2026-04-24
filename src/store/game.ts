@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CITIES_BY_CODE } from "@/data/cities";
-import { SCENARIOS_BY_QUARTER, type OptionEffect } from "@/data/scenarios";
+import { SCENARIOS, SCENARIOS_BY_QUARTER, type OptionEffect } from "@/data/scenarios";
 import {
   applyOptionEffect,
   computeBrandValue,
@@ -13,6 +13,8 @@ import {
   serializeEffect,
   type QuarterCloseResult,
 } from "@/lib/engine";
+import { toast } from "./toasts";
+import { fmtQuarter } from "@/lib/format";
 import type {
   CabinConfig,
   DeferredEvent,
@@ -22,6 +24,7 @@ import type {
   LoanInstrument,
   PricingTier,
   ScenarioDecision,
+  SecondHandListing,
   SliderLevel,
   Sliders,
   Team,
@@ -107,6 +110,29 @@ export interface GameStore extends GameState {
   removeSecondaryHub(cityCode: string): void;
   claimFlashDeal(count: number): { ok: boolean; error?: string };
 
+  /** Admin: clear a submitted decision so the player can re-submit. */
+  adminClearDecision(scenarioId: string, quarter: number): void;
+  /** Admin: force-apply a new option for a scenario, replacing any prior decision. */
+  adminOverrideDecision(
+    scenarioId: string,
+    newOptionId: "A" | "B" | "C" | "D" | "E",
+  ): { ok: boolean; error?: string };
+
+  /** Admin: award MVP points + optional card to a specific role. */
+  awardMvp(role: "CEO" | "CFO" | "CMO" | "CHRO", pts: number, card?: string): void;
+  /** Admin: rename a team member. */
+  renameMember(role: "CEO" | "CFO" | "CMO" | "CHRO", name: string): void;
+
+  /** List an aircraft on the second-hand market (A13). */
+  listSecondHand(aircraftId: string, askingPriceUsd: number): { ok: boolean; error?: string };
+  /** Buy from the second-hand market. */
+  buySecondHand(listingId: string): { ok: boolean; error?: string };
+  /** Admin: inject a new listing from the system. */
+  adminInjectSecondHand(specId: string, askingPriceUsd: number): void;
+
+  /** Start the simulation with pre-seeded demo data (PRD §24). */
+  startDemo(): void;
+
   // Quarter timer (A12)
   startQuarterTimer(seconds?: number): void;
   pauseQuarterTimer(): void;
@@ -157,6 +183,12 @@ function makeStartingTeam(args: {
     secondaryHubCodes: [],
     doctrine: args.doctrine,
     isPlayer: args.isPlayer,
+    members: [
+      { role: "CEO",  name: args.isPlayer ? "Your CEO"  : `${args.code} CEO`,  mvpPts: 0, cards: [] },
+      { role: "CFO",  name: args.isPlayer ? "Your CFO"  : `${args.code} CFO`,  mvpPts: 0, cards: [] },
+      { role: "CMO",  name: args.isPlayer ? "Your CMO"  : `${args.code} CMO`,  mvpPts: 0, cards: [] },
+      { role: "CHRO", name: args.isPlayer ? "Your CHRO" : `${args.code} CHRO`, mvpPts: 0, cards: [] },
+    ],
     cashUsd: 150_000_000,
     totalDebtUsd: 0,
     loans: [],
@@ -193,6 +225,7 @@ export const useGame = create<GameStore>()(
       lastCloseResult: null,
       quarterTimerSecondsRemaining: null,
       quarterTimerPaused: false,
+      secondHandListings: [],
 
       startNewGame: ({ airlineName, code, doctrine, hubCode, teamCount = 5 }) => {
         const player = makeStartingTeam({
@@ -287,6 +320,10 @@ export const useGame = create<GameStore>()(
               : t,
           ),
         });
+        toast.success(
+          `${spec.name} ${acquisitionType === "buy" ? "purchased" : "leased"}`,
+          `Arrives Q${s.currentQuarter + 1}`,
+        );
         return { ok: true };
       },
 
@@ -414,6 +451,10 @@ export const useGame = create<GameStore>()(
             },
           ),
         });
+        toast.success(
+          `Route opened: ${originCode} → ${destCode}`,
+          `${Math.round(dist).toLocaleString()} km · ${dailyFrequency}/day · ${pricingTier}`,
+        );
         return { ok: true };
       },
 
@@ -507,6 +548,11 @@ export const useGame = create<GameStore>()(
         const updated = applyOptionEffect(player, option.effect);
         updated.decisions = [...updated.decisions, decision];
 
+        toast.success(
+          `Decision submitted: ${scenarioId} · ${optionId}`,
+          option.label,
+        );
+
         // Enqueue deferred event if the option has one
         if (option.effect.deferred) {
           const d = option.effect.deferred;
@@ -557,25 +603,41 @@ export const useGame = create<GameStore>()(
 
         // Transition ordered → active planes, and retire aircraft whose
         // retirementQuarter has been reached (A13).
+        const updatedFleet = player.fleet.map((f) => {
+          const retiring = f.retirementQuarter !== undefined && s.currentQuarter >= f.retirementQuarter;
+          if (retiring) return { ...f, status: "retired" as const, routeId: null };
+          if (f.status === "ordered") return { ...f, status: "active" as const };
+          if (f.status === "grounded") return { ...f, status: "active" as const };
+          return f;
+        });
+        // Fleet flag detection (PRD §7.2)
+        const activeModern = updatedFleet.filter(
+          (f) => f.status === "active" && AIRCRAFT_BY_ID[f.specId]?.unlockQuarter >= 8,
+        ).length;
+        const newFlags = new Set(player.flags);
+        if (activeModern >= 10) newFlags.add("modern_fleet");
+        else newFlags.delete("modern_fleet");
+        // Aging fleet: 0 planes ordered in current quarter + average fleet age high
+        const ordersThisQuarter = updatedFleet.filter(
+          (f) => f.purchaseQuarter === s.currentQuarter,
+        ).length;
+        const averageAge = updatedFleet.length > 0
+          ? updatedFleet.reduce((sum, f) => sum + (s.currentQuarter - f.purchaseQuarter), 0) / updatedFleet.length
+          : 0;
+        if (ordersThisQuarter === 0 && averageAge >= 10) {
+          newFlags.add("aging_fleet");
+        }
         const teamReady: Team = {
           ...ensureStreaks(player),
-          fleet: player.fleet.map((f) => {
-            const retiring = f.retirementQuarter !== undefined && s.currentQuarter >= f.retirementQuarter;
-            if (retiring) return { ...f, status: "retired" as const, routeId: null };
-            if (f.status === "ordered") return { ...f, status: "active" as const };
-            // Refurbished aircraft return to service after 1 quarter out
-            if (f.status === "grounded") return { ...f, status: "active" as const };
-            return f;
-          }),
+          fleet: updatedFleet,
           routes: player.routes.map((r) => {
-            // Drop retired aircraft from routes
             const stillFlying = r.aircraftIds.filter((id) => {
               const f = player.fleet.find((x) => x.id === id);
               return f && (f.retirementQuarter === undefined || s.currentQuarter < f.retirementQuarter);
             });
             return { ...r, aircraftIds: stillFlying };
           }),
-          flags: new Set(player.flags),
+          flags: newFlags,
           sliderStreaks: { ...player.sliderStreaks },
         };
 
@@ -634,13 +696,22 @@ export const useGame = create<GameStore>()(
         const s = get();
         if (s.currentQuarter >= 20) {
           set({ phase: "endgame", lastCloseResult: null });
+          toast.accent("Final quarter complete", "Your legacy is sealed.");
           return;
         }
+        const nextQ = s.currentQuarter + 1;
         set({
-          currentQuarter: s.currentQuarter + 1,
+          currentQuarter: nextQ,
           phase: "playing",
           lastCloseResult: null,
+          // Reset quarter timer for next cycle
+          quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining !== null ? 1800 : null,
+          quarterTimerPaused: false,
         });
+        toast.accent(
+          `Q${nextQ} opens`,
+          fmtQuarter(nextQ),
+        );
       },
 
       resetGame: () => {
@@ -654,7 +725,138 @@ export const useGame = create<GameStore>()(
           lastCloseResult: null,
           quarterTimerSecondsRemaining: null,
           quarterTimerPaused: false,
+          secondHandListings: [],
         });
+      },
+
+      // ── Second-hand aircraft market (A13) ──────────────────
+      listSecondHand: (aircraftId, askingPriceUsd) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        const plane = player.fleet.find((f) => f.id === aircraftId);
+        if (!plane) return { ok: false, error: "Aircraft not found" };
+        if (plane.acquisitionType !== "buy") return { ok: false, error: "Only owned aircraft" };
+        if (askingPriceUsd < plane.bookValue)
+          return { ok: false, error: `Minimum ${fmtMoneyPlain(plane.bookValue)} (book value)` };
+        if (askingPriceUsd > plane.bookValue * 1.5)
+          return { ok: false, error: `Max ${fmtMoneyPlain(plane.bookValue * 1.5)} (1.5× book)` };
+        const listing: SecondHandListing = {
+          id: mkId("sh"),
+          specId: plane.specId,
+          askingPriceUsd,
+          listedAtQuarter: s.currentQuarter,
+          sellerTeamId: player.id,
+          ecoUpgrade: plane.ecoUpgrade,
+          cabinConfig: plane.cabinConfig,
+          manufactureQuarter: plane.purchaseQuarter,
+          retirementQuarter: plane.retirementQuarter,
+        };
+        set({
+          secondHandListings: [...s.secondHandListings, listing],
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            fleet: t.fleet.filter((f) => f.id !== aircraftId),
+            routes: t.routes.map((r) => ({
+              ...r,
+              aircraftIds: r.aircraftIds.filter((id) => id !== aircraftId),
+            })),
+          }),
+        });
+        toast.info(`Listed for sale: ${AIRCRAFT_BY_ID[plane.specId]?.name ?? plane.specId}`,
+          `Asking ${fmtMoneyPlain(askingPriceUsd)}`);
+        return { ok: true };
+      },
+
+      buySecondHand: (listingId) => {
+        const s = get();
+        const listing = s.secondHandListings.find((l) => l.id === listingId);
+        if (!listing) return { ok: false, error: "Listing not found" };
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        if (player.cashUsd < listing.askingPriceUsd)
+          return { ok: false, error: `Need ${fmtMoneyPlain(listing.askingPriceUsd)}` };
+        const spec = AIRCRAFT_BY_ID[listing.specId];
+        if (!spec) return { ok: false, error: "Unknown spec" };
+
+        const plane: FleetAircraft = {
+          id: mkId("ac"),
+          specId: listing.specId,
+          status: "active",
+          acquisitionType: "buy",
+          purchaseQuarter: s.currentQuarter,
+          purchasePrice: listing.askingPriceUsd,
+          bookValue: listing.askingPriceUsd,
+          leaseQuarterly: null,
+          ecoUpgrade: listing.ecoUpgrade,
+          ecoUpgradeQuarter: listing.ecoUpgrade ? s.currentQuarter : null,
+          ecoUpgradeCost: 0,
+          cabinConfig: listing.cabinConfig,
+          routeId: null,
+          retirementQuarter: listing.retirementQuarter,
+        };
+        set({
+          secondHandListings: s.secondHandListings.filter((l) => l.id !== listingId),
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd - listing.askingPriceUsd,
+            fleet: [...t.fleet, plane],
+          }),
+        });
+        toast.success(`Acquired ${spec.name}`, `Remaining lifespan ${Math.max(0, listing.retirementQuarter - s.currentQuarter)}Q`);
+        return { ok: true };
+      },
+
+      adminInjectSecondHand: (specId, askingPriceUsd) => {
+        const s = get();
+        const spec = AIRCRAFT_BY_ID[specId];
+        if (!spec) return;
+        const listing: SecondHandListing = {
+          id: mkId("sh"),
+          specId,
+          askingPriceUsd,
+          listedAtQuarter: s.currentQuarter,
+          sellerTeamId: "admin",
+          ecoUpgrade: false,
+          cabinConfig: "default",
+          manufactureQuarter: Math.max(1, s.currentQuarter - 4),
+          retirementQuarter: s.currentQuarter + 12,
+        };
+        set({ secondHandListings: [...s.secondHandListings, listing] });
+        toast.accent(`Admin listed ${spec.name}`, `Asking ${fmtMoneyPlain(askingPriceUsd)}`);
+      },
+
+      // ── Demo mode (PRD §24) ────────────────────────────────
+      startDemo: () => {
+        // Start a standard new game and advance a few quarters with realistic state
+        const startNewGame = get().startNewGame;
+        startNewGame({
+          airlineName: "Meridian Air",
+          code: "MRD",
+          doctrine: "premium-service",
+          hubCode: "DXB",
+          teamCount: 5,
+        });
+        // Open a few demo routes from the hub
+        setTimeout(() => {
+          const g = get();
+          const player = g.teams.find((t) => t.id === g.playerTeamId);
+          if (!player || player.fleet.length < 2) return;
+          g.openRoute({
+            originCode: "DXB", destCode: "LHR",
+            aircraftIds: [player.fleet[0].id],
+            dailyFrequency: 2, pricingTier: "premium",
+          });
+          const p2 = get().teams.find((t) => t.id === g.playerTeamId);
+          if (p2 && p2.fleet[1]) {
+            g.openRoute({
+              originCode: "DXB", destCode: "CDG",
+              aircraftIds: [p2.fleet[1].id],
+              dailyFrequency: 1, pricingTier: "standard",
+            });
+          }
+          toast.info("Demo mode ready", "Meridian Air · DXB hub · 2 routes flying");
+        }, 50);
       },
 
       // ── Secondary hubs (§4.4) ──────────────────────────────
@@ -723,6 +925,97 @@ export const useGame = create<GameStore>()(
         return { ok: true };
       },
 
+      // ── Admin decision controls (PRD §10.3) ────────────────
+      adminClearDecision: (scenarioId, quarter) => {
+        const s = get();
+        set({
+          teams: s.teams.map((t) => t.id !== s.playerTeamId ? t : {
+            ...t,
+            decisions: t.decisions.filter((d) =>
+              !(d.scenarioId === scenarioId && d.quarter === quarter)),
+          }),
+        });
+        toast.warning(`Decision ${scenarioId} cleared`, "Slot reopened for resubmission.");
+      },
+
+      adminOverrideDecision: (scenarioId, newOptionId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        const scenario = SCENARIOS.find((sc) => sc.id === scenarioId);
+        if (!scenario) return { ok: false, error: "Unknown scenario" };
+        const option = scenario.options.find((o) => o.id === newOptionId);
+        if (!option) return { ok: false, error: "Unknown option" };
+
+        const cleanedDecisions = player.decisions.filter(
+          (d) => d.scenarioId !== scenarioId,
+        );
+        const updated = applyOptionEffect(
+          { ...player, decisions: cleanedDecisions },
+          option.effect,
+        );
+        updated.decisions = [
+          ...cleanedDecisions,
+          {
+            scenarioId: scenarioId as ScenarioDecision["scenarioId"],
+            quarter: scenario.quarter,
+            optionId: newOptionId,
+            submittedAt: Date.now(),
+          },
+        ];
+        if (option.effect.deferred) {
+          const d = option.effect.deferred;
+          updated.deferredEvents = [
+            ...(updated.deferredEvents ?? []),
+            {
+              id: mkId("ev"),
+              sourceScenario: scenarioId as ScenarioDecision["scenarioId"],
+              sourceOption: newOptionId,
+              targetQuarter: d.quarter,
+              probability: d.probability ?? 1,
+              effectJson: serializeEffect(d.effect),
+              noteAtQueue: `${scenario.title} · Option ${newOptionId} (admin override)`,
+            },
+          ];
+        }
+        set({
+          teams: s.teams.map((t) => t.id === player.id ? updated : t),
+        });
+        toast.accent(
+          `Admin override: ${scenarioId} → ${newOptionId}`,
+          `${option.label}. Prior effects remain in state; use state adjusters to rebalance.`,
+        );
+        return { ok: true };
+      },
+
+      // ── MVP scoring (PRD §15) ──────────────────────────────
+      awardMvp: (role, pts, card) => {
+        const s = get();
+        set({
+          teams: s.teams.map((t) => t.id !== s.playerTeamId ? t : {
+            ...t,
+            members: t.members.map((m) => m.role === role ? {
+              ...m,
+              mvpPts: m.mvpPts + pts,
+              cards: card && !m.cards.includes(card) ? [...m.cards, card] : m.cards,
+            } : m),
+          }),
+        });
+        toast.accent(
+          `${role} earned ${pts} MVP${pts === 1 ? "" : " pts"}${card ? ` + ${card}` : ""}`,
+        );
+      },
+
+      renameMember: (role, name) => {
+        const s = get();
+        set({
+          teams: s.teams.map((t) => t.id !== s.playerTeamId ? t : {
+            ...t,
+            members: t.members.map((m) => m.role === role ? { ...m, name } : m),
+          }),
+        });
+      },
+
       // ── Quarter timer (A12) ────────────────────────────────
       startQuarterTimer: (seconds = 1800) => {
         set({ quarterTimerSecondsRemaining: seconds, quarterTimerPaused: false });
@@ -742,7 +1035,42 @@ export const useGame = create<GameStore>()(
         const s = get();
         if (s.quarterTimerSecondsRemaining === null || s.quarterTimerPaused) return;
         const next = Math.max(0, s.quarterTimerSecondsRemaining - deltaSeconds);
+        const wasRunning = s.quarterTimerSecondsRemaining > 0;
         set({ quarterTimerSecondsRemaining: next });
+
+        // Auto-submit + auto-close when timer transitions to 0 (PRD A5)
+        if (wasRunning && next === 0) {
+          const player = s.teams.find((t) => t.id === s.playerTeamId);
+          if (!player) return;
+          const scenariosThisQuarter = SCENARIOS_BY_QUARTER[s.currentQuarter] ?? [];
+          const unsubmitted = scenariosThisQuarter.filter(
+            (sc) => !player.decisions.some(
+              (d) => d.scenarioId === sc.id && d.quarter === s.currentQuarter,
+            ),
+          );
+          for (const sc of unsubmitted) {
+            // Auto-submit the PRD-defined worst outcome
+            const fallback = sc.autoSubmitOptionId;
+            get().submitDecision({
+              scenarioId: sc.id,
+              optionId: fallback,
+            });
+            toast.negative(
+              `Timeout: ${sc.id} auto-submitted`,
+              `Defaulted to option ${fallback} (worst outcome per PRD §A5)`,
+            );
+          }
+          if (unsubmitted.length > 0) {
+            toast.warning(
+              `${unsubmitted.length} decision${unsubmitted.length > 1 ? "s" : ""} auto-submitted`,
+              "Timer expired. Closing quarter automatically.",
+            );
+          } else {
+            toast.warning("Quarter timer expired", "Closing quarter automatically.");
+          }
+          // Auto-close quarter
+          setTimeout(() => get().closeQuarter(), 400);
+        }
       },
     }),
     {
@@ -760,6 +1088,7 @@ export const useGame = create<GameStore>()(
         playerTeamId: s.playerTeamId,
         quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining,
         quarterTimerPaused: s.quarterTimerPaused,
+        secondHandListings: s.secondHandListings,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
@@ -769,6 +1098,12 @@ export const useGame = create<GameStore>()(
           deferredEvents: t.deferredEvents ?? [],
           rcfBalanceUsd: t.rcfBalanceUsd ?? 0,
           secondaryHubCodes: t.secondaryHubCodes ?? [],
+          members: t.members && t.members.length > 0 ? t.members : [
+            { role: "CEO",  name: "Your CEO",  mvpPts: 0, cards: [] },
+            { role: "CFO",  name: "Your CFO",  mvpPts: 0, cards: [] },
+            { role: "CMO",  name: "Your CMO",  mvpPts: 0, cards: [] },
+            { role: "CHRO", name: "Your CHRO", mvpPts: 0, cards: [] },
+          ],
           fleet: t.fleet.map((f) => ({
             ...f,
             retirementQuarter: f.retirementQuarter ?? f.purchaseQuarter + 16,

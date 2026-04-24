@@ -154,6 +154,15 @@ export type DoctrineId =
   | "cargo-dominance"
   | "safety-first";
 
+export type TeamRole = "CEO" | "CFO" | "CMO" | "CHRO";
+
+export interface TeamMember {
+  role: TeamRole;
+  name: string;
+  mvpPts: number;                      // running tally across live sims
+  cards: string[];                     // "Integrity Leader", "Maverick", etc.
+}
+
 export interface Team {
   id: string;
   name: string;                  // airline name
@@ -163,6 +172,7 @@ export interface Team {
   secondaryHubCodes: string[];   // additional hubs added after Q3 at 2× fee
   doctrine: DoctrineId;
   isPlayer: boolean;             // player (single-team demo) vs mocked rival
+  members: TeamMember[];         // CEO/CFO/CMO/CHRO with MVP tally
 
   // Finances
   cashUsd: number;
@@ -206,6 +216,19 @@ export interface Team {
   }>;
 }
 
+// ─── Second-hand aircraft market (A13) ───────────────────
+export interface SecondHandListing {
+  id: string;
+  specId: string;                // AircraftSpec id
+  askingPriceUsd: number;
+  listedAtQuarter: number;
+  sellerTeamId: string | "admin";
+  ecoUpgrade: boolean;
+  cabinConfig: CabinConfig;
+  manufactureQuarter: number;    // for remaining lifespan calc
+  retirementQuarter: number;
+}
+
 // ─── Game phase ──────────────────────────────────────────
 export type GamePhase =
   | "idle"          // pre-setup
@@ -225,4 +248,7 @@ export interface GameState {
   // Quarter timer (A12)
   quarterTimerSecondsRemaining: number | null; // null = not started / paused
   quarterTimerPaused: boolean;
+
+  // Second-hand aircraft listings (A13)
+  secondHandListings: SecondHandListing[];
 }

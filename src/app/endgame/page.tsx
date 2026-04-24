@@ -69,7 +69,7 @@ export default function Endgame() {
           <Stat label="Total net profit" value={fmtMoney(totalProfit)} tone={totalProfit >= 0 ? "positive" : "negative"} />
         </div>
 
-        <Card className="mb-10">
+        <Card className="mb-6">
           <CardBody>
             <h2 className="font-display text-[1.5rem] text-ink mb-4">Final leaderboard</h2>
             <table className="w-full text-[0.9375rem]">
@@ -99,9 +99,79 @@ export default function Endgame() {
           </CardBody>
         </Card>
 
+        {/* MVP Award (PRD §15.2) */}
+        {(() => {
+          type MvpCandidate = { teamCode: string; teamName: string; teamColor: string; member: (typeof player.members)[number] };
+          const allMembers: MvpCandidate[] = s.teams.flatMap((t) =>
+            t.members.map((m) => ({ teamCode: t.code, teamName: t.name, teamColor: t.color, member: m }))
+          );
+          const ranked = [...allMembers].sort((a, b) => b.member.mvpPts - a.member.mvpPts);
+          const winner = ranked[0];
+          if (!winner || winner.member.mvpPts === 0) return null;
+          return (
+            <Card className="mb-10">
+              <CardBody>
+                <div className="flex items-baseline justify-between mb-4">
+                  <h2 className="font-display text-[1.5rem] text-ink">MVP award</h2>
+                  <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+                    Highest individual score
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 p-3 rounded-md border border-accent bg-[var(--accent-soft)] mb-3">
+                  <span
+                    className="inline-block w-8 h-8 rounded flex items-center justify-center font-mono text-[0.6875rem] font-semibold text-primary-fg shrink-0"
+                    style={{ background: winner.teamColor }}
+                  >
+                    {winner.teamCode}
+                  </span>
+                  <div className="flex-1">
+                    <div className="font-display text-[1.25rem] text-ink leading-tight">
+                      {winner.member.name}
+                    </div>
+                    <div className="text-[0.75rem] text-ink-muted">
+                      {winner.member.role} · {winner.teamName}
+                      {winner.member.cards.length > 0 && ` · ${winner.member.cards.join(", ")}`}
+                    </div>
+                  </div>
+                  <span className="tabular font-display text-[1.75rem] text-accent">
+                    {winner.member.mvpPts}
+                  </span>
+                </div>
+                <table className="w-full text-[0.8125rem]">
+                  <tbody>
+                    {ranked.slice(1, 8).map((c, i) => (
+                      <tr key={`${c.teamCode}-${c.member.role}`} className="border-b border-line last:border-0">
+                        <td className="py-1.5 w-10 font-mono text-ink-muted">{i + 2}</td>
+                        <td className="py-1.5 text-ink-2">
+                          {c.member.name}
+                          <span className="ml-2 text-[0.6875rem] text-ink-muted">
+                            {c.member.role} · {c.teamCode}
+                          </span>
+                        </td>
+                        <td className="py-1.5 text-right tabular font-mono text-ink">
+                          {c.member.mvpPts}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardBody>
+            </Card>
+          );
+        })()}
+
         <div className="flex items-center gap-3">
           <Button variant="primary" size="lg" onClick={playAgain}>
             Begin new simulation →
+          </Button>
+          <Button
+            variant="secondary"
+            size="lg"
+            onClick={() => {
+              if (typeof window !== "undefined") window.print();
+            }}
+          >
+            Export report
           </Button>
           <Link href="/">
             <Button variant="ghost" size="lg">Back to landing</Button>
