@@ -1,0 +1,129 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Badge, Button, Card, CardBody } from "@/components/ui";
+import { fmtMoney, fmtPct } from "@/lib/format";
+import { useGame, selectPlayer } from "@/store/game";
+import { computeAirlineValue, fleetCount } from "@/lib/engine";
+
+/** Legacy titles by final Brand Value band. */
+function legacyTitle(bv: number): { title: string; sub: string } {
+  if (bv >= 85) return { title: "The Legend", sub: "A new benchmark for the industry. Regulators write case studies. Rivals study your playbook." };
+  if (bv >= 72) return { title: "The Architect", sub: "Built a carrier that will outlive you. Your moves define the next decade." };
+  if (bv >= 60) return { title: "The Operator", sub: "Solid, respected, durable. The airline that investors trust." };
+  if (bv >= 45) return { title: "The Survivor", sub: "You took the hits and made it to Q20. That counts." };
+  if (bv >= 30) return { title: "The Cautionary Tale", sub: "Your story will be taught — as a lesson in what not to do." };
+  return { title: "The Grounded", sub: "The board convenes next week. The conversation will be short." };
+}
+
+export default function Endgame() {
+  const s = useGame();
+  const router = useRouter();
+  const player = selectPlayer(s);
+  const reset = useGame((g) => g.resetGame);
+
+  if (!player) {
+    return (
+      <main className="flex-1 flex items-center justify-center">
+        <div className="text-ink-muted">No active game. <Link href="/onboarding" className="underline">Start a new simulation</Link></div>
+      </main>
+    );
+  }
+
+  const ranked = [...s.teams].sort((a, b) => b.brandValue - a.brandValue);
+  const finalRank = ranked.findIndex((t) => t.id === player.id) + 1;
+  const airlineValue = computeAirlineValue(player);
+  const { title, sub } = legacyTitle(player.brandValue);
+  const totalProfit = player.financialsByQuarter.reduce((s, q) => s + q.netProfit, 0);
+
+  function playAgain() {
+    reset();
+    router.push("/onboarding");
+  }
+
+  return (
+    <main className="flex-1 flex flex-col">
+      <header className="px-8 py-5 border-b border-line flex items-center justify-between">
+        <div className="flex items-baseline gap-3">
+          <span className="font-display text-xl text-ink">SkyForce</span>
+          <span className="text-[0.6875rem] uppercase tracking-[0.18em] text-ink-muted">
+            Final scoring · Q20 closed
+          </span>
+        </div>
+      </header>
+
+      <section className="flex-1 px-8 py-12 max-w-5xl mx-auto w-full">
+        <Badge tone="accent">{finalRank === 1 ? "Winner" : `Finished #${finalRank} of ${s.teams.length}`}</Badge>
+        <h1 className="font-display text-[clamp(3rem,7vw,5rem)] leading-[1.04] text-ink mt-4 mb-3">
+          {title}.
+        </h1>
+        <p className="text-ink-2 text-[1.125rem] leading-relaxed max-w-[52ch] mb-10">
+          {sub}
+        </p>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+          <Stat label="Final Brand Value" value={player.brandValue.toFixed(1)} tone="accent" />
+          <Stat label="Airline Value" value={fmtMoney(airlineValue)} />
+          <Stat label="Customer loyalty" value={fmtPct(player.customerLoyaltyPct, 0)} />
+          <Stat label="Total net profit" value={fmtMoney(totalProfit)} tone={totalProfit >= 0 ? "positive" : "negative"} />
+        </div>
+
+        <Card className="mb-10">
+          <CardBody>
+            <h2 className="font-display text-[1.5rem] text-ink mb-4">Final leaderboard</h2>
+            <table className="w-full text-[0.9375rem]">
+              <tbody>
+                {ranked.map((t, i) => (
+                  <tr key={t.id} className={`border-b border-line last:border-0 ${t.id === player.id ? "bg-[rgba(20,53,94,0.04)]" : ""}`}>
+                    <td className="py-3 w-10 font-mono text-ink-muted">{i + 1}</td>
+                    <td className="py-3">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="inline-block w-6 h-6 rounded flex items-center justify-center font-mono text-[0.625rem] font-semibold text-primary-fg"
+                          style={{ background: t.color }}
+                        >
+                          {t.code}
+                        </span>
+                        <span className={t.id === player.id ? "font-semibold text-ink" : "text-ink-2"}>
+                          {t.name}
+                        </span>
+                        {t.id === player.id && <Badge tone="primary">You</Badge>}
+                      </div>
+                    </td>
+                    <td className="py-3 text-right tabular font-display text-[1.125rem]">{t.brandValue.toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardBody>
+        </Card>
+
+        <div className="flex items-center gap-3">
+          <Button variant="primary" size="lg" onClick={playAgain}>
+            Begin new simulation →
+          </Button>
+          <Link href="/">
+            <Button variant="ghost" size="lg">Back to landing</Button>
+          </Link>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Stat({ label, value, tone = "default" }: {
+  label: string; value: string; tone?: "default" | "accent" | "positive" | "negative";
+}) {
+  const colorClass = tone === "accent" ? "text-accent" : tone === "positive" ? "text-positive" : tone === "negative" ? "text-negative" : "text-ink";
+  return (
+    <div className="rounded-lg border border-line bg-surface p-4">
+      <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+        {label}
+      </div>
+      <div className={`tabular font-display text-[1.75rem] leading-none mt-1 ${colorClass}`}>
+        {value}
+      </div>
+    </div>
+  );
+}

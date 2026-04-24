@@ -51,14 +51,14 @@ export default function Home() {
               choice compounds.
             </p>
             <div className="flex items-center gap-3">
-              <Link href="/dashboard">
+              <Link href="/onboarding">
                 <Button variant="primary" size="lg">
-                  Enter your airline →
+                  Begin new simulation →
                 </Button>
               </Link>
-              <Link href="/styleguide">
+              <Link href="/dashboard">
                 <Button variant="ghost" size="lg">
-                  Style guide
+                  Resume
                 </Button>
               </Link>
             </div>

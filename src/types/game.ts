@@ -1,0 +1,195 @@
+// ─── Cities ────────────────────────────────────────────────
+export type Region = "na" | "sa" | "la" | "eu" | "me" | "mea" | "af" | "as" | "oc";
+export type CityTier = 1 | 2 | 3 | 4;
+
+export interface City {
+  code: string;               // IATA
+  name: string;
+  region: Region;
+  regionName: string;
+  tier: CityTier;
+  tourism: number;            // Q1 base tourism/day
+  business: number;           // Q1 base business/day
+  amplifier: number;          // route multiplier
+  tourismGrowth: number;      // annual %
+  businessGrowth: number;     // annual %
+  lon: number;
+  lat: number;
+  character: string;
+}
+
+// ─── Aircraft ──────────────────────────────────────────────
+export type AircraftFamily = "passenger" | "cargo";
+export type CabinConfig = "default" | "economy-only" | "business-heavy" | "custom";
+
+export interface AircraftSpec {
+  id: string;
+  name: string;                  // e.g. "Airbus A320neo"
+  family: AircraftFamily;
+  unlockQuarter: number;         // 1 for starters, 5 for A380, etc.
+  seats: { first: number; business: number; economy: number }; // default config
+  cargoTonnes?: number;          // for cargo family
+  rangeKm: number;
+  fuelBurnPerKm: number;         // L/km
+  buyPriceUsd: number;
+  leasePerQuarterUsd: number;
+  ecoUpgradeUsd: number;         // cost to add eco engine
+  note?: string;
+}
+
+export interface FleetAircraft {
+  id: string;                    // instance id
+  specId: string;
+  status: "active" | "ordered" | "grounded" | "leased";
+  acquisitionType: "buy" | "lease";
+  purchaseQuarter: number;       // when ordered (arrives +1)
+  purchasePrice: number;
+  bookValue: number;
+  leaseQuarterly: number | null;
+  ecoUpgrade: boolean;
+  ecoUpgradeQuarter: number | null;
+  ecoUpgradeCost: number;
+  cabinConfig: CabinConfig;
+  routeId: string | null;        // assigned route or null
+}
+
+// ─── Routes ───────────────────────────────────────────────
+export type PricingTier = "budget" | "standard" | "premium" | "ultra";
+
+export interface Route {
+  id: string;
+  originCode: string;
+  destCode: string;
+  distanceKm: number;
+  aircraftIds: string[];
+  dailyFrequency: number;        // 1..10
+  pricingTier: PricingTier;
+  status: "active" | "pending" | "closed";
+  openQuarter: number;
+  avgOccupancy: number;          // 0..1
+  quarterlyRevenue: number;
+  quarterlyFuelCost: number;
+  quarterlySlotCost: number;
+}
+
+// ─── Sliders ──────────────────────────────────────────────
+export type SliderLevel = 0 | 1 | 2 | 3 | 4 | 5; // Very Low → Extreme
+
+export interface Sliders {
+  staff: SliderLevel;
+  marketing: SliderLevel;
+  service: SliderLevel;
+  rewards: SliderLevel;
+  operations: SliderLevel;
+}
+
+// ─── Financials ──────────────────────────────────────────
+export interface LoanInstrument {
+  id: string;
+  principalUsd: number;
+  ratePct: number;
+  originQuarter: number;
+  remainingPrincipal: number;
+  govBacked: boolean;
+}
+
+// ─── Scenarios (board decisions) ─────────────────────────
+export type ScenarioId = `S${number}`;
+
+export interface ScenarioDecision {
+  scenarioId: ScenarioId;
+  quarter: number;
+  optionId: string;             // A/B/C/D/E
+  submittedAt: number;          // epoch ms
+  lockInQuarters?: number;      // S16 only
+}
+
+// ─── World News ──────────────────────────────────────────
+export type NewsImpact =
+  | "tourism"
+  | "business"
+  | "cargo"
+  | "ops"
+  | "brand"
+  | "fuel"
+  | "none";
+
+export interface NewsItem {
+  id: string;
+  quarter: number;
+  icon: string;
+  impact: NewsImpact;
+  headline: string;
+  detail: string;
+}
+
+// ─── Team / Airline ──────────────────────────────────────
+export type DoctrineId =
+  | "budget-expansion"
+  | "premium-service"
+  | "cargo-dominance"
+  | "safety-first";
+
+export interface Team {
+  id: string;
+  name: string;                  // airline name
+  code: string;                  // IATA-style, 2-3 letters
+  color: string;                 // hex for map arcs
+  hubCode: string;
+  doctrine: DoctrineId;
+  isPlayer: boolean;             // player (single-team demo) vs mocked rival
+
+  // Finances
+  cashUsd: number;
+  totalDebtUsd: number;
+  loans: LoanInstrument[];
+
+  // Assets
+  fleet: FleetAircraft[];
+  routes: Route[];
+
+  // Scores
+  brandPts: number;
+  opsPts: number;
+  customerLoyaltyPct: number;    // 0..100
+  brandValue: number;            // 0..100 composite
+
+  // Ops form
+  sliders: Sliders;
+  sliderStreaks: Record<keyof Sliders, { level: SliderLevel; quarters: number }>;
+
+  // Scenarios
+  decisions: ScenarioDecision[];
+  flags: Set<string>;            // gov_board_card, trusted_operator, ...
+
+  // History
+  financialsByQuarter: Array<{
+    quarter: number;
+    cash: number;
+    debt: number;
+    revenue: number;
+    costs: number;
+    netProfit: number;
+    brandPts: number;
+    opsPts: number;
+    loyalty: number;
+    brandValue: number;
+  }>;
+}
+
+// ─── Game phase ──────────────────────────────────────────
+export type GamePhase =
+  | "idle"          // pre-setup
+  | "onboarding"    // Q1 brand building
+  | "playing"       // Q2+
+  | "quarter-closing"
+  | "endgame";
+
+export interface GameState {
+  phase: GamePhase;
+  currentQuarter: number;         // 1..20
+  fuelIndex: number;              // 100 = baseline
+  baseInterestRatePct: number;    // e.g. 3.5
+  teams: Team[];
+  playerTeamId: string | null;
+}
