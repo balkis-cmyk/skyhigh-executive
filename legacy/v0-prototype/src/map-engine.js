@@ -1,6 +1,6 @@
 // ============================================================
-// SkyHigh Executive — Map Engine
-// Camera state, geo transforms, hit-testing, interaction.
+// SkyHigh Executive — Map Engine  (Globe Edition)
+// Globe camera state, geo transforms, hit-testing, interaction.
 // UI-agnostic: no DOM access. Works with any renderer.
 // ============================================================
 window.SkyHigh = window.SkyHigh || {};
@@ -8,21 +8,18 @@ window.SkyHigh = window.SkyHigh || {};
 window.SkyHigh.MapEngine = (() => {
   'use strict';
 
-  // ── CAMERA ──────────────────────────────────────────────────
-  // mapX/mapY: pan offset in map-space [0,1] normalized
-  // zoom: 1.0 = global view
-  const camera = {
-    x: 0.5,     // map-space center X (0=left, 1=right)
-    y: 0.45,    // map-space center Y (0=top, 1=bottom)
-    zoom: 1.0,  // 1.0 = full globe visible
-    targetX: 0.5,
-    targetY: 0.45,
-    targetZoom: 1.0,
-    animating: false,
-  };
+  // ── GLOBE CAMERA ────────────────────────────────────────────
+  // rotation: D3-style [λ, φ, γ]  (longitude offset, -latitude tilt, roll)
+  // scale: globe radius in pixels (= "zoom level")
+  let _baseRadius = 0;   // set properly on first setDimensions call
 
-  // Zoom level thresholds
-  const ZOOM_LEVELS = { L1: 1.0, L2: 2.5, L3: 5.0, MAX: 8.0, MIN: 0.8 };
+  const camera = {
+    rotation:       [0, -20, 0],      // current rendered rotation
+    targetRotation: [0, -20, 0],      // lerp destination
+    scale:          0,                // set on first setDimensions
+    targetScale:    0,                // set on first setDimensions
+    animating:      false,
+  };
 
   // ── SELECTION STATE ────────────────────────────────────────
   const selection = {
@@ -33,71 +30,96 @@ window.SkyHigh.MapEngine = (() => {
     destAirport:     null,
   };
 
-  // ── CANVAS SIZE (set by renderer) ─────────────────────────
+  // ── CANVAS SIZE ────────────────────────────────────────────
   let canvasW = 1200, canvasH = 680;
-  let _onSelect = null;         // callback (event, data)
-  let _countryResolver = null;  // set by Renderer after init
 
-  // ── ANIMATION CLOCK ────────────────────────────────────────
-  const LERP_SPEED = 0.12;
+  // ── PROJECTION BRIDGE ──────────────────────────────────────
+  // Renderer sets these after it creates the D3 projection
+  let _projectionFn = null;   // (lat, lon) → {x, y, visible}
+  let _invertFn     = null;   // (px, py)   → {lat, lon} | null
+  let _onSelect     = null;
+  let _countryResolver = null;
+
+  // ── LERP HELPERS ───────────────────────────────────────────
+  const LERP_SPEED = 0.10;
+
+  function _shortAngle(diff) {
+    while (diff >  180) diff -= 360;
+    while (diff < -180) diff += 360;
+    return diff;
+  }
 
   // ── PUBLIC API ─────────────────────────────────────────────
   const API = {
 
-    // Set canvas dimensions (called when canvas resizes)
-    setDimensions(w, h) { canvasW = w; canvasH = h; },
+    // ── SETUP ───────────────────────────────────────────────
+    setDimensions(w, h) {
+      canvasW = w; canvasH = h;
+      const newRadius = Math.min(w, h) * 0.44;
+      if (_baseRadius === 0) {
+        // First call — initialise everything from actual canvas size
+        _baseRadius        = newRadius;
+        camera.scale       = newRadius;
+        camera.targetScale = newRadius;
+      } else if (newRadius > 0) {
+        // Subsequent resize — preserve zoom ratio
+        const ratio        = camera.scale / _baseRadius;
+        const targetRatio  = camera.targetScale / _baseRadius;
+        _baseRadius        = newRadius;
+        camera.scale       = newRadius * ratio;
+        camera.targetScale = newRadius * targetRatio;
+      }
+    },
 
-    onSelect(fn) { _onSelect = fn; },
+    setBaseRadius(r) {
+      _baseRadius = r;
+    },
 
-    // Set by Renderer after init — enables polygon hit testing
-    setCountryResolver(fn) { _countryResolver = fn; },
+    // Called by Renderer to bridge D3 projection math here
+    setProjectionFn(fn)  { _projectionFn  = fn; },
+    setInvertFn(fn)      { _invertFn      = fn; },
 
-    getCamera() { return { ...camera }; },
+    onSelect(fn)              { _onSelect        = fn; },
+    setCountryResolver(fn)    { _countryResolver = fn; },
+
+    // ── CAMERA ACCESSORS ─────────────────────────────────────
+    getCamera() {
+      return {
+        rotation:  [...camera.rotation],
+        scale:     camera.scale,
+        zoom:      _baseRadius > 0 ? camera.scale / _baseRadius : 1,   // 1.0 = default view
+        animating: camera.animating,
+        // Compatibility shims for any legacy code still reading mercator fields
+        x: 0.5, y: 0.4,
+      };
+    },
 
     getSelection() { return { ...selection }; },
 
     getZoomLevel() {
-      if (camera.zoom < ZOOM_LEVELS.L2) return 'L1';
-      if (camera.zoom < ZOOM_LEVELS.L3) return 'L2';
+      const z = camera.scale / _baseRadius;
+      if (z < 1.5) return 'L1';
+      if (z < 2.5) return 'L2';
       return 'L3';
     },
 
     // ── PROJECTION ──────────────────────────────────────────
-    // Convert lat/lon → canvas pixel coordinates
+    // Convert lat/lon → canvas pixel {x, y, visible}
     project(lat, lon) {
-      // Mercator projection
-      const mapX = (lon + 180) / 360;
-      const latRad = lat * Math.PI / 180;
-      const sinLat = Math.sin(latRad);
-      const mapY = 0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI);
-
-      return {
-        x: (mapX - camera.x) * canvasW * camera.zoom + canvasW / 2,
-        y: (mapY - camera.y) * canvasH * camera.zoom + canvasH / 2,
-      };
+      if (!_projectionFn) return { x: canvasW / 2, y: canvasH / 2, visible: false };
+      return _projectionFn(lat, lon);
     },
 
-    // Convert canvas pixel → lat/lon
+    // Convert canvas pixel → {lat, lon} | null
     unproject(px, py) {
-      const mapX = (px - canvasW / 2) / (canvasW * camera.zoom) + camera.x;
-      const mapY = (py - canvasH / 2) / (canvasH * camera.zoom) + camera.y;
-
-      const lon = mapX * 360 - 180;
-      const n   = Math.PI - 2 * Math.PI * mapY;
-      const lat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-
-      return { lat, lon };
+      if (!_invertFn) return null;
+      return _invertFn(px, py);
     },
 
-    // Scale factor: how large is 1 degree in pixels
-    degreeToPixels() {
-      return (canvasW * camera.zoom) / 360;
-    },
-
-    // Airport marker size based on zoom and hub level
+    // Marker size  (same logic as before; zoom now = scale/baseRadius)
     markerSize(hubLevel) {
       const base = 3 + hubLevel * 1.2;
-      const zoom = camera.zoom;
+      const zoom = _baseRadius > 0 ? camera.scale / _baseRadius : 1;
       if (zoom < 1.5) return base * 0.8;
       if (zoom < 3)   return base * 1.2;
       return base * 1.8;
@@ -106,80 +128,81 @@ window.SkyHigh.MapEngine = (() => {
     // ── TICK (call every frame) ─────────────────────────────
     tick() {
       let dirty = false;
-      if (Math.abs(camera.x - camera.targetX) > 0.0001) {
-        camera.x += (camera.targetX - camera.x) * LERP_SPEED;
-        dirty = true;
+
+      // Lerp rotation (handle wraparound per axis)
+      for (let i = 0; i < 3; i++) {
+        const diff = _shortAngle(camera.targetRotation[i] - camera.rotation[i]);
+        if (Math.abs(diff) > 0.005) {
+          camera.rotation[i] += diff * LERP_SPEED;
+          dirty = true;
+        } else {
+          camera.rotation[i] = camera.targetRotation[i];
+        }
       }
-      if (Math.abs(camera.y - camera.targetY) > 0.0001) {
-        camera.y += (camera.targetY - camera.y) * LERP_SPEED;
+
+      // Lerp scale
+      const scaleDiff = camera.targetScale - camera.scale;
+      if (Math.abs(scaleDiff) > 0.05) {
+        camera.scale += scaleDiff * LERP_SPEED;
         dirty = true;
+      } else {
+        camera.scale = camera.targetScale;
+        if (camera.animating) camera.animating = false;
       }
-      if (Math.abs(camera.zoom - camera.targetZoom) > 0.001) {
-        camera.zoom += (camera.targetZoom - camera.zoom) * LERP_SPEED;
-        dirty = true;
-      } else if (camera.animating) {
-        camera.animating = false;
-      }
+
       return dirty;
     },
 
-    // ── PAN ────────────────────────────────────────────────
+    // ── GLOBE DRAG (replaces flat-map pan) ──────────────────
+    // dx, dy are screen-pixel deltas from drag
     pan(dx, dy) {
-      // dx, dy in screen pixels → convert to map-space
-      camera.targetX -= dx / (canvasW * camera.zoom);
-      camera.targetY -= dy / (canvasH * camera.zoom);
-      // Clamp Y (don't scroll past poles — 0.78 prevents Antarctica)
-      camera.targetY = Math.max(0.08, Math.min(0.78, camera.targetY));
+      // Map pixel drag → degree rotation
+      // Moving cursor across half the globe diameter = 90° rotation
+      const sens = 90 / camera.scale;
+      camera.rotation[0]  = (camera.rotation[0] + dx * sens);
+      camera.rotation[1]  = Math.max(-80, Math.min(80, camera.rotation[1] - dy * sens));
+      // Snap target to current so no lag during drag
+      camera.targetRotation[0] = camera.rotation[0];
+      camera.targetRotation[1] = camera.rotation[1];
     },
 
-    // ── ZOOM ───────────────────────────────────────────────
+    // ── ZOOM ────────────────────────────────────────────────
     zoomAt(factor, cx, cy) {
-      // Zoom toward cursor position
-      const newZoom = Math.max(ZOOM_LEVELS.MIN, Math.min(ZOOM_LEVELS.MAX, camera.zoom * factor));
-      if (newZoom === camera.zoom) return;
-
-      // Keep the point under cursor stationary
-      const mapX = (cx - canvasW / 2) / (canvasW * camera.zoom) + camera.x;
-      const mapY = (cy - canvasH / 2) / (canvasH * camera.zoom) + camera.y;
-
-      camera.targetZoom = newZoom;
-      camera.targetX = mapX - (cx - canvasW / 2) / (canvasW * newZoom);
-      camera.targetY = mapY - (cy - canvasH / 2) / (canvasH * newZoom);
-      camera.targetY = Math.max(0.08, Math.min(0.78, camera.targetY));
-      camera.animating = true;
+      const newScale = Math.max(_baseRadius * 0.65, Math.min(_baseRadius * 6, camera.targetScale * factor));
+      camera.targetScale = newScale;
     },
 
-    // Jump camera to lat/lon with zoom
-    flyTo(lat, lon, targetZoom) {
-      const latRad = lat * Math.PI / 180;
-      const sinLat = Math.sin(latRad);
-      camera.targetX = (lon + 180) / 360;
-      camera.targetY = 0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI);
-      camera.targetZoom = targetZoom || 4.0;
-      camera.animating = true;
+    // ── FLY TO ─────────────────────────────────────────────
+    // Called from destination picker — rotates globe to face lat/lon.
+    // zoomHint uses the same scale as the old Mercator renderer (1.0 = global,
+    // 4.0 = country close-up).  We map that to a globe-scale multiplier.
+    flyTo(lat, lon, zoomHint) {
+      // Rotate so that (lat, lon) faces the viewer
+      camera.targetRotation = [-lon, -lat, 0];
+      // Mapping: global view (1.1) → 1.25×radius, close-up (3.8) → 2.5×radius
+      const mult = zoomHint ? Math.min(3.8, Math.max(1.0, 0.80 + zoomHint * 0.45)) : 1.8;
+      camera.targetScale = _baseRadius * mult;
+      camera.animating   = true;
     },
 
-    // Reset to global view (centered on Europe/Africa, no Antarctica)
     resetView() {
-      camera.targetX    = 0.5;
-      camera.targetY    = 0.40;
-      camera.targetZoom = 1.1;
-      camera.animating  = true;
+      camera.targetRotation = [0, -20, 0];
+      camera.targetScale    = _baseRadius;
+      camera.animating      = true;
     },
 
     // ── HIT TESTING ────────────────────────────────────────
-    // Returns the nearest airport to screen point (px, py) within hitRadius pixels
     getAirportAt(px, py, hitRadius) {
-      const radius = hitRadius ?? Math.max(14, 20 / camera.zoom);
-      let nearest = null;
-      let minDist = Infinity;
+      const radius = hitRadius ?? Math.max(14, 20 / (camera.scale / _baseRadius));
+      let nearest = null, minDist = Infinity;
+      const zoom = camera.scale / _baseRadius;
 
       SkyHigh.MAP_DATA.airports.forEach(airport => {
-        // Cluster small airports at low zoom
-        if (camera.zoom < 1.5 && airport.hubLevel < 3) return;
-        if (camera.zoom < 2.5 && airport.hubLevel < 2) return;
+        if (zoom < 1.5 && airport.hubLevel < 3) return;
+        if (zoom < 2.5 && airport.hubLevel < 2) return;
 
         const pos = API.project(airport.lat, airport.lon);
+        if (!pos.visible) return;          // behind the globe
         const dist = Math.hypot(pos.x - px, pos.y - py);
         if (dist < radius && dist < minDist) {
           minDist = dist;
@@ -190,15 +213,13 @@ window.SkyHigh.MapEngine = (() => {
       return nearest;
     },
 
-    // Returns country at screen point using polygon hit testing
     getCountryAt(px, py) {
       if (!_countryResolver) return null;
-      const cf = _countryResolver(px, py); // returns countryFeature from Renderer
+      const cf = _countryResolver(px, py);
       if (!cf) return null;
-      return { iso: cf.iso, ...cf.info }; // {iso, name, region, risk, tier, emoji}
+      return { iso: cf.iso, ...cf.info };
     },
 
-    // Returns cached country info by ISO for a known airport
     _countryFromAirport(airport) {
       if (!airport?.countryIso) return null;
       const iso  = airport.countryIso;
@@ -227,27 +248,22 @@ window.SkyHigh.MapEngine = (() => {
     handleClick(px, py) {
       const airport = API.getAirportAt(px, py);
       if (airport) {
-        // Country glow is ONLY set via highlightCountry() from the destination picker
         if (_onSelect) _onSelect('AIRPORT', airport);
         return { type: 'AIRPORT', data: airport };
       }
 
       const country = API.getCountryAt(px, py);
       if (country) {
-        // Country glow is ONLY set via highlightCountry() from the destination picker
         if (_onSelect) _onSelect('COUNTRY', { ...country, clickPx: px, clickPy: py });
         return { type: 'COUNTRY', data: country };
       }
 
-      // Click void — deselect and clear picker glow
       selection.selectedCountry = null;
       if (_onSelect) _onSelect('DESELECT', null);
       return { type: 'DESELECT' };
     },
 
     // ── DESTINATION PICKER GLOW ─────────────────────────────
-    // Call this from the destination dropdown to make a country glow.
-    // Glow is ONLY applied through this method (not on raw map clicks).
     highlightCountry(iso) {
       selection.selectedCountry = (iso != null) ? { iso } : null;
     },
@@ -268,7 +284,7 @@ window.SkyHigh.MapEngine = (() => {
     setDestAirport(airportId) {
       const airport = SkyHigh.GeoUtils.getAirport(airportId);
       if (!airport) return false;
-      if (selection.originAirport?.id === airportId) return false; // same as origin
+      if (selection.originAirport?.id === airportId) return false;
       selection.destAirport = airport;
       return true;
     },
@@ -282,34 +298,16 @@ window.SkyHigh.MapEngine = (() => {
       return !!(selection.originAirport && selection.destAirport);
     },
 
-    // ── ARC GEOMETRY ───────────────────────────────────────
-    // Returns bezier control point for a great-circle arc approximation
+    // ── LEGACY ARC GEOMETRY (kept for compatibility) ────────
+    // New renderer uses D3 geoPath + geoInterpolate directly.
     getArcPoints(lat1, lon1, lat2, lon2) {
       const p1 = API.project(lat1, lon1);
       const p2 = API.project(lat2, lon2);
-
-      // Great-circle midpoint
-      const midLat = (lat1 + lat2) / 2;
-      const midLon = (lon1 + lon2) / 2;
-
-      // Arc height proportional to distance
-      const distKm = SkyHigh.GeoUtils.distance(lat1, lon1, lat2, lon2);
-      const arcHeightFactor = Math.min(0.4, distKm / 25000);
-
-      // Control point lifted above the midpoint
-      const pm = API.project(midLat, midLon);
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      const len = Math.hypot(dx, dy);
-      // Perpendicular to line, toward north
-      const cpx = pm.x - (dy / len) * len * arcHeightFactor;
-      const cpy = pm.y - Math.abs(dy / len - 1) * len * arcHeightFactor - len * arcHeightFactor * 0.5;
-
-      return { p1, p2, cp: { x: cpx, y: cpy } };
+      const pm = API.project((lat1 + lat2) / 2, (lon1 + lon2) / 2);
+      return { p1, p2, cp: pm };
     },
 
-    // ── CRISIS HIGHLIGHT REGIONS ───────────────────────────
-    // Returns screen bounding box for a region
+    // ── REGION BOUNDS (crisis overlay) ────────────────────
     getRegionBounds(regionName) {
       const airports = SkyHigh.MAP_DATA.airports.filter(a => {
         const info = SkyHigh.WORLD_COUNTRIES?.[a.countryIso];
@@ -320,10 +318,17 @@ window.SkyHigh.MapEngine = (() => {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       airports.forEach(a => {
         const pos = API.project(a.lat, a.lon);
+        if (!pos.visible) return;
         minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
         maxX = Math.max(maxX, pos.x); maxY = Math.max(maxY, pos.y);
       });
+      if (minX === Infinity) return null;
       return { x: minX - 20, y: minY - 20, w: maxX - minX + 40, h: maxY - minY + 40 };
+    },
+
+    // Legacy shim: old code called degreeToPixels() in a few places
+    degreeToPixels() {
+      return (camera.scale * Math.PI) / 180;
     },
   };
 

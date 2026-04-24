@@ -1655,17 +1655,44 @@ window.SkyHigh.UI = (() => {
     },
 
     // ── MAP INTERACTION ───────────────────────────────────
-    // Map is READ-ONLY. Destinations are selected ONLY via the Destination
-    // dropdown button. Direct clicks/taps on the canvas do nothing.
+    // Globe supports: drag to spin, scroll/pinch to zoom, hover labels.
+    // Destinations are selected ONLY via the Destination dropdown.
     _bindMapEvents() {
       const container = document.getElementById('map-container');
       if (!container) return;
-      container.style.cursor = 'default';
+      container.style.cursor = 'grab';
 
-      // Hover only — shows country/airport name label while mousing over the map
-      container.addEventListener('mousemove', e => {
+      let isDragging = false;
+      let lastX = 0, lastY = 0;
+
+      // ── DRAG TO SPIN GLOBE ──────────────────────────────
+      container.addEventListener('pointerdown', e => {
+        if (e.button !== 0 && e.pointerType !== 'touch') return;
+        isDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        container.style.cursor = 'grabbing';
+        container.setPointerCapture?.(e.pointerId);
+      });
+
+      container.addEventListener('pointermove', e => {
         const rect = container.getBoundingClientRect();
-        SkyHigh.MapEngine.handlePointerMove(e.clientX - rect.left, e.clientY - rect.top);
+        const px = e.clientX - rect.left;
+        const py = e.clientY - rect.top;
+
+        if (isDragging) {
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+            SkyHigh.MapEngine.pan(dx, dy);
+          }
+          return;   // don't update hover labels while dragging
+        }
+
+        // Hover labels
+        SkyHigh.MapEngine.handlePointerMove(px, py);
         const hoverLabel = document.getElementById('map-hover-label');
         if (hoverLabel) {
           const sel = SkyHigh.MapEngine.getSelection();
@@ -1681,10 +1708,48 @@ window.SkyHigh.UI = (() => {
         }
       });
 
+      const _endDrag = () => {
+        isDragging = false;
+        container.style.cursor = 'grab';
+      };
+      container.addEventListener('pointerup',     _endDrag);
+      container.addEventListener('pointercancel', _endDrag);
+
       container.addEventListener('mouseleave', () => {
+        _endDrag();
         const hoverLabel = document.getElementById('map-hover-label');
         if (hoverLabel) hoverLabel.style.display = 'none';
       });
+
+      // ── SCROLL / PINCH TO ZOOM ──────────────────────────
+      container.addEventListener('wheel', e => {
+        e.preventDefault();
+        const rect   = container.getBoundingClientRect();
+        const factor = e.deltaY < 0 ? 1.10 : 0.91;
+        SkyHigh.MapEngine.zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
+      }, { passive: false });
+
+      // ── PINCH-TO-ZOOM (touch) ────────────────────────────
+      let _prevPinchDist = 0;
+      container.addEventListener('touchstart', e => {
+        if (e.touches.length === 2) _prevPinchDist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY,
+        );
+      }, { passive: true });
+      container.addEventListener('touchmove', e => {
+        if (e.touches.length !== 2) return;
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY,
+        );
+        if (_prevPinchDist > 0) {
+          SkyHigh.MapEngine.zoomAt(dist / _prevPinchDist,
+            (e.touches[0].clientX + e.touches[1].clientX) / 2,
+            (e.touches[0].clientY + e.touches[1].clientY) / 2);
+        }
+        _prevPinchDist = dist;
+      }, { passive: true });
 
       // Prevent scroll propagation from the route projection panel
       document.getElementById('route-projection')?.addEventListener('wheel', e => e.stopPropagation());
