@@ -561,6 +561,75 @@ export function computeAirlineValue(team: Team): number {
   return team.cashUsd + fleetValue - team.totalDebtUsd;
 }
 
+// ─── End-game card modifiers (PRD G9) ──────────────────────
+export interface EndgameAward {
+  card: string;
+  source: string;
+  effect: string;
+  airlineValueMult: number;       // multiplier applied at the end
+  brandBoost: number;              // flat +/- Brand Value pts
+}
+
+/** Resolve every end-game card the team qualifies for, with the PRD G9 effects. */
+export function resolveEndgameAwards(team: Team): EndgameAward[] {
+  const out: EndgameAward[] = [];
+  const has = (f: string) => team.flags.has(f);
+
+  if (has("premium_airline"))
+    out.push({ card: "Premium Airline", source: "S11-A Olympic official carrier",
+      effect: "×1.08 airline value", airlineValueMult: 1.08, brandBoost: 0 });
+  if (has("global_brand"))
+    out.push({ card: "Global Brand", source: "S10 World Cup winner",
+      effect: "+15 Brand Value", airlineValueMult: 1, brandBoost: 15 });
+  if (has("green_leader"))
+    out.push({ card: "Green Leader", source: "S17-C SAF investment",
+      effect: "×1.10 brand health", airlineValueMult: 1.05, brandBoost: 5 });
+  if (has("trusted_operator"))
+    out.push({ card: "Trusted Operator", source: "S1-A self-reported",
+      effect: "+8 Ops Health", airlineValueMult: 1, brandBoost: 4 });
+  if (has("safety_leader"))
+    out.push({ card: "Safety Leader", source: "S16-A before declaration",
+      effect: "+5 Ops Health", airlineValueMult: 1, brandBoost: 2.5 });
+  if (has("people_first"))
+    out.push({ card: "People First", source: "S13-C reskill programme",
+      effect: "+10 Brand, +20 Staff Commitment", airlineValueMult: 1, brandBoost: 10 });
+  if (has("trusted_employer"))
+    out.push({ card: "Trusted Employer", source: "S15-C held headcount through recession",
+      effect: "×1.05 loyalty", airlineValueMult: 1.03, brandBoost: 0 });
+  if (has("efficient_capital"))
+    out.push({ card: "Efficient Capital", source: "S6 refinancing taken",
+      effect: "+5 Financial Health", airlineValueMult: 1, brandBoost: 2.5 });
+  if (has("fleet_uniformity"))
+    out.push({ card: "Fleet Uniformity", source: "E8.2 — 80%+ one aircraft family",
+      effect: "+5 Ops Health end-game", airlineValueMult: 1, brandBoost: 2.5 });
+  if ((team.milestones?.length ?? 0) >= 4)
+    out.push({ card: "Grand Slam", source: `${team.milestones.length} milestones earned`,
+      effect: `+${team.milestones.length * 2} Brand Value`, airlineValueMult: 1,
+      brandBoost: team.milestones.length * 2 });
+  // Negative flags
+  if (has("anti_environment"))
+    out.push({ card: "Anti-Environment", source: "S17-D failed legal challenge",
+      effect: "-15 Brand Value (already applied) — no further penalty", airlineValueMult: 1, brandBoost: 0 });
+  if (has("distracted_airline"))
+    out.push({ card: "Distracted Airline", source: "S9-C split budget",
+      effect: "-5 Ops Health end-game", airlineValueMult: 1, brandBoost: -2.5 });
+  if (has("no_vision"))
+    out.push({ card: "No Vision", source: "S9-D paid dividend",
+      effect: "-5 Brand Value end-game", airlineValueMult: 0.98, brandBoost: -5 });
+  return out;
+}
+
+/** Apply end-game awards to the base Brand Value. */
+export function finalBrandValueWithAwards(
+  baseBrandValue: number,
+  awards: EndgameAward[],
+): number {
+  let bv = baseBrandValue + awards.reduce((s, a) => s + a.brandBoost, 0);
+  const mult = awards.reduce((m, a) => m * a.airlineValueMult, 1);
+  bv *= mult;
+  return Math.max(0, Math.min(120, bv));
+}
+
 // ─── Brand Value (PRD §5.9) ────────────────────────────────
 export function computeBrandValue(team: Team): number {
   const cashRatio =

@@ -43,8 +43,15 @@ export function RoutesPanel() {
               .filter(Boolean)
               .join(", ");
             const editing = editingId === r.id;
+            // PRD G2 — colour-coded rows by profitability
+            const profitTone =
+              r.status === "suspended" ? "border-line bg-surface opacity-60" :
+              profit > 0 ? "border-[var(--positive-soft)] bg-[var(--positive-soft)]" :
+              profit === 0 || Math.abs(profit) < r.quarterlyRevenue * 0.1
+                ? "border-[var(--warning-soft)] bg-[var(--warning-soft)]" :
+              "border-[var(--negative-soft)] bg-[var(--negative-soft)]";
             return (
-              <div key={r.id} className="rounded-md border border-line bg-surface">
+              <div key={r.id} className={`rounded-md border ${profitTone}`}>
                 <div className="p-3">
                   <div className="flex items-start justify-between mb-2 gap-2">
                     <div className="min-w-0">

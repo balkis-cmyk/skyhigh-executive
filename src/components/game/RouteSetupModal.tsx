@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Badge, Button, Card, CardBody, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
-import { classFareRange, distanceBetween } from "@/lib/engine";
+import { classFareRange, distanceBetween, routeDemandPerDay } from "@/lib/engine";
 import { CITIES_BY_CODE } from "@/data/cities";
 import type { FleetAircraft, PricingTier } from "@/types/game";
 import { cn } from "@/lib/cn";
@@ -103,6 +103,25 @@ export function RouteSetupModal({ origin, dest, onClose }: RouteSetupModalProps)
   const econRange = dest ? classFareRange(dist, "econ") : null;
   const busRange = dest ? classFareRange(dist, "bus") : null;
   const firstRange = dest ? classFareRange(dist, "first") : null;
+
+  // PRD G1: low-demand warning (<25% projected occupancy)
+  const lowDemandWarning = (() => {
+    if (!origin || !dest || selectedPlaneIds.length === 0) return null;
+    const demand = routeDemandPerDay(origin, dest, s.currentQuarter).total;
+    const totalSeats = selectedPlaneIds.reduce((sum, id) => {
+      const p = player.fleet.find((f) => f.id === id);
+      const spec = p && AIRCRAFT_BY_ID[p.specId];
+      if (!spec) return sum;
+      return sum + spec.seats.first + spec.seats.business + spec.seats.economy;
+    }, 0);
+    const dailyCapacity = totalSeats * freq;
+    if (dailyCapacity === 0) return null;
+    const projected = Math.min(1, demand / dailyCapacity);
+    if (projected < 0.25) {
+      return `Low Demand Alert — projected occupancy ${(projected * 100).toFixed(0)}%. This route may not be profitable at current demand levels.`;
+    }
+    return null;
+  })();
 
   // Auto-enable cargo if all selected planes are cargo
   useEffect(() => {
@@ -258,6 +277,11 @@ export function RouteSetupModal({ origin, dest, onClose }: RouteSetupModalProps)
           )}
         </div>
 
+        {lowDemandWarning && (
+          <div className="text-warning text-[0.8125rem] rounded-md border border-[var(--warning-soft)] bg-[var(--warning-soft)] px-3 py-2">
+            {lowDemandWarning}
+          </div>
+        )}
         {error && (
           <div className="text-negative text-[0.875rem] rounded-md border border-[var(--negative-soft)] bg-[var(--negative-soft)] px-3 py-2">
             {error}

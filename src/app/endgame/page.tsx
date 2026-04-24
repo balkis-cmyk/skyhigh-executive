@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardBody } from "@/components/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
-import { computeAirlineValue, fleetCount } from "@/lib/engine";
+import { computeAirlineValue, fleetCount, resolveEndgameAwards, finalBrandValueWithAwards } from "@/lib/engine";
 
 /** Legacy titles by final Brand Value band. */
 function legacyTitle(bv: number): { title: string; sub: string } {
@@ -31,10 +31,15 @@ export default function Endgame() {
     );
   }
 
-  const ranked = [...s.teams].sort((a, b) => b.brandValue - a.brandValue);
+  // Apply endgame card multipliers (PRD G9)
+  const awards = resolveEndgameAwards(player);
+  const adjustedBV = finalBrandValueWithAwards(player.brandValue, awards);
+  const rankedTeams = [...s.teams]
+    .map((t) => ({ ...t, brandValue: finalBrandValueWithAwards(t.brandValue, resolveEndgameAwards(t)) }));
+  const ranked = rankedTeams.sort((a, b) => b.brandValue - a.brandValue);
   const finalRank = ranked.findIndex((t) => t.id === player.id) + 1;
   const airlineValue = computeAirlineValue(player);
-  const { title, sub } = legacyTitle(player.brandValue);
+  const { title, sub } = legacyTitle(adjustedBV);
   const totalProfit = player.financialsByQuarter.reduce((s, q) => s + q.netProfit, 0);
 
   function playAgain() {
@@ -63,11 +68,42 @@ export default function Endgame() {
         </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-          <Stat label="Final Brand Value" value={player.brandValue.toFixed(1)} tone="accent" />
+          <Stat label="Final Brand Value" value={adjustedBV.toFixed(1)} tone="accent" />
           <Stat label="Airline Value" value={fmtMoney(airlineValue)} />
           <Stat label="Customer loyalty" value={fmtPct(player.customerLoyaltyPct, 0)} />
           <Stat label="Total net profit" value={fmtMoney(totalProfit)} tone={totalProfit >= 0 ? "positive" : "negative"} />
         </div>
+
+        {/* End-game awards (PRD G9) */}
+        {awards.length > 0 && (
+          <Card className="mb-6">
+            <CardBody>
+              <h2 className="font-display text-[1.5rem] text-ink mb-3">
+                End-game awards earned
+              </h2>
+              <div className="space-y-2">
+                {awards.map((a) => (
+                  <div
+                    key={a.card}
+                    className="flex items-baseline justify-between py-2 border-b border-line last:border-0"
+                  >
+                    <div className="flex items-baseline gap-3">
+                      <span className="font-semibold text-ink text-[0.9375rem]">
+                        {a.card}
+                      </span>
+                      <span className="text-[0.75rem] text-ink-muted">
+                        {a.source}
+                      </span>
+                    </div>
+                    <span className="text-[0.8125rem] text-ink-2 tabular font-mono">
+                      {a.effect}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+        )}
 
         <Card className="mb-6">
           <CardBody>
