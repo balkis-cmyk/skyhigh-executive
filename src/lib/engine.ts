@@ -16,14 +16,16 @@ import { CITIES_BY_CODE } from "@/data/cities";
 import { SCENARIOS, type OptionEffect, type Scenario } from "@/data/scenarios";
 import type {
   City,
+  DeferredEvent,
   FleetAircraft,
-  LoanInstrument,
   PricingTier,
   Route,
   SliderLevel,
   Sliders,
   Team,
 } from "@/types/game";
+
+const M = 1_000_000;
 
 // ─── Distance (Haversine, PRD A1) ──────────────────────────
 const EARTH_RADIUS_KM = 6371;
@@ -233,7 +235,13 @@ export function computeRouteEconomics(
     return blankEconomics(route.distanceKm);
 
   const distanceKm = route.distanceKm || haversineKm(origin, dest);
-  const demand = routeDemandPerDay(route.originCode, route.destCode, quarter);
+  const rawDemand = routeDemandPerDay(route.originCode, route.destCode, quarter);
+  // Loyalty demand multiplier (PRD §5.8) — subtle scaling
+  const loyaltyFactor = loyaltyRetentionFactor(team.customerLoyaltyPct);
+  const demand = {
+    ...rawDemand,
+    total: rawDemand.total * loyaltyFactor,
+  };
 
   // Daily capacity = aircraft seats × daily_departures per plane
   const planes = route.aircraftIds
@@ -417,6 +425,16 @@ export function loyaltyDemandMultiplier(
   return positive ? 0.7 : 1.4;
 }
 
+/** Pass-through loyalty scale for baseline demand (−5%..+5%). */
+export function loyaltyRetentionFactor(loyaltyPct: number): number {
+  // 0.95 at 30, 1.00 at 50, 1.05 at 80+
+  if (loyaltyPct >= 80) return 1.05;
+  if (loyaltyPct >= 65) return 1.03;
+  if (loyaltyPct >= 50) return 1.0;
+  if (loyaltyPct >= 35) return 0.97;
+  return 0.93;
+}
+
 // ─── Apply an option effect ────────────────────────────────
 export function applyOptionEffect(team: Team, effect: OptionEffect): Team {
   const next: Team = {
@@ -429,11 +447,20 @@ export function applyOptionEffect(team: Team, effect: OptionEffect): Team {
       team.customerLoyaltyPct + (effect.loyaltyDelta ?? 0),
     ),
     flags: new Set(team.flags),
+    deferredEvents: [...(team.deferredEvents ?? [])],
   };
   if (effect.setFlags) {
     for (const f of effect.setFlags) next.flags.add(f);
   }
   return next;
+}
+
+/** Serialize an effect for queue persistence. */
+export function serializeEffect(effect: OptionEffect): string {
+  return JSON.stringify(effect);
+}
+export function deserializeEffect(json: string): OptionEffect {
+  return JSON.parse(json) as OptionEffect;
 }
 
 export function clamp(lo: number, hi: number, n: number): number {
@@ -452,8 +479,13 @@ export interface QuarterCloseResult {
   depreciation: number;
   interest: number;
   tax: number;
+  carbonLevy: number;
+  passengerTax: number;
+  fuelExcise: number;
+  rcfInterest: number;
   netProfit: number;
   newCashUsd: number;
+  newRcfBalance: number;
   newBrandPts: number;
   newOpsPts: number;
   newLoyalty: number;
@@ -465,6 +497,14 @@ export interface QuarterCloseResult {
     slotCost: number;
     profit: number;
     occupancy: number;
+  }>;
+  triggeredEvents: Array<{
+    id: string;
+    scenario: string;
+    outcome: "triggered" | "missed";
+    cashDelta?: number;
+    brandDelta?: number;
+    note?: string;
   }>;
   notes: string[];
 }
@@ -480,18 +520,25 @@ export function runQuarterClose(
   ctx: QuarterCloseContext,
 ): QuarterCloseResult {
   const notes: string[] = [];
-  let next: Team = { ...team, flags: new Set(team.flags) };
+  let next: Team = {
+    ...team,
+    flags: new Set(team.flags),
+    deferredEvents: [...(team.deferredEvents ?? [])],
+    rcfBalanceUsd: team.rcfBalanceUsd ?? 0,
+  };
 
-  // Route economics
+  // ─ Route economics ──────────────────────────────────────
   const routeBreakdown: QuarterCloseResult["routeBreakdown"] = [];
   let revenue = 0;
   let fuelCost = 0;
   let slotCost = 0;
+  let totalPassengers = 0;
   for (const r of next.routes.filter((r) => r.status === "active")) {
     const econ = computeRouteEconomics(next, r, ctx.quarter, ctx.fuelIndex);
     revenue += econ.quarterlyRevenue;
     fuelCost += econ.quarterlyFuelCost;
     slotCost += econ.quarterlySlotCost;
+    totalPassengers += econ.dailyPax * QUARTER_DAYS;
     routeBreakdown.push({
       routeId: r.id,
       revenue: econ.quarterlyRevenue,
@@ -500,30 +547,29 @@ export function runQuarterClose(
       profit: econ.quarterlyProfit,
       occupancy: econ.occupancy,
     });
-    // Stamp route economics so UI can display
     r.avgOccupancy = econ.occupancy;
     r.quarterlyRevenue = econ.quarterlyRevenue;
     r.quarterlyFuelCost = econ.quarterlyFuelCost;
     r.quarterlySlotCost = econ.quarterlySlotCost;
   }
 
-  // Staff cost (A3)
+  // ─ Staff (A3) ───────────────────────────────────────────
   const staffBase = baselineStaffCostUsd(next);
   const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff];
 
-  // Other sliders as % of revenue (A2)
+  // ─ Other sliders as % of revenue (A2) ──────────────────
   const sliderPctKeys: (keyof Sliders)[] = [
     "marketing", "service", "rewards", "operations",
   ];
   const otherSliderCost = sliderPctKeys.reduce(
     (sum, k) => sum + revenue * SLIDER_PCT_REVENUE[next.sliders[k]], 0);
 
-  // Maintenance — naive: active fleet × $500k. Adds aging_fleet penalty.
+  // ─ Maintenance + aging flag ────────────────────────────
   let maintenanceCost = next.fleet.filter((f) => f.status === "active").length *
     500_000;
   if (next.flags.has("aging_fleet")) maintenanceCost += 15_000_000;
 
-  // Depreciation
+  // ─ Depreciation ─────────────────────────────────────────
   let depreciation = 0;
   next.fleet = next.fleet.map((f) => {
     if (f.acquisitionType !== "buy") return f;
@@ -535,18 +581,183 @@ export function runQuarterClose(
     return { ...f, bookValue: newBook };
   });
 
-  // Interest
+  // ─ Interest on debt + RCF interest (A8) ────────────────
   const interest = quarterlyInterestUsd(next, ctx.baseInterestRatePct);
+  const rcfRate = ctx.baseInterestRatePct * 2;
+  const rcfInterest = next.rcfBalanceUsd * (rcfRate / 100) / 4;
 
-  // Pre-tax profit
+  // ─ Additional taxes (A15) ──────────────────────────────
+  // Passenger departure tax: blended $16/pax (mix of economy $12, business $22, first $45)
+  const passengerTax = totalPassengers * 16;
+  // Fuel excise: 8% of fuel cost
+  const fuelExcise = fuelCost * 0.08;
+  // Carbon levy: from Q17 onwards (PRD S17), $45/tonne CO2 at ~0.12 kg CO2 / L fuel
+  let carbonLevy = 0;
+  if (ctx.quarter >= 17) {
+    // Approximate fuel liters total = fuelCost / (fuelIndex/100 * 0.18)
+    const pricePerL = (ctx.fuelIndex / 100) * 0.18;
+    const totalLiters = pricePerL > 0 ? fuelCost / pricePerL : 0;
+    const tonnesCO2 = (totalLiters * 0.12) / 1000; // kg → tonnes
+    carbonLevy = tonnesCO2 * 45;
+    if (next.flags.has("green_leader") && ctx.quarter >= 19) {
+      carbonLevy *= 0.6; // PRD S17-C: levy drops 40% from Q19
+    }
+    if (next.flags.has("sustainability_signal")) {
+      // Mild reduction for absorbing/committing at Q17
+      carbonLevy *= 0.95;
+    }
+  }
+
+  // ─ Pre-tax profit ───────────────────────────────────────
   const pretax =
     revenue - fuelCost - slotCost - staffCost - otherSliderCost -
-    maintenanceCost - depreciation - interest;
+    maintenanceCost - depreciation - interest - rcfInterest -
+    passengerTax - fuelExcise - carbonLevy;
 
-  // Tax (A15): 20% on positive pretax
+  // ─ Corporate tax (A15): 20% on positive pretax ─────────
   const tax = pretax > 0 ? pretax * 0.2 : 0;
   const netProfit = pretax - tax;
-  const newCashUsd = next.cashUsd + netProfit;
+
+  // ─ Cash flow + RCF auto-draw (A8) ──────────────────────
+  let newCashUsd = next.cashUsd + netProfit;
+  let newRcfBalance = next.rcfBalanceUsd;
+  // First, if cash is positive and RCF is drawn, auto-repay
+  if (newCashUsd > 0 && newRcfBalance > 0) {
+    const repay = Math.min(newCashUsd, newRcfBalance);
+    newCashUsd -= repay;
+    newRcfBalance -= repay;
+  }
+  // If cash is negative, auto-draw into RCF
+  if (newCashUsd < 0) {
+    const draw = -newCashUsd;
+    const airlineValue = computeAirlineValue(next);
+    const rcfCeiling = Math.max(0, airlineValue * 0.15);
+    const roomLeft = Math.max(0, rcfCeiling - newRcfBalance);
+    const drawAmount = Math.min(draw, roomLeft);
+    newCashUsd += drawAmount;
+    newRcfBalance += drawAmount;
+    if (drawAmount < draw) {
+      notes.push("RCF ceiling hit — cash remains negative. New routes & non-essential spending frozen.");
+    } else if (drawAmount > 0) {
+      notes.push(`RCF drew ${(drawAmount / 1e6).toFixed(1)}M at ${rcfRate.toFixed(1)}%`);
+    }
+  }
+
+  // ─ System-level plot twists (reveal at specific quarters) ──
+  // These depend on the player's prior decision, not on queued events.
+  if (ctx.quarter === 4) {
+    // S4 Oil Gamble twist: OPEC drop
+    const s4 = team.decisions.find((d) => d.scenarioId === "S4");
+    if (s4) {
+      let twistDelta = 0;
+      let twistNote = "";
+      if (s4.optionId === "A") { twistDelta = -60 * M; twistNote = "S4 OPEC drop — locked high (−$60M)"; }
+      else if (s4.optionId === "C") { twistDelta = 60 * M; twistNote = "S4 OPEC drop — open market wins (+$60M)"; }
+      else if (s4.optionId === "D") { twistDelta = 30 * M; twistNote = "S4 OPEC drop — structured 50/50 (+$30M)"; }
+      if (twistDelta !== 0) {
+        newCashUsd += twistDelta;
+        notes.push(twistNote);
+      }
+    }
+  }
+  if (ctx.quarter === 6) {
+    // S16 Moscow Signal twist: false alarm — summer surge
+    const s16 = team.decisions.find((d) => d.scenarioId === "S16");
+    if (s16) {
+      const lock = s16.lockInQuarters ?? 1;
+      let twistDelta = 0;
+      let twistLoyalty = 0;
+      if (s16.optionId === "A" || s16.optionId === "B") {
+        // PRD: missed revenue per locked quarter over 1
+        if (lock > 1) {
+          twistDelta = -65 * M * (lock - 1);
+          twistLoyalty = -4 * (lock - 1);
+          notes.push(`S16 false alarm — locked ${lock}Q missed summer surge`);
+        }
+      } else if (s16.optionId === "D") {
+        twistDelta = 55 * M;
+        notes.push("S16 counter-position captured competitor bookings (+$55M)");
+      }
+      if (twistDelta !== 0) newCashUsd += twistDelta;
+      if (twistLoyalty !== 0)
+        next.customerLoyaltyPct = clamp(0, 100, next.customerLoyaltyPct + twistLoyalty);
+    }
+  }
+  if (ctx.quarter === 16) {
+    // S15 Recession Gamble twist: recession ends early
+    const s15 = team.decisions.find((d) => d.scenarioId === "S15");
+    if (s15) {
+      if (s15.optionId === "A") {
+        newCashUsd -= 80 * M;
+        next.flags.add("talent_shortage");
+        next.opsPts = Math.max(0, next.opsPts - 10);
+        notes.push("S15 twist — mass redundancy rehire cost $80M, talent shortage flag");
+      } else if (s15.optionId === "D") {
+        newCashUsd += 120 * M;
+        notes.push("S15 twist — counter-cyclical advantage +$120M");
+      }
+    }
+  }
+  if (ctx.quarter === 18) {
+    // S12 Brand Grenade twist: ambassador cleared
+    const s12 = team.decisions.find((d) => d.scenarioId === "S12");
+    if (s12) {
+      if (s12.optionId === "A") {
+        next.brandPts = Math.max(0, next.brandPts - 22);
+        notes.push("S12 twist — ambassador cleared, A terminate looks reactive (−22 Brand)");
+      } else if (s12.optionId === "D") {
+        next.brandPts = Math.max(0, next.brandPts + 15);
+        notes.push("S12 twist — redemption arc pays off (+15 Brand)");
+      }
+    }
+  }
+
+  // ─ Resolve deferred events targeting this quarter ──────
+  const triggeredEvents: QuarterCloseResult["triggeredEvents"] = [];
+  const remainingDeferred: DeferredEvent[] = [];
+  for (const ev of next.deferredEvents) {
+    if (ev.resolved) continue;
+    if (ev.targetQuarter !== ctx.quarter) {
+      remainingDeferred.push(ev);
+      continue;
+    }
+    const roll = Math.random();
+    if (roll <= ev.probability) {
+      const eff = deserializeEffect(ev.effectJson);
+      newCashUsd += eff.cash ?? 0;
+      next.brandPts = Math.max(0, next.brandPts + (eff.brandPts ?? 0));
+      next.opsPts = Math.max(0, next.opsPts + (eff.opsPts ?? 0));
+      next.customerLoyaltyPct = clamp(
+        0, 100, next.customerLoyaltyPct + (eff.loyaltyDelta ?? 0),
+      );
+      if (eff.setFlags) for (const f of eff.setFlags) next.flags.add(f);
+      triggeredEvents.push({
+        id: ev.id,
+        scenario: ev.sourceScenario,
+        outcome: "triggered",
+        cashDelta: eff.cash,
+        brandDelta: eff.brandPts,
+        note: ev.noteAtQueue,
+      });
+      notes.push(
+        `Deferred ${ev.sourceScenario}-${ev.sourceOption} TRIGGERED (p=${(ev.probability * 100).toFixed(0)}%)`,
+      );
+    } else {
+      triggeredEvents.push({
+        id: ev.id,
+        scenario: ev.sourceScenario,
+        outcome: "missed",
+        note: ev.noteAtQueue,
+      });
+    }
+    remainingDeferred.push({
+      ...ev,
+      resolved: true,
+      resolvedAtQuarter: ctx.quarter,
+      resolvedOutcome: roll <= ev.probability ? "triggered" : "missed",
+    });
+  }
+  next.deferredEvents = remainingDeferred;
 
   // Slider → brand / loyalty / ops pts per-quarter
   const sliderKeys: (keyof Sliders)[] = [
@@ -589,8 +800,9 @@ export function runQuarterClose(
 
   notes.push(`Revenue: $${(revenue / 1e6).toFixed(1)}M across ${routeBreakdown.length} routes`);
   notes.push(`Fuel index ${ctx.fuelIndex} → ${(fuelCost / 1e6).toFixed(1)}M fuel cost`);
-  if (tax > 0) notes.push(`Tax: ${(tax / 1e6).toFixed(1)}M (20% on $${(pretax / 1e6).toFixed(1)}M pretax)`);
-  if (interest > 0) notes.push(`Interest on debt: $${(interest / 1e6).toFixed(1)}M`);
+  if (tax > 0) notes.push(`Corporate tax: ${(tax / 1e6).toFixed(1)}M`);
+  if (carbonLevy > 0) notes.push(`Carbon levy: ${(carbonLevy / 1e6).toFixed(1)}M`);
+  if (interest > 0) notes.push(`Debt interest: $${(interest / 1e6).toFixed(1)}M`);
 
   return {
     quarter: ctx.quarter,
@@ -603,13 +815,19 @@ export function runQuarterClose(
     depreciation,
     interest,
     tax,
+    carbonLevy,
+    passengerTax,
+    fuelExcise,
+    rcfInterest,
     netProfit,
     newCashUsd,
+    newRcfBalance,
     newBrandPts,
     newOpsPts,
     newLoyalty,
     newBrandValue,
     routeBreakdown,
+    triggeredEvents,
     notes,
   };
 }

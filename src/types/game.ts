@@ -104,6 +104,19 @@ export interface ScenarioDecision {
   lockInQuarters?: number;      // S16 only
 }
 
+export interface DeferredEvent {
+  id: string;
+  sourceScenario: ScenarioId;
+  sourceOption: string;
+  targetQuarter: number;
+  probability: number;          // 0..1, 1 = certain (plot twist)
+  effectJson: string;           // serialized OptionEffect (avoids circular import)
+  noteAtQueue?: string;
+  resolved?: boolean;
+  resolvedOutcome?: "triggered" | "missed";
+  resolvedAtQuarter?: number;
+}
+
 // ─── World News ──────────────────────────────────────────
 export type NewsImpact =
   | "tourism"
@@ -161,6 +174,10 @@ export interface Team {
   // Scenarios
   decisions: ScenarioDecision[];
   flags: Set<string>;            // gov_board_card, trusted_operator, ...
+  deferredEvents: DeferredEvent[];
+
+  // Revolving Credit Facility (A8)
+  rcfBalanceUsd: number;
 
   // History
   financialsByQuarter: Array<{
@@ -192,4 +209,8 @@ export interface GameState {
   baseInterestRatePct: number;    // e.g. 3.5
   teams: Team[];
   playerTeamId: string | null;
+
+  // Quarter timer (A12)
+  quarterTimerSecondsRemaining: number | null; // null = not started / paused
+  quarterTimerPaused: boolean;
 }

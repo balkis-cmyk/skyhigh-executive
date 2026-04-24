@@ -10,9 +10,11 @@ import {
   computeBrandValue,
   distanceBetween,
   runQuarterClose,
+  serializeEffect,
   type QuarterCloseResult,
 } from "@/lib/engine";
 import type {
+  DeferredEvent,
   DoctrineId,
   FleetAircraft,
   GameState,
@@ -83,6 +85,13 @@ export interface GameStore extends GameState {
   closeQuarter(): void;
   advanceToNext(): void;
   resetGame(): void;
+
+  // Quarter timer (A12)
+  startQuarterTimer(seconds?: number): void;
+  pauseQuarterTimer(): void;
+  resumeQuarterTimer(): void;
+  extendQuarterTimer(seconds: number): void;
+  tickQuarterTimer(deltaSeconds: number): void;
 }
 
 const INITIAL_SLIDERS: Sliders = {
@@ -112,8 +121,6 @@ function makeStartingTeam(args: {
   isPlayer: boolean;
   color: string;
 }): Team {
-  // PRD §13: every team starts with $150M seed. Player also gets cash injection
-  // logic after Q1 brand-building — but for single-team demo, we start at $150M.
   return {
     id: mkId("team"),
     name: args.airlineName,
@@ -135,6 +142,8 @@ function makeStartingTeam(args: {
     sliderStreaks: emptyStreaks(),
     decisions: [],
     flags: new Set<string>(),
+    deferredEvents: [],
+    rcfBalanceUsd: 0,
     financialsByQuarter: [],
   };
 }
@@ -154,6 +163,8 @@ export const useGame = create<GameStore>()(
       teams: [],
       playerTeamId: null,
       lastCloseResult: null,
+      quarterTimerSecondsRemaining: null,
+      quarterTimerPaused: false,
 
       startNewGame: ({ airlineName, code, doctrine, hubCode, teamCount = 5 }) => {
         const player = makeStartingTeam({
@@ -379,6 +390,21 @@ export const useGame = create<GameStore>()(
         const updated = applyOptionEffect(player, option.effect);
         updated.decisions = [...updated.decisions, decision];
 
+        // Enqueue deferred event if the option has one
+        if (option.effect.deferred) {
+          const d = option.effect.deferred;
+          const ev: DeferredEvent = {
+            id: mkId("ev"),
+            sourceScenario: scenarioId as ScenarioDecision["scenarioId"],
+            sourceOption: optionId,
+            targetQuarter: d.quarter,
+            probability: d.probability ?? 1,
+            effectJson: serializeEffect(d.effect),
+            noteAtQueue: `${scenario.title} · Option ${optionId}`,
+          };
+          updated.deferredEvents = [...(updated.deferredEvents ?? []), ev];
+        }
+
         set({
           teams: s.teams.map((t) => t.id === player.id ? updated : t),
         });
@@ -431,6 +457,7 @@ export const useGame = create<GameStore>()(
         const closed: Team = {
           ...teamReady,
           cashUsd: result.newCashUsd,
+          rcfBalanceUsd: result.newRcfBalance,
           brandPts: result.newBrandPts,
           opsPts: result.newOpsPts,
           customerLoyaltyPct: result.newLoyalty,
@@ -493,7 +520,31 @@ export const useGame = create<GameStore>()(
           teams: [],
           playerTeamId: null,
           lastCloseResult: null,
+          quarterTimerSecondsRemaining: null,
+          quarterTimerPaused: false,
         });
+      },
+
+      // ── Quarter timer (A12) ────────────────────────────────
+      startQuarterTimer: (seconds = 1800) => {
+        set({ quarterTimerSecondsRemaining: seconds, quarterTimerPaused: false });
+      },
+      pauseQuarterTimer: () => {
+        set({ quarterTimerPaused: true });
+      },
+      resumeQuarterTimer: () => {
+        set({ quarterTimerPaused: false });
+      },
+      extendQuarterTimer: (seconds) => {
+        const s = get();
+        if (s.quarterTimerSecondsRemaining === null) return;
+        set({ quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining + seconds });
+      },
+      tickQuarterTimer: (deltaSeconds) => {
+        const s = get();
+        if (s.quarterTimerSecondsRemaining === null || s.quarterTimerPaused) return;
+        const next = Math.max(0, s.quarterTimerSecondsRemaining - deltaSeconds);
+        set({ quarterTimerSecondsRemaining: next });
       },
     }),
     {
@@ -509,13 +560,16 @@ export const useGame = create<GameStore>()(
           flags: Array.from(t.flags) as unknown as Set<string>,
         })),
         playerTeamId: s.playerTeamId,
+        quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining,
+        quarterTimerPaused: s.quarterTimerPaused,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
-        // Re-hydrate Sets
         state.teams = state.teams.map((t) => ({
           ...t,
           flags: new Set(Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? [])),
+          deferredEvents: t.deferredEvents ?? [],
+          rcfBalanceUsd: t.rcfBalanceUsd ?? 0,
         }));
       },
     },

@@ -60,11 +60,57 @@ export function QuarterCloseModal() {
               <Row k="Other slider spend" v={fmtMoney(result.otherSliderCost)} />
               <Row k="Maintenance" v={fmtMoney(result.maintenanceCost)} />
               <Row k="Depreciation" v={fmtMoney(result.depreciation)} />
-              <Row k="Interest" v={fmtMoney(result.interest)} />
-              <Row k="Tax (20% on pretax)" v={fmtMoney(result.tax)} />
+              <Row k="Debt interest" v={fmtMoney(result.interest)} />
+              {result.rcfInterest > 0 && <Row k="RCF interest (2× base)" v={fmtMoney(result.rcfInterest)} />}
+              <Row k="Passenger tax ($16/pax)" v={fmtMoney(result.passengerTax)} />
+              <Row k="Fuel excise (8%)" v={fmtMoney(result.fuelExcise)} />
+              {result.carbonLevy > 0 && <Row k="Carbon levy" v={fmtMoney(result.carbonLevy)} />}
+              <Row k="Corporate tax (20% on pretax)" v={fmtMoney(result.tax)} />
             </tbody>
           </table>
         </div>
+
+        {result.newRcfBalance > 0 && (
+          <div className="text-[0.8125rem] rounded-md border border-[var(--warning-soft)] bg-[var(--warning-soft)] text-warning px-3 py-2">
+            Revolving Credit Facility drawn: <span className="tabular font-mono font-semibold">{fmtMoney(result.newRcfBalance)}</span>. Interest 2× base rate applies next quarter.
+          </div>
+        )}
+
+        {result.triggeredEvents.length > 0 && (
+          <div>
+            <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+              Deferred events resolved
+            </div>
+            <div className="space-y-1.5">
+              {result.triggeredEvents.map((e) => (
+                <div
+                  key={e.id}
+                  className={`rounded-md border px-3 py-2 text-[0.8125rem] ${
+                    e.outcome === "triggered"
+                      ? "border-[var(--negative-soft)] bg-[var(--negative-soft)]"
+                      : "border-[var(--positive-soft)] bg-[var(--positive-soft)]"
+                  }`}
+                >
+                  <span className="font-mono text-primary mr-2">{e.scenario}</span>
+                  {e.note}
+                  <span
+                    className={`ml-2 font-semibold ${
+                      e.outcome === "triggered" ? "text-negative" : "text-positive"
+                    }`}
+                  >
+                    · {e.outcome === "triggered" ? "triggered" : "missed"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {result.notes.length > 0 && (
+          <div className="text-[0.75rem] text-ink-muted space-y-0.5">
+            {result.notes.map((n, i) => <div key={i}>· {n}</div>)}
+          </div>
+        )}
 
         <div className="grid grid-cols-4 gap-3">
           <Mini label="Brand Value" value={result.newBrandValue.toFixed(1)} />

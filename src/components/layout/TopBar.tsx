@@ -4,7 +4,8 @@ import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney, fmtPct, fmtQuarter, fmtQuarterShort } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Badge } from "@/components/ui";
-import { computeAirlineValue, fleetCount } from "@/lib/engine";
+import { computeAirlineValue } from "@/lib/engine";
+import { QuarterTimerChip } from "@/components/game/QuarterTimer";
 
 export function TopBar() {
   const s = useGame();
@@ -49,17 +50,20 @@ export function TopBar() {
         <div className="hidden md:block w-px h-8 bg-line" />
 
         {/* Quarter block */}
-        <div className="hidden md:flex flex-col items-end">
+        <div className="hidden md:flex flex-col items-end gap-1">
           <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
             {fmtQuarter(s.currentQuarter)}
           </div>
-          <div className="flex items-baseline gap-2 mt-0.5">
+          <div className="flex items-baseline gap-2">
             <span className="font-display text-[1.125rem] text-ink">
               {fmtQuarterShort(s.currentQuarter)}
             </span>
             <Badge tone="accent">Command</Badge>
           </div>
         </div>
+
+        {/* Quarter timer */}
+        <QuarterTimerChip />
       </div>
     </header>
   );

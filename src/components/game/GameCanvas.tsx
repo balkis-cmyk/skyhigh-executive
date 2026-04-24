@@ -17,6 +17,7 @@ import { NewsPanel } from "@/components/panels/NewsPanel";
 import { LeaderboardPanel } from "@/components/panels/LeaderboardPanel";
 import { AdminPanel } from "@/components/panels/AdminPanel";
 import { RouteSetupModal } from "@/components/game/RouteSetupModal";
+import { QuarterTimerDriver } from "@/components/game/QuarterTimer";
 import { useGame, selectPlayer } from "@/store/game";
 import type { City } from "@/types/game";
 import { Button } from "@/components/ui";
@@ -120,6 +121,9 @@ function CanvasInner() {
 
       {/* Quarter close modal */}
       <QuarterCloseModal />
+
+      {/* 1Hz timer driver (no render) */}
+      <QuarterTimerDriver />
     </main>
   );
 }

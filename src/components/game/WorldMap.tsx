@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { geoNaturalEarth1, geoPath, type GeoProjection } from "d3-geo";
 import { feature } from "topojson-client";
-import type { FeatureCollection, Geometry } from "geojson";
+import type { FeatureCollection } from "geojson";
 import type { Topology } from "topojson-specification";
 import { CITIES, CITIES_BY_CODE } from "@/data/cities";
 import type { City, Team } from "@/types/game";
@@ -52,6 +52,26 @@ function arcPath(a: [number, number], b: [number, number]): string {
   return `M ${ax} ${ay} Q ${midX} ${midY - lift} ${bx} ${by}`;
 }
 
+/** Point along quadratic bezier at parameter t∈[0,1]. */
+function bezierPoint(
+  a: [number, number],
+  b: [number, number],
+  t: number,
+): [number, number] {
+  const [ax, ay] = a;
+  const [bx, by] = b;
+  const midX = (ax + bx) / 2;
+  const midY = (ay + by) / 2;
+  const chord = Math.hypot(bx - ax, by - ay);
+  const lift = Math.min(120, chord * 0.18);
+  const cx = midX;
+  const cy = midY - lift;
+  const u = 1 - t;
+  const x = u * u * ax + 2 * u * t * cx + t * t * bx;
+  const y = u * u * ay + 2 * u * t * cy + t * t * by;
+  return [x, y];
+}
+
 export function WorldMap({
   team,
   selectedOriginCode,
@@ -66,6 +86,24 @@ export function WorldMap({
 
   useEffect(() => {
     loadWorldAtlas().then(setAtlas).catch(() => setAtlas(null));
+  }, []);
+
+  // Animation tick for moving dots along arcs
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) return;
+    let raf = 0;
+    let last = performance.now();
+    function loop(now: number) {
+      const dt = now - last;
+      last = now;
+      setTick((t) => (t + dt * 0.00015) % 1);
+      raf = requestAnimationFrame(loop);
+    }
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   useEffect(() => {
@@ -164,9 +202,9 @@ export function WorldMap({
           </g>
         )}
 
-        {/* Route arcs */}
+        {/* Route arcs + animated dots */}
         <g fill="none" strokeLinecap="round">
-          {activeRoutes.map((r) => {
+          {activeRoutes.map((r, i) => {
             const a = CITIES_BY_CODE[r.originCode];
             const b = CITIES_BY_CODE[r.destCode];
             if (!a || !b) return null;
@@ -177,14 +215,29 @@ export function WorldMap({
               : losing
                 ? "var(--negative)"
                 : team.color;
+            const p1 = proj(a.lon, a.lat);
+            const p2 = proj(b.lon, b.lat);
+            // Stagger per-route so dots don't all cluster
+            const phase = (tick + i * 0.11) % 1;
+            const [dotX, dotY] = bezierPoint(p1, p2, phase);
             return (
-              <path
-                key={r.id}
-                d={arcPath(proj(a.lon, a.lat), proj(b.lon, b.lat))}
-                stroke={color}
-                strokeWidth="2"
-                strokeOpacity="0.75"
-              />
+              <g key={r.id}>
+                <path
+                  d={arcPath(p1, p2)}
+                  stroke={color}
+                  strokeWidth="1.75"
+                  strokeOpacity="0.55"
+                />
+                {/* Moving flight dot */}
+                <circle
+                  cx={dotX}
+                  cy={dotY}
+                  r={2.4}
+                  fill={color}
+                  stroke="var(--surface)"
+                  strokeWidth="0.8"
+                />
+              </g>
             );
           })}
           {selectedOriginCode && hoverCode && (() => {
@@ -230,7 +283,12 @@ export function WorldMap({
                 {/* Invisible enlarged hit target */}
                 <circle r={12} fill="transparent" />
                 {isHub && (
-                  <circle r={12} fill="none" stroke="var(--primary)" strokeWidth="1.5" opacity="0.55" />
+                  <circle
+                    className="hub-pulse"
+                    fill="none"
+                    stroke="var(--primary)"
+                    strokeWidth="1.5"
+                  />
                 )}
                 {isSelected && (
                   <circle r={11} fill="none" stroke="var(--accent)" strokeWidth="2" />
