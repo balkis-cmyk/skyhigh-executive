@@ -748,6 +748,31 @@ export function runQuarterClose(
     r.quarterlySlotCost = econ.quarterlySlotCost;
   }
 
+  // ─ Fuel Storage reconciliation (PRD E2) ────────────────
+  // Route economics computed fuel at market; draw from storage first if any.
+  if ((next.fuelStorageLevelL ?? 0) > 0 && fuelCost > 0) {
+    const marketPricePerL = (ctx.fuelIndex / 100) * 0.18;
+    if (marketPricePerL > 0) {
+      const litresBurned = fuelCost / marketPricePerL;
+      const fromStorage = Math.min(next.fuelStorageLevelL, litresBurned);
+      const fromMarket = litresBurned - fromStorage;
+      const storageCostUsed = fromStorage * next.fuelStorageAvgCostPerL;
+      const marketCost = fromMarket * marketPricePerL;
+      const savings = fuelCost - (storageCostUsed + marketCost);
+      fuelCost = storageCostUsed + marketCost;
+      next.fuelStorageLevelL = next.fuelStorageLevelL - fromStorage;
+      if (next.fuelStorageLevelL === 0) next.fuelStorageAvgCostPerL = 0;
+      if (savings > 0)
+        notes.push(`Fuel storage saved $${(savings / 1e6).toFixed(1)}M this quarter`);
+    }
+  }
+
+  // ─ Fuel tank maintenance (PRD E2) ──────────────────────
+  const fuelTankMaint =
+    (next.fuelTanks?.small ?? 0) * 150_000 +
+    (next.fuelTanks?.medium ?? 0) * 350_000 +
+    (next.fuelTanks?.large ?? 0) * 600_000;
+
   // ─ Staff (A3) ───────────────────────────────────────────
   const staffBase = baselineStaffCostUsd(next);
   const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff];
@@ -801,6 +826,9 @@ export function runQuarterClose(
   );
   const hubFee = primaryHubFee + secondaryHubFees;
   maintenanceCost += hubFee;
+
+  // Fuel tank maintenance (PRD E2)
+  maintenanceCost += fuelTankMaint;
 
   // Insurance premium (PRD E5)
   const insurancePremiumPct: Record<string, number> = {

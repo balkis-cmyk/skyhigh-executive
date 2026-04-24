@@ -213,6 +213,25 @@ export interface Team {
   // Insurance policy (PRD E5)
   insurancePolicy: InsurancePolicy;
 
+  // Fuel Storage (PRD E2) — litres capacity + current stored + avg cost
+  fuelTanks: { small: number; medium: number; large: number };
+  fuelStorageLevelL: number;
+  fuelStorageAvgCostPerL: number;
+
+  // Slots held at each airport (PRD G10)
+  slotsByAirport: Record<string, number>;
+
+  // Airports where cargo storage has been activated (PRD C9 setup cost paid)
+  cargoStorageActivations: string[];
+
+  // Sealed auction bids queued for the next slot release (admin-auctioned per quarter)
+  pendingSlotBids: Array<{
+    airportCode: string;
+    slots: number;
+    pricePerSlot: number;
+    quarterSubmitted: number;
+  }>;
+
   // History
   financialsByQuarter: Array<{
     quarter: number;

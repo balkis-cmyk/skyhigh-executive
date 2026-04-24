@@ -126,6 +126,18 @@ export interface GameStore extends GameState {
   /** Set the player team's insurance policy (PRD E5). */
   setInsurancePolicy(policy: "none" | "low" | "medium" | "high"): void;
 
+  /** Fuel Storage (PRD E2) */
+  buyFuelTank(size: "small" | "medium" | "large"): { ok: boolean; error?: string };
+  buyBulkFuel(litres: number): { ok: boolean; error?: string };
+  sellStoredFuel(litres: number): { ok: boolean; error?: string };
+
+  /** Slot auction (PRD G10) */
+  submitSlotBid(airportCode: string, slots: number, pricePerSlot: number):
+    { ok: boolean; error?: string };
+  cancelSlotBid(airportCode: string): void;
+  /** Admin: release N slots at an airport, resolving queued bids highest-first. */
+  adminReleaseSlots(airportCode: string, slots: number): void;
+
   /** List an aircraft on the second-hand market (A13). */
   listSecondHand(aircraftId: string, askingPriceUsd: number): { ok: boolean; error?: string };
   /** Buy from the second-hand market. */
@@ -210,6 +222,14 @@ function makeStartingTeam(args: {
     rcfBalanceUsd: 0,
     taxLossCarryForward: [],
     insurancePolicy: "none",
+    fuelTanks: { small: 0, medium: 0, large: 0 },
+    fuelStorageLevelL: 0,
+    fuelStorageAvgCostPerL: 0,
+    // PRD G10 — each team starts with 30 slots at their hub
+    slotsByAirport: { [args.hubCode]: 30 },
+    pendingSlotBids: [],
+    // PRD C9 — hub auto-activated for cargo (bundled with hub terminal fee)
+    cargoStorageActivations: [args.hubCode],
     financialsByQuarter: [],
   };
 }
@@ -425,6 +445,12 @@ export const useGame = create<GameStore>()(
       },
 
       openRoute: ({ originCode, destCode, aircraftIds, dailyFrequency, pricingTier, econFare, busFare, firstFare, isCargo }) => {
+        // Cargo routes require cargo-storage activation at both endpoints (PRD C9)
+        const cargoStorageCost = (code: string): number => {
+          const c = CITIES_BY_CODE[code];
+          if (!c) return 0;
+          return c.tier === 1 ? 8_000_000 : c.tier === 2 ? 4_000_000 : c.tier === 3 ? 2_000_000 : 800_000;
+        };
         const s = get();
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player team" };
@@ -466,18 +492,38 @@ export const useGame = create<GameStore>()(
           isCargo: isCargo ?? false,
         };
 
+        // Activation cost for cargo routes (PRD C9)
+        let setupCost = 0;
+        const newActivations: string[] = [];
+        if (isCargo) {
+          for (const code of [originCode, destCode]) {
+            if (!player.cargoStorageActivations.includes(code)) {
+              setupCost += cargoStorageCost(code);
+              newActivations.push(code);
+            }
+          }
+          if (setupCost > player.cashUsd)
+            return { ok: false, error: `Cargo storage setup requires $${(setupCost / 1_000_000).toFixed(1)}M` };
+        }
+
         set({
           teams: s.teams.map((t) =>
             t.id !== s.playerTeamId ? t : {
               ...t,
+              cashUsd: t.cashUsd - setupCost,
               routes: [...t.routes, route],
               fleet: t.fleet.map((f) =>
                 aircraftIds.includes(f.id)
                   ? { ...f, status: "active", routeId: route.id }
                   : f),
+              cargoStorageActivations: [...t.cargoStorageActivations, ...newActivations],
             },
           ),
         });
+        if (setupCost > 0) {
+          toast.info("Cargo storage activated",
+            `${newActivations.join(" + ")} · $${(setupCost / 1_000_000).toFixed(1)}M one-time`);
+        }
         toast.success(
           `Route opened: ${originCode} → ${destCode}`,
           `${Math.round(dist).toLocaleString()} km · ${dailyFrequency}/day · ${pricingTier}`,
@@ -754,6 +800,190 @@ export const useGame = create<GameStore>()(
           quarterTimerPaused: false,
           secondHandListings: [],
         });
+      },
+
+      // ── Fuel Storage (PRD E2) ──────────────────────────────
+      buyFuelTank: (size) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        const specs = {
+          small:  { cost: 3_000_000,  capacity: 25_000_000 },
+          medium: { cost: 8_000_000,  capacity: 75_000_000 },
+          large:  { cost: 15_000_000, capacity: 150_000_000 },
+        } as const;
+        const spec = specs[size];
+        if (player.cashUsd < spec.cost)
+          return { ok: false, error: `Need ${fmtMoneyPlain(spec.cost)}` };
+        const currentCapL =
+          player.fuelTanks.small * specs.small.capacity +
+          player.fuelTanks.medium * specs.medium.capacity +
+          player.fuelTanks.large * specs.large.capacity;
+        if (currentCapL + spec.capacity > 300_000_000)
+          return { ok: false, error: "300M L maximum storage reached" };
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd - spec.cost,
+            fuelTanks: { ...t.fuelTanks, [size]: t.fuelTanks[size] + 1 },
+          }),
+        });
+        toast.success(`${size[0].toUpperCase() + size.slice(1)} fuel tank installed`,
+          `+${(spec.capacity / 1_000_000).toFixed(0)}M litres capacity · $${(spec.cost / 1_000_000).toFixed(1)}M`);
+        return { ok: true };
+      },
+
+      buyBulkFuel: (litres) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        const specs = {
+          small: { capacity: 25_000_000 },
+          medium: { capacity: 75_000_000 },
+          large: { capacity: 150_000_000 },
+        };
+        const capL =
+          player.fuelTanks.small * specs.small.capacity +
+          player.fuelTanks.medium * specs.medium.capacity +
+          player.fuelTanks.large * specs.large.capacity;
+        const room = capL - player.fuelStorageLevelL;
+        if (litres > room) return { ok: false, error: `Only ${(room / 1_000_000).toFixed(1)}M L free` };
+        const bulkPrice = (s.fuelIndex / 100) * 0.18 * 0.75; // 25% discount
+        const cost = litres * bulkPrice;
+        if (player.cashUsd < cost) return { ok: false, error: `Need $${(cost / 1_000_000).toFixed(1)}M` };
+        const newTotal = player.fuelStorageLevelL + litres;
+        const newAvgCost =
+          newTotal > 0
+            ? (player.fuelStorageLevelL * player.fuelStorageAvgCostPerL + litres * bulkPrice) /
+              newTotal
+            : 0;
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd - cost,
+            fuelStorageLevelL: newTotal,
+            fuelStorageAvgCostPerL: newAvgCost,
+          }),
+        });
+        toast.success(`Bulk fuel purchased`,
+          `${(litres / 1_000_000).toFixed(1)}M L @ $${bulkPrice.toFixed(3)}/L (25% off market)`);
+        return { ok: true };
+      },
+
+      sellStoredFuel: (litres) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        if (litres > player.fuelStorageLevelL)
+          return { ok: false, error: `Only ${(player.fuelStorageLevelL / 1_000_000).toFixed(1)}M L in storage` };
+        const sellPrice = (s.fuelIndex / 100) * 0.18 * 0.75;
+        const proceeds = litres * sellPrice;
+        const newTotal = player.fuelStorageLevelL - litres;
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd + proceeds,
+            fuelStorageLevelL: newTotal,
+            fuelStorageAvgCostPerL: newTotal > 0 ? t.fuelStorageAvgCostPerL : 0,
+          }),
+        });
+        toast.info("Sold stored fuel",
+          `${(litres / 1_000_000).toFixed(1)}M L @ $${sellPrice.toFixed(3)}/L → $${(proceeds / 1_000_000).toFixed(1)}M proceeds`);
+        return { ok: true };
+      },
+
+      // ── Slot auction (PRD G10) ─────────────────────────────
+      submitSlotBid: (airportCode, slots, pricePerSlot) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        if (!CITIES_BY_CODE[airportCode]) return { ok: false, error: "Unknown airport" };
+        if (slots < 1) return { ok: false, error: "At least 1 slot required" };
+        const city = CITIES_BY_CODE[airportCode];
+        const basePrice =
+          city.tier === 1 ? 120_000 : city.tier === 2 ? 80_000 : city.tier === 3 ? 40_000 : 20_000;
+        if (pricePerSlot < basePrice)
+          return { ok: false, error: `Minimum $${(basePrice / 1_000).toFixed(0)}K/slot at Lvl ${city.tier}` };
+        const maxCost = slots * pricePerSlot;
+        if (player.cashUsd < maxCost)
+          return { ok: false, error: `Need $${(maxCost / 1_000_000).toFixed(1)}M cash to commit` };
+        const existing = (player.pendingSlotBids ?? []).filter(
+          (b) => b.airportCode !== airportCode,
+        );
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            pendingSlotBids: [
+              ...existing,
+              { airportCode, slots, pricePerSlot, quarterSubmitted: s.currentQuarter },
+            ],
+          }),
+        });
+        toast.info(`Slot bid queued at ${airportCode}`,
+          `${slots} slots × $${(pricePerSlot / 1000).toFixed(0)}K = $${(maxCost / 1_000_000).toFixed(1)}M max`);
+        return { ok: true };
+      },
+
+      cancelSlotBid: (airportCode) => {
+        const s = get();
+        set({
+          teams: s.teams.map((t) => t.id !== s.playerTeamId ? t : {
+            ...t,
+            pendingSlotBids: (t.pendingSlotBids ?? []).filter((b) => b.airportCode !== airportCode),
+          }),
+        });
+      },
+
+      adminReleaseSlots: (airportCode, slots) => {
+        const s = get();
+        // Collect all teams' bids on this airport, highest price first
+        const bids: Array<{
+          teamId: string;
+          slots: number;
+          pricePerSlot: number;
+        }> = [];
+        for (const t of s.teams) {
+          for (const b of t.pendingSlotBids ?? []) {
+            if (b.airportCode === airportCode) {
+              bids.push({ teamId: t.id, slots: b.slots, pricePerSlot: b.pricePerSlot });
+            }
+          }
+        }
+        bids.sort((a, b) => b.pricePerSlot - a.pricePerSlot);
+
+        let remaining = slots;
+        const awards: Record<string, { slots: number; paid: number }> = {};
+        for (const bid of bids) {
+          if (remaining <= 0) break;
+          const take = Math.min(bid.slots, remaining);
+          remaining -= take;
+          awards[bid.teamId] = awards[bid.teamId]
+            ? { slots: awards[bid.teamId].slots + take, paid: awards[bid.teamId].paid + take * bid.pricePerSlot }
+            : { slots: take, paid: take * bid.pricePerSlot };
+        }
+
+        set({
+          teams: s.teams.map((t) => {
+            const award = awards[t.id];
+            const filteredBids = (t.pendingSlotBids ?? []).filter((b) => b.airportCode !== airportCode);
+            if (!award) return { ...t, pendingSlotBids: filteredBids };
+            return {
+              ...t,
+              cashUsd: t.cashUsd - award.paid,
+              slotsByAirport: {
+                ...t.slotsByAirport,
+                [airportCode]: (t.slotsByAirport[airportCode] ?? 0) + award.slots,
+              },
+              pendingSlotBids: filteredBids,
+            };
+          }),
+        });
+
+        const winnerCount = Object.keys(awards).length;
+        toast.accent(
+          `${slots} slots released at ${airportCode}`,
+          `${winnerCount} airline${winnerCount === 1 ? "" : "s"} won allocations`,
+        );
       },
 
       // ── Insurance policy (PRD E5) ──────────────────────────
@@ -1160,6 +1390,12 @@ export const useGame = create<GameStore>()(
             maintenanceDeficit: f.maintenanceDeficit ?? 0,
           })),
           insurancePolicy: t.insurancePolicy ?? "none",
+          fuelTanks: t.fuelTanks ?? { small: 0, medium: 0, large: 0 },
+          fuelStorageLevelL: t.fuelStorageLevelL ?? 0,
+          fuelStorageAvgCostPerL: t.fuelStorageAvgCostPerL ?? 0,
+          slotsByAirport: t.slotsByAirport ?? { [t.hubCode]: 30 },
+          pendingSlotBids: t.pendingSlotBids ?? [],
+          cargoStorageActivations: t.cargoStorageActivations ?? [t.hubCode],
           routes: t.routes.map((r) => ({
             ...r,
             econFare: r.econFare ?? null,
