@@ -54,12 +54,12 @@ export function AdminPanel() {
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
           Adjust player state
         </div>
-        <div className="flex gap-2 mb-2">
+        <div className="flex gap-2 mb-3">
           <Input
             type="number"
             value={cashAdjust}
             onChange={(e) => setCashAdjust(parseInt(e.target.value, 10) || 0)}
-            placeholder="Amount"
+            placeholder="Cash delta"
           />
           <Button
             size="sm"
@@ -77,8 +77,37 @@ export function AdminPanel() {
             +/− cash
           </Button>
         </div>
+
+        <div className="grid grid-cols-3 gap-2 text-[0.75rem] mb-2">
+          <AdjustChip
+            label="Brand"
+            value={player.brandPts}
+            onChange={(delta) => useGame.setState({
+              teams: s.teams.map((t) => t.id === s.playerTeamId
+                ? { ...t, brandPts: Math.max(0, Math.min(100, t.brandPts + delta)) } : t),
+            })}
+          />
+          <AdjustChip
+            label="Loyalty"
+            value={player.customerLoyaltyPct}
+            unit="%"
+            onChange={(delta) => useGame.setState({
+              teams: s.teams.map((t) => t.id === s.playerTeamId
+                ? { ...t, customerLoyaltyPct: Math.max(0, Math.min(100, t.customerLoyaltyPct + delta)) } : t),
+            })}
+          />
+          <AdjustChip
+            label="Ops"
+            value={player.opsPts}
+            onChange={(delta) => useGame.setState({
+              teams: s.teams.map((t) => t.id === s.playerTeamId
+                ? { ...t, opsPts: Math.max(0, Math.min(100, t.opsPts + delta)) } : t),
+            })}
+          />
+        </div>
         <div className="text-[0.6875rem] text-ink-muted">
-          Use negative numbers to remove cash. All admin actions are local-only until Supabase lands.
+          ± 5 adjusters for brand / loyalty / ops points. All state changes are
+          local-only until Supabase lands.
         </div>
       </section>
 
@@ -273,6 +302,40 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex items-baseline justify-between">
       <span className="text-ink-muted">{k}</span>
       <span className="tabular font-mono text-ink">{v}</span>
+    </div>
+  );
+}
+
+function AdjustChip({
+  label, value, unit, onChange,
+}: {
+  label: string;
+  value: number;
+  unit?: string;
+  onChange: (delta: number) => void;
+}) {
+  return (
+    <div className="rounded-md border border-line bg-surface-2/60 p-2">
+      <div className="flex items-baseline justify-between mb-1">
+        <span className="text-[0.625rem] uppercase tracking-wider text-ink-muted">{label}</span>
+        <span className="tabular font-mono text-ink">
+          {value.toFixed(0)}{unit ?? ""}
+        </span>
+      </div>
+      <div className="flex gap-1">
+        <button
+          onClick={() => onChange(-5)}
+          className="flex-1 h-6 rounded-sm bg-surface border border-line text-ink-2 hover:bg-surface-hover text-[0.625rem]"
+        >
+          −5
+        </button>
+        <button
+          onClick={() => onChange(+5)}
+          className="flex-1 h-6 rounded-sm bg-surface border border-line text-ink-2 hover:bg-surface-hover text-[0.625rem]"
+        >
+          +5
+        </button>
+      </div>
     </div>
   );
 }

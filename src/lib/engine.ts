@@ -14,6 +14,7 @@
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CITIES_BY_CODE } from "@/data/cities";
 import { SCENARIOS, type OptionEffect, type Scenario } from "@/data/scenarios";
+import { cityEventImpact } from "./city-events";
 import type {
   City,
   DeferredEvent,
@@ -66,11 +67,18 @@ export function routeDemandPerDay(
   const b = CITIES_BY_CODE[dest];
   if (!a || !b) return { tourism: 0, business: 0, total: 0, amplifier: 1 };
   const amplifier = Math.min(a.amplifier, b.amplifier);
+
+  // Event multipliers per city (from world news §8)
+  const eventA = cityEventImpact(origin, quarter).pct / 100;
+  const eventB = cityEventImpact(dest, quarter).pct / 100;
+
   const tourism =
-    (cityTourismAtQuarter(a, quarter) + cityTourismAtQuarter(b, quarter)) *
+    (cityTourismAtQuarter(a, quarter) * (1 + eventA) +
+     cityTourismAtQuarter(b, quarter) * (1 + eventB)) *
     amplifier;
   const business =
-    (cityBusinessAtQuarter(a, quarter) + cityBusinessAtQuarter(b, quarter)) *
+    (cityBusinessAtQuarter(a, quarter) * (1 + eventA) +
+     cityBusinessAtQuarter(b, quarter) * (1 + eventB)) *
     amplifier;
   return { tourism, business, total: tourism + business, amplifier };
 }
