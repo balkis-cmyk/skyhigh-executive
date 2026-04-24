@@ -53,7 +53,12 @@ export interface FleetAircraft {
   routeId: string | null;        // assigned route or null
   /** Quarter at which the aircraft retires (purchaseQuarter + 16 for passenger). */
   retirementQuarter: number;
+  /** Accumulated maintenance deficit from low Ops slider (PRD B2/C4). */
+  maintenanceDeficit: number;
 }
+
+// ─── Insurance (PRD E5) ──────────────────────────────────
+export type InsurancePolicy = "none" | "low" | "medium" | "high";
 
 // ─── Routes ───────────────────────────────────────────────
 export type PricingTier = "budget" | "standard" | "premium" | "ultra";
@@ -92,6 +97,7 @@ export interface Sliders {
   service: SliderLevel;
   rewards: SliderLevel;
   operations: SliderLevel;
+  customerService: SliderLevel;     // PRD E1/F1 — global airport service quality
 }
 
 // ─── Financials ──────────────────────────────────────────
@@ -200,6 +206,12 @@ export interface Team {
 
   // Revolving Credit Facility (A8)
   rcfBalanceUsd: number;
+
+  // Tax loss carry-forward (PRD B5): 5-quarter expiry
+  taxLossCarryForward: Array<{ quarter: number; amount: number }>;
+
+  // Insurance policy (PRD E5)
+  insurancePolicy: InsurancePolicy;
 
   // History
   financialsByQuarter: Array<{

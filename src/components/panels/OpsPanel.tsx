@@ -14,6 +14,7 @@ const SLIDER_LIST: Array<{ key: keyof Sliders; label: string; sub: string }> = [
   { key: "service", label: "In-Flight Service", sub: "Food, amenities, cabin" },
   { key: "rewards", label: "Rewards Program", sub: "Loyalty tiers, redemptions" },
   { key: "operations", label: "Operations", sub: "Maintenance, engineering" },
+  { key: "customerService", label: "Customer Service", sub: "Check-in, ground ops, satisfaction" },
 ];
 
 export function OpsPanel() {

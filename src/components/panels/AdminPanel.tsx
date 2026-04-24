@@ -349,6 +349,36 @@ export function AdminPanel() {
         </section>
       )}
 
+      {/* Insurance policy (PRD E5) */}
+      <section>
+        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+          Insurance policy (PRD E5)
+        </div>
+        <div className="grid grid-cols-4 gap-1.5 text-[0.75rem]">
+          {(["none", "low", "medium", "high"] as const).map((lvl) => {
+            const premiums = { none: "0%", low: "0.15%", medium: "0.30%", high: "0.50%" };
+            const coverage = { none: "0%", low: "30%", medium: "50%", high: "80%" };
+            const active = player.insurancePolicy === lvl;
+            return (
+              <button
+                key={lvl}
+                onClick={() => s.setInsurancePolicy(lvl)}
+                className={`rounded-md border px-2 py-1.5 capitalize transition-colors ${
+                  active
+                    ? "border-primary bg-[rgba(20,53,94,0.06)] text-ink font-medium"
+                    : "border-line text-ink-2 hover:bg-surface-hover"
+                }`}
+              >
+                <div className="text-[0.75rem] font-medium">{lvl}</div>
+                <div className="text-[0.625rem] text-ink-muted">
+                  {premiums[lvl]}/Q · {coverage[lvl]}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       {/* Second-hand market admin (A13) */}
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">

@@ -28,6 +28,67 @@ import type {
 
 const M = 1_000_000;
 
+// ─── Global Travel Index (PRD E6) — master demand multiplier ──
+/** Per-quarter macro demand multiplier, aligned to PRD world-news narrative. */
+export const TRAVEL_INDEX: Record<number, number> = {
+  1: 100, 2: 103, 3: 98, 4: 106, 5: 93, 6: 118, 7: 112, 8: 89,
+  9: 104, 10: 128, 11: 97, 12: 91, 13: 72, 14: 76, 15: 90, 16: 110,
+  17: 105, 18: 122, 19: 126, 20: 130,
+};
+
+/** Seasonal multipliers (PRD D5) indexed by quarter-within-game-year. */
+export function seasonalMultiplier(
+  quarter: number,
+): { tourism: number; business: number } {
+  const qInYear = ((quarter - 1) % 4) + 1;
+  // Q1 winter, Q2 spring/summer, Q3 peak summer, Q4 holiday
+  if (qInYear === 1) return { tourism: 0.85, business: 1.05 };
+  if (qInYear === 2) return { tourism: 1.10, business: 1.00 };
+  if (qInYear === 3) return { tourism: 1.20, business: 0.90 };
+  return { tourism: 1.05, business: 1.05 };
+}
+
+// ─── Physics-based flight frequency (PRD D1/F2) ────────────
+/** Aircraft cruise speed in km/h by id prefix. */
+export function cruiseSpeedKmh(specId: string): number {
+  if (/^A319|^A320|^A321|^B737/.test(specId)) return 840;
+  if (/^B757|^B767|^A330/.test(specId)) return 870;
+  return 900; // wide-body large: 777, 747, A380, 787, A350
+}
+
+/** Max weekly schedules for a single aircraft on a given route (D1 formula). */
+export function maxWeeklyRotations(specId: string, routeDistanceKm: number): number {
+  const oneWayHrs = routeDistanceKm / cruiseSpeedKmh(specId);
+  const turnaround = 2.0;
+  const roundTrip = oneWayHrs * 2 + turnaround * 2;
+  const daily = Math.max(1, Math.floor(24 / roundTrip));
+  return daily * 7;
+}
+
+/** Helper: max daily frequency across all planes on a route. */
+export function maxRouteDailyFrequency(
+  specIds: string[],
+  routeDistanceKm: number,
+): number {
+  const weeklyTotal = specIds.reduce(
+    (sum, id) => sum + maxWeeklyRotations(id, routeDistanceKm), 0,
+  );
+  return Math.floor(weeklyTotal / 7);
+}
+
+// ─── Hub attractiveness bonus (PRD E7) ─────────────────────
+/** Returns multiplier (e.g. 1.18 for primary hub) for a route touching a team's hub. */
+export function hubAttractivenessBonus(
+  team: { hubCode: string; secondaryHubCodes: string[] },
+  origin: string,
+  dest: string,
+): number {
+  if (team.hubCode === origin || team.hubCode === dest) return 1.18;
+  if (team.secondaryHubCodes?.includes(origin) || team.secondaryHubCodes?.includes(dest))
+    return 1.10;
+  return 1.0;
+}
+
 // ─── Distance (Haversine, PRD A1) ──────────────────────────
 const EARTH_RADIUS_KM = 6371;
 export function haversineKm(a: City, b: City): number {
@@ -57,7 +118,7 @@ export function cityBusinessAtQuarter(city: City, quarter: number): number {
   return city.business * Math.pow(1 + city.businessGrowth / 100 / 4, quarter - 1);
 }
 
-// ─── Route demand (PRD §5.2) ───────────────────────────────
+// ─── Route demand (PRD §5.2 + E6 + D5 + A1 events) ──────────
 export function routeDemandPerDay(
   origin: string,
   dest: string,
@@ -68,18 +129,22 @@ export function routeDemandPerDay(
   if (!a || !b) return { tourism: 0, business: 0, total: 0, amplifier: 1 };
   const amplifier = Math.min(a.amplifier, b.amplifier);
 
-  // Event multipliers per city (from world news §8)
   const eventA = cityEventImpact(origin, quarter).pct / 100;
   const eventB = cityEventImpact(dest, quarter).pct / 100;
+
+  // Global Travel Index master multiplier (PRD E6)
+  const travelIdx = (TRAVEL_INDEX[quarter] ?? 100) / 100;
+  // Seasonal multiplier (PRD D5)
+  const season = seasonalMultiplier(quarter);
 
   const tourism =
     (cityTourismAtQuarter(a, quarter) * (1 + eventA) +
      cityTourismAtQuarter(b, quarter) * (1 + eventB)) *
-    amplifier;
+    amplifier * travelIdx * season.tourism;
   const business =
     (cityBusinessAtQuarter(a, quarter) * (1 + eventA) +
      cityBusinessAtQuarter(b, quarter) * (1 + eventB)) *
-    amplifier;
+    amplifier * travelIdx * season.business;
   return { tourism, business, total: tourism + business, amplifier };
 }
 
@@ -188,6 +253,20 @@ export const SLIDER_EFFECTS: Record<
     4: { brandPts: 0, loyalty: 0, opsPts: 6 },
     5: { brandPts: 0, loyalty: 0, opsPts: 10 },
   },
+  customerService: {
+    // PRD E1 — 0% / 2% / 5% / 8% / 12% / 18% of revenue
+    0: { brandPts: -2, loyalty: -4 },          // Very Low
+    1: { brandPts: -1, loyalty: -2 },          // Low
+    2: { brandPts: 0, loyalty: 0 },            // Standard
+    3: { brandPts: 2, loyalty: 2 },            // High
+    4: { brandPts: 4, loyalty: 5 },            // Very High
+    5: { brandPts: 7, loyalty: 8 },            // Extreme
+  },
+};
+
+/** Customer Service slider % of revenue (PRD E1, distinct from the core sliders). */
+export const CS_PCT_REVENUE: Record<SliderLevel, number> = {
+  0: 0, 1: 0.02, 2: 0.05, 3: 0.08, 4: 0.12, 5: 0.18,
 };
 
 /** Compounding multiplier (PRD §3.2): 1.0 → 1.2× at 3Q → 1.5× at 6Q. */
@@ -349,7 +428,11 @@ export function computeRouteEconomics(
     seatsPerFlight.first + seatsPerFlight.bus + seatsPerFlight.econ;
   const dailyCapacity = totalSeatsPerFlight * route.dailyFrequency;
 
-  const dailyPax = Math.min(dailyCapacity, demand.total);
+  // Hub attractiveness bonus (PRD E7): home carrier captures more demand
+  const hubBonus = hubAttractivenessBonus(team, route.originCode, route.destCode);
+  const effectiveDemand = demand.total * hubBonus;
+
+  const dailyPax = Math.min(dailyCapacity, effectiveDemand);
   const occupancy =
     dailyCapacity > 0 ? Math.min(0.98, dailyPax / dailyCapacity) : 0;
 
@@ -674,12 +757,42 @@ export function runQuarterClose(
     "marketing", "service", "rewards", "operations",
   ];
   const otherSliderCost = sliderPctKeys.reduce(
-    (sum, k) => sum + revenue * SLIDER_PCT_REVENUE[next.sliders[k]], 0);
+    (sum, k) => sum + revenue * SLIDER_PCT_REVENUE[next.sliders[k]], 0)
+    // PRD E1 Customer Service slider (distinct % of revenue ladder)
+    + revenue * CS_PCT_REVENUE[next.sliders.customerService];
 
-  // ─ Maintenance + aging flag ────────────────────────────
-  let maintenanceCost = next.fleet.filter((f) => f.status === "active").length *
-    500_000;
+  // ─ Maintenance (PRD E4 age-scaled + Ops-discount) ──────
+  const opsPtsDiscount = Math.min(0.40, next.opsPts / 250);
+  let maintenanceCost = 0;
+  for (const f of next.fleet) {
+    if (f.status !== "active") continue;
+    const ageQ = Math.max(0, ctx.quarter - f.purchaseQuarter);
+    let basePct =
+      ageQ < 20 ? 0.008 :
+      ageQ < 40 ? 0.012 :
+      ageQ < 60 ? 0.018 : 0.025;
+    const effectivePct = basePct * (1 - opsPtsDiscount);
+    maintenanceCost += f.purchasePrice * effectivePct;
+  }
   if (next.flags.has("aging_fleet")) maintenanceCost += 15_000_000;
+
+  // Maintenance deficit accumulation (PRD B2/C4 — 80/20 Ops/Staff split)
+  const opsContribByLvl: Record<number, number> = {
+    0: -2.0, 1: -0.5, 2: 1.0, 3: 1.5, 4: 2.0, 5: 2.5,
+  };
+  const opsContribution = (opsContribByLvl[next.sliders.operations] ?? 0) * 0.8;
+  const staffContribution = (next.sliders.staff / 5) * 0.5 * 0.2;
+  const maintContribution = opsContribution + staffContribution;
+  next.fleet = next.fleet.map((f) => {
+    if (f.status !== "active") return f;
+    let deficit = f.maintenanceDeficit ?? 0;
+    if (maintContribution < 0) deficit += Math.abs(maintContribution);
+    else if (deficit > 0) {
+      const catchUp = Math.max(0, maintContribution - 1.0);
+      deficit = Math.max(0, deficit - catchUp);
+    }
+    return { ...f, maintenanceDeficit: deficit };
+  });
 
   // ─ Hub terminal fees (§4.2 + §4.4 2× for secondary) ────
   const primaryHubFee = hubTerminalFeeUsd(next.hubCode);
@@ -688,6 +801,14 @@ export function runQuarterClose(
   );
   const hubFee = primaryHubFee + secondaryHubFees;
   maintenanceCost += hubFee;
+
+  // Insurance premium (PRD E5)
+  const insurancePremiumPct: Record<string, number> = {
+    low: 0.0015, medium: 0.003, high: 0.005, none: 0,
+  };
+  const fleetMarketValue = next.fleet.reduce((sum, f) => sum + f.purchasePrice, 0);
+  const insurancePremium = fleetMarketValue * (insurancePremiumPct[next.insurancePolicy] ?? 0);
+  maintenanceCost += insurancePremium;
 
   // ─ Depreciation ─────────────────────────────────────────
   let depreciation = 0;
@@ -734,8 +855,31 @@ export function runQuarterClose(
     maintenanceCost - depreciation - interest - rcfInterest -
     passengerTax - fuelExcise - carbonLevy;
 
-  // ─ Corporate tax (A15): 20% on positive pretax ─────────
-  const tax = pretax > 0 ? pretax * 0.2 : 0;
+  // ─ Tax loss carry-forward (PRD B5): 5-quarter expiry ───
+  // Clean expired entries (older than 5 quarters)
+  const carryFwd = (next.taxLossCarryForward ?? [])
+    .filter((entry) => ctx.quarter - entry.quarter < 5);
+  let availableLossOffset = carryFwd.reduce((sum, e) => sum + e.amount, 0);
+  let taxBase = pretax;
+  if (pretax > 0 && availableLossOffset > 0) {
+    const applied = Math.min(pretax, availableLossOffset);
+    taxBase = pretax - applied;
+    // Consume carry-forward from oldest first
+    let remaining = applied;
+    for (const entry of carryFwd) {
+      const use = Math.min(entry.amount, remaining);
+      entry.amount -= use;
+      remaining -= use;
+      if (remaining <= 0) break;
+    }
+  }
+  // ─ Corporate tax (A15): 20% on positive taxable base ───
+  const tax = taxBase > 0 ? taxBase * 0.2 : 0;
+  // If loss this quarter, enqueue for future offset
+  if (pretax < 0) {
+    carryFwd.push({ quarter: ctx.quarter, amount: -pretax });
+  }
+  next.taxLossCarryForward = carryFwd.filter((e) => e.amount > 0);
   const netProfit = pretax - tax;
 
   // ─ Cash flow + RCF auto-draw (A8) ──────────────────────
@@ -881,7 +1025,7 @@ export function runQuarterClose(
 
   // Slider → brand / loyalty / ops pts per-quarter
   const sliderKeys: (keyof Sliders)[] = [
-    "staff", "marketing", "service", "rewards", "operations",
+    "staff", "marketing", "service", "rewards", "operations", "customerService",
   ];
   let brandDelta = 0;
   let loyaltyDelta = 0;
@@ -902,12 +1046,30 @@ export function runQuarterClose(
         : { level, quarters: 1 };
   }
 
-  const newBrandPts = Math.max(0, next.brandPts + brandDelta);
+  // Service dissonance penalty (PRD B6): Staff ↔ In-Flight Service gap ≥ 3 levels
+  const staffLvl = next.sliders.staff;
+  const serviceLvl = next.sliders.service;
+  let dissonanceBrandPenalty = 0;
+  let dissonanceLoyaltyPenalty = 0;
+  const gap = Math.abs(staffLvl - serviceLvl);
+  if (gap >= 3) {
+    if (staffLvl < serviceLvl) {
+      dissonanceBrandPenalty = -3;
+      dissonanceLoyaltyPenalty = -2;
+      notes.push(`Service dissonance: Staff (${staffLvl}) << Service (${serviceLvl}) — passengers notice mismatch. −3 Brand, −2% Loyalty.`);
+    } else {
+      dissonanceBrandPenalty = -2;
+      dissonanceLoyaltyPenalty = -1;
+      notes.push(`Service dissonance: Service (${serviceLvl}) << Staff (${staffLvl}) — great crew, underwhelming offering. −2 Brand, −1% Loyalty.`);
+    }
+  }
+
+  const newBrandPts = Math.max(0, next.brandPts + brandDelta + dissonanceBrandPenalty);
   const newOpsPts = Math.max(0, next.opsPts + opsDelta);
   // Loyalty drifts toward 50 slightly, plus slider delta
   const drift = (50 - next.customerLoyaltyPct) * 0.03;
   const newLoyalty = clamp(
-    0, 100, next.customerLoyaltyPct + loyaltyDelta + drift,
+    0, 100, next.customerLoyaltyPct + loyaltyDelta + drift + dissonanceLoyaltyPenalty,
   );
 
   // Update team state for Brand Value calc

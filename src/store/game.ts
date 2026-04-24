@@ -69,7 +69,7 @@ export interface GameStore extends GameState {
 
   decommissionAircraft(aircraftId: string): void;
 
-  refurbishAircraft(aircraftId: string, newCabin: CabinConfig):
+  renovateAircraft(aircraftId: string, newCabin: CabinConfig):
     { ok: boolean; error?: string };
 
   openRoute(args: {
@@ -123,6 +123,9 @@ export interface GameStore extends GameState {
   /** Admin: rename a team member. */
   renameMember(role: "CEO" | "CFO" | "CMO" | "CHRO", name: string): void;
 
+  /** Set the player team's insurance policy (PRD E5). */
+  setInsurancePolicy(policy: "none" | "low" | "medium" | "high"): void;
+
   /** List an aircraft on the second-hand market (A13). */
   listSecondHand(aircraftId: string, askingPriceUsd: number): { ok: boolean; error?: string };
   /** Buy from the second-hand market. */
@@ -142,7 +145,7 @@ export interface GameStore extends GameState {
 }
 
 const INITIAL_SLIDERS: Sliders = {
-  staff: 2, marketing: 2, service: 2, rewards: 2, operations: 2,
+  staff: 2, marketing: 2, service: 2, rewards: 2, operations: 2, customerService: 2,
 };
 
 function emptyStreaks() {
@@ -152,6 +155,7 @@ function emptyStreaks() {
     service: { level: 2, quarters: 0 },
     rewards: { level: 2, quarters: 0 },
     operations: { level: 2, quarters: 0 },
+    customerService: { level: 2, quarters: 0 },
   };
   return out;
 }
@@ -204,12 +208,24 @@ function makeStartingTeam(args: {
     flags: new Set<string>(),
     deferredEvents: [],
     rcfBalanceUsd: 0,
+    taxLossCarryForward: [],
+    insurancePolicy: "none",
     financialsByQuarter: [],
   };
 }
 
 function ensureStreaks(t: Team): Team {
   if (!t.sliderStreaks) return { ...t, sliderStreaks: emptyStreaks() };
+  // Backfill missing customerService streak for pre-v5 saves
+  if (!t.sliderStreaks.customerService) {
+    t = {
+      ...t,
+      sliderStreaks: {
+        ...t.sliderStreaks,
+        customerService: { level: 2, quarters: 0 },
+      },
+    };
+  }
   return t;
 }
 
@@ -242,6 +258,7 @@ export const useGame = create<GameStore>()(
           leaseQuarterly: null, ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
           retirementQuarter: 1 + 16, // 20 real years → 16 quarters
+          maintenanceDeficit: 0,
         };
         const starter2: FleetAircraft = { ...starter1, id: mkId("ac") };
         player.fleet = [starter1, starter2];
@@ -311,6 +328,7 @@ export const useGame = create<GameStore>()(
           ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
           cabinConfig, routeId: null,
           retirementQuarter: s.currentQuarter + 16,
+          maintenanceDeficit: 0,
         };
 
         set({
@@ -353,15 +371,16 @@ export const useGame = create<GameStore>()(
         return { ok: true };
       },
 
-      refurbishAircraft: (aircraftId, newCabin) => {
+      renovateAircraft: (aircraftId, newCabin) => {
         const s = get();
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player" };
         const plane = player.fleet.find((f) => f.id === aircraftId);
         if (!plane) return { ok: false, error: "Aircraft not found" };
         if (plane.acquisitionType !== "buy")
-          return { ok: false, error: "Only owned aircraft can be refurbished" };
-        const cost = plane.bookValue * 0.05;
+          return { ok: false, error: "Only owned aircraft can be renovated" };
+        // PRD F3: 20% of current book value, floor 5% of original purchase price
+        const cost = Math.max(plane.bookValue * 0.2, plane.purchasePrice * 0.05);
         if (player.cashUsd < cost)
           return { ok: false, error: `Need ${fmtMoneyPlain(cost)} cash` };
 
@@ -370,7 +389,14 @@ export const useGame = create<GameStore>()(
             ...t,
             cashUsd: t.cashUsd - cost,
             fleet: t.fleet.map((f) => f.id === aircraftId
-              ? { ...f, cabinConfig: newCabin, status: "grounded" as const, routeId: null }
+              ? {
+                  ...f,
+                  cabinConfig: newCabin,
+                  status: "grounded" as const,
+                  routeId: null,
+                  // +8 quarters lifespan extension
+                  retirementQuarter: f.retirementQuarter + 8,
+                }
               : f),
             routes: t.routes.map((r) => ({
               ...r,
@@ -378,6 +404,7 @@ export const useGame = create<GameStore>()(
             })),
           }),
         });
+        toast.info("Renovation started", `${AIRCRAFT_BY_ID[plane.specId]?.name ?? "Aircraft"} · 1Q downtime · +2 years lifespan`);
         return { ok: true };
       },
 
@@ -729,6 +756,22 @@ export const useGame = create<GameStore>()(
         });
       },
 
+      // ── Insurance policy (PRD E5) ──────────────────────────
+      setInsurancePolicy: (policy) => {
+        const s = get();
+        const labels: Record<typeof policy, string> = {
+          none: "None", low: "Level 1 (30% coverage)",
+          medium: "Level 2 (50% coverage)", high: "Level 3 (80% coverage)",
+        };
+        set({
+          teams: s.teams.map((t) => t.id !== s.playerTeamId ? t : {
+            ...t,
+            insurancePolicy: policy,
+          }),
+        });
+        toast.info(`Insurance policy: ${labels[policy]}`);
+      },
+
       // ── Second-hand aircraft market (A13) ──────────────────
       listSecondHand: (aircraftId, askingPriceUsd) => {
         const s = get();
@@ -794,6 +837,7 @@ export const useGame = create<GameStore>()(
           cabinConfig: listing.cabinConfig,
           routeId: null,
           retirementQuarter: listing.retirementQuarter,
+          maintenanceDeficit: 0,
         };
         set({
           secondHandListings: s.secondHandListings.filter((l) => l.id !== listingId),
@@ -913,6 +957,7 @@ export const useGame = create<GameStore>()(
           leaseQuarterly: null, ecoUpgrade: true, ecoUpgradeQuarter: s.currentQuarter, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
           retirementQuarter: s.currentQuarter + 16,
+          maintenanceDeficit: 0,
         }));
         set({
           teams: s.teams.map((t) => t.id === player.id ? {
@@ -1097,7 +1142,12 @@ export const useGame = create<GameStore>()(
           flags: new Set(Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? [])),
           deferredEvents: t.deferredEvents ?? [],
           rcfBalanceUsd: t.rcfBalanceUsd ?? 0,
+          taxLossCarryForward: t.taxLossCarryForward ?? [],
           secondaryHubCodes: t.secondaryHubCodes ?? [],
+          sliders: {
+            ...t.sliders,
+            customerService: t.sliders?.customerService ?? 2,
+          },
           members: t.members && t.members.length > 0 ? t.members : [
             { role: "CEO",  name: "Your CEO",  mvpPts: 0, cards: [] },
             { role: "CFO",  name: "Your CFO",  mvpPts: 0, cards: [] },
@@ -1107,7 +1157,9 @@ export const useGame = create<GameStore>()(
           fleet: t.fleet.map((f) => ({
             ...f,
             retirementQuarter: f.retirementQuarter ?? f.purchaseQuarter + 16,
+            maintenanceDeficit: f.maintenanceDeficit ?? 0,
           })),
+          insurancePolicy: t.insurancePolicy ?? "none",
           routes: t.routes.map((r) => ({
             ...r,
             econFare: r.econFare ?? null,
