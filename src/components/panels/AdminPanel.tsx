@@ -349,6 +349,49 @@ export function AdminPanel() {
         </section>
       )}
 
+      {/* Hub infrastructure investments (PRD D4) */}
+      <section>
+        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+          Hub infrastructure (PRD D4)
+        </div>
+        <div className="grid grid-cols-2 gap-1.5 text-[0.75rem] mb-2">
+          <Button size="sm" variant="secondary"
+            onClick={() => {
+              const r = s.buyHubInvestment("fuelReserveTank");
+              if (!r.ok) alert(r.error);
+            }}>
+            Fuel Tank · $8M
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => {
+              const r = s.buyHubInvestment("maintenanceDepot");
+              if (!r.ok) alert(r.error);
+            }}>
+            Maint Depot · $12M
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => {
+              const r = s.buyHubInvestment("premiumLounge");
+              if (!r.ok) alert(r.error);
+            }}>
+            Premium Lounge · $5M
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => {
+              const r = s.buyHubInvestment("opsExpansion");
+              if (!r.ok) alert(r.error);
+            }}>
+            Ops Expansion · $5M
+          </Button>
+        </div>
+        <div className="text-[0.6875rem] text-ink-muted">
+          Fuel tanks: {player.hubInvestments.fuelReserveTankHubs.length} ·
+          Depots: {player.hubInvestments.maintenanceDepotHubs.length} ·
+          Lounges: {player.hubInvestments.premiumLoungeHubs.length} ·
+          Ops slots: +{player.hubInvestments.opsExpansionSlots}
+        </div>
+      </section>
+
       {/* Insurance policy (PRD E5) */}
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">

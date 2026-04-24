@@ -77,7 +77,7 @@ export interface Route {
   busFare: number | null;
   firstFare: number | null;
 
-  status: "active" | "pending" | "closed";
+  status: "active" | "pending" | "closed" | "suspended";
   openQuarter: number;
   avgOccupancy: number;          // 0..1
   quarterlyRevenue: number;
@@ -86,6 +86,9 @@ export interface Route {
 
   /** True if route carries cargo instead of passengers. */
   isCargo?: boolean;
+
+  /** Quarters the route has been operating (for Legacy Bonus E8.1). */
+  consecutiveQuartersActive: number;
 }
 
 // ─── Sliders ──────────────────────────────────────────────
@@ -223,6 +226,20 @@ export interface Team {
 
   // Airports where cargo storage has been activated (PRD C9 setup cost paid)
   cargoStorageActivations: string[];
+
+  // Hub infrastructure investments (PRD D4)
+  hubInvestments: {
+    fuelReserveTankHubs: string[];       // 15% fuel cost reduction at these hubs
+    maintenanceDepotHubs: string[];      // 20% maintenance reduction for planes based here
+    premiumLoungeHubs: string[];         // +8% F/C occupancy on routes through these hubs
+    opsExpansionSlots: number;           // extra route capacity (+5 per unit)
+  };
+
+  // Labour Relations Score (PRD E8.3)
+  labourRelationsScore: number;          // 0..100
+
+  // Milestones earned (PRD E8.9)
+  milestones: string[];
 
   // Sealed auction bids queued for the next slot release (admin-auctioned per quarter)
   pendingSlotBids: Array<{

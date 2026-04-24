@@ -138,6 +138,16 @@ export interface GameStore extends GameState {
   /** Admin: release N slots at an airport, resolving queued bids highest-first. */
   adminReleaseSlots(airportCode: string, slots: number): void;
 
+  /** Hub Infrastructure (PRD D4) */
+  buyHubInvestment(
+    kind: "fuelReserveTank" | "maintenanceDepot" | "premiumLounge" | "opsExpansion",
+    hubCode?: string,
+  ): { ok: boolean; error?: string };
+
+  /** Suspend an active route (PRD E8.5/G11). */
+  suspendRoute(routeId: string): { ok: boolean; error?: string };
+  resumeRoute(routeId: string): { ok: boolean; error?: string };
+
   /** List an aircraft on the second-hand market (A13). */
   listSecondHand(aircraftId: string, askingPriceUsd: number): { ok: boolean; error?: string };
   /** Buy from the second-hand market. */
@@ -230,6 +240,14 @@ function makeStartingTeam(args: {
     pendingSlotBids: [],
     // PRD C9 — hub auto-activated for cargo (bundled with hub terminal fee)
     cargoStorageActivations: [args.hubCode],
+    hubInvestments: {
+      fuelReserveTankHubs: [],
+      maintenanceDepotHubs: [],
+      premiumLoungeHubs: [],
+      opsExpansionSlots: 0,
+    },
+    labourRelationsScore: 50,
+    milestones: [],
     financialsByQuarter: [],
   };
 }
@@ -490,6 +508,7 @@ export const useGame = create<GameStore>()(
           quarterlyFuelCost: 0,
           quarterlySlotCost: 0,
           isCargo: isCargo ?? false,
+          consecutiveQuartersActive: 0,
         };
 
         // Activation cost for cargo routes (PRD C9)
@@ -889,6 +908,88 @@ export const useGame = create<GameStore>()(
         });
         toast.info("Sold stored fuel",
           `${(litres / 1_000_000).toFixed(1)}M L @ $${sellPrice.toFixed(3)}/L → $${(proceeds / 1_000_000).toFixed(1)}M proceeds`);
+        return { ok: true };
+      },
+
+      // ── Hub infrastructure (PRD D4) ────────────────────────
+      buyHubInvestment: (kind, hubCode) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        const code = hubCode ?? player.hubCode;
+        const costs = {
+          fuelReserveTank: 8_000_000,
+          maintenanceDepot: 12_000_000,
+          premiumLounge: 5_000_000,
+          opsExpansion: 5_000_000,
+        };
+        const cost = costs[kind];
+        if (player.cashUsd < cost)
+          return { ok: false, error: `Need $${(cost / 1_000_000).toFixed(1)}M` };
+
+        set({
+          teams: s.teams.map((t) => {
+            if (t.id !== player.id) return t;
+            const h = t.hubInvestments;
+            const next = { ...h };
+            if (kind === "fuelReserveTank") {
+              if (h.fuelReserveTankHubs.includes(code))
+                return t;
+              next.fuelReserveTankHubs = [...h.fuelReserveTankHubs, code];
+            } else if (kind === "maintenanceDepot") {
+              if (h.maintenanceDepotHubs.includes(code))
+                return t;
+              next.maintenanceDepotHubs = [...h.maintenanceDepotHubs, code];
+            } else if (kind === "premiumLounge") {
+              if (h.premiumLoungeHubs.includes(code))
+                return t;
+              next.premiumLoungeHubs = [...h.premiumLoungeHubs, code];
+            } else if (kind === "opsExpansion") {
+              next.opsExpansionSlots = h.opsExpansionSlots + 5;
+            }
+            return { ...t, cashUsd: t.cashUsd - cost, hubInvestments: next };
+          }),
+        });
+        const labels = {
+          fuelReserveTank: "Fuel Reserve Tank",
+          maintenanceDepot: "Maintenance Depot",
+          premiumLounge: "Premium Lounge",
+          opsExpansion: "Hub Ops Expansion",
+        };
+        toast.success(`${labels[kind]} installed at ${code}`, `−$${(cost / 1_000_000).toFixed(0)}M capital`);
+        return { ok: true };
+      },
+
+      suspendRoute: (routeId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player" };
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            routes: t.routes.map((r) => r.id === routeId
+              ? { ...r, status: "suspended" as const, consecutiveQuartersActive: 0 }
+              : r),
+            fleet: t.fleet.map((f) => f.routeId === routeId
+              ? { ...f, status: "active" as const, routeId: null }
+              : f),
+          }),
+        });
+        toast.info("Route suspended", "Slots retained, 20% holding fee applies.");
+        return { ok: true };
+      },
+
+      resumeRoute: (routeId) => {
+        const s = get();
+        set({
+          teams: s.teams.map((t) => t.id !== s.playerTeamId ? t : {
+            ...t,
+            routes: t.routes.map((r) => r.id === routeId
+              ? { ...r, status: "active" as const }
+              : r),
+          }),
+        });
+        toast.success("Route resumed");
         return { ok: true };
       },
 
@@ -1396,12 +1497,21 @@ export const useGame = create<GameStore>()(
           slotsByAirport: t.slotsByAirport ?? { [t.hubCode]: 30 },
           pendingSlotBids: t.pendingSlotBids ?? [],
           cargoStorageActivations: t.cargoStorageActivations ?? [t.hubCode],
-          routes: t.routes.map((r) => ({
+          hubInvestments: t.hubInvestments ?? {
+            fuelReserveTankHubs: [],
+            maintenanceDepotHubs: [],
+            premiumLoungeHubs: [],
+            opsExpansionSlots: 0,
+          },
+          labourRelationsScore: t.labourRelationsScore ?? 50,
+          milestones: t.milestones ?? [],
+          routes: (t.routes ?? []).map((r) => ({
             ...r,
             econFare: r.econFare ?? null,
             busFare: r.busFare ?? null,
             firstFare: r.firstFare ?? null,
             isCargo: r.isCargo ?? false,
+            consecutiveQuartersActive: r.consecutiveQuartersActive ?? 0,
           })),
         }));
       },

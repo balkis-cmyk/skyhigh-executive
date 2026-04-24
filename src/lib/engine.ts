@@ -728,24 +728,58 @@ export function runQuarterClose(
   let fuelCost = 0;
   let slotCost = 0;
   let totalPassengers = 0;
-  for (const r of next.routes.filter((r) => r.status === "active")) {
-    const econ = computeRouteEconomics(next, r, ctx.quarter, ctx.fuelIndex);
-    revenue += econ.quarterlyRevenue;
-    fuelCost += econ.quarterlyFuelCost;
-    slotCost += econ.quarterlySlotCost;
-    totalPassengers += econ.dailyPax * QUARTER_DAYS;
-    routeBreakdown.push({
-      routeId: r.id,
-      revenue: econ.quarterlyRevenue,
-      fuelCost: econ.quarterlyFuelCost,
-      slotCost: econ.quarterlySlotCost,
-      profit: econ.quarterlyProfit,
-      occupancy: econ.occupancy,
-    });
-    r.avgOccupancy = econ.occupancy;
-    r.quarterlyRevenue = econ.quarterlyRevenue;
-    r.quarterlyFuelCost = econ.quarterlyFuelCost;
-    r.quarterlySlotCost = econ.quarterlySlotCost;
+  for (const r of next.routes) {
+    if (r.status === "active") {
+      // Route Legacy Bonus (PRD E8.1) — +12% after 4+ consecutive active quarters
+      const legacyBonus = r.consecutiveQuartersActive >= 4 ? 1.12 : 1.0;
+      // First-Mover Bonus (PRD E8.8) — +20% for first 2 quarters (simplified: opening quarter + 1)
+      const firstMoverBonus = ctx.quarter - r.openQuarter < 2 ? 1.20 : 1.0;
+
+      const econ = computeRouteEconomics(next, r, ctx.quarter, ctx.fuelIndex);
+      const boostedRevenue = econ.quarterlyRevenue * legacyBonus * firstMoverBonus;
+      revenue += boostedRevenue;
+      fuelCost += econ.quarterlyFuelCost;
+      slotCost += econ.quarterlySlotCost;
+      totalPassengers += econ.dailyPax * QUARTER_DAYS;
+      routeBreakdown.push({
+        routeId: r.id,
+        revenue: boostedRevenue,
+        fuelCost: econ.quarterlyFuelCost,
+        slotCost: econ.quarterlySlotCost,
+        profit: boostedRevenue - econ.quarterlyFuelCost - econ.quarterlySlotCost,
+        occupancy: econ.occupancy,
+      });
+      r.avgOccupancy = econ.occupancy;
+      r.quarterlyRevenue = boostedRevenue;
+      r.quarterlyFuelCost = econ.quarterlyFuelCost;
+      r.quarterlySlotCost = econ.quarterlySlotCost;
+      // Increment Legacy counter
+      r.consecutiveQuartersActive = (r.consecutiveQuartersActive ?? 0) + 1;
+    } else if (r.status === "suspended") {
+      // PRD E8.5/G11 — 20% of normal slot fee as holding cost
+      const dest = CITIES_BY_CODE[r.destCode];
+      if (dest) {
+        const holdingCost = slotFeeUsd(dest.tier) * r.dailyFrequency * QUARTER_DAYS * 0.2;
+        slotCost += holdingCost;
+      }
+    }
+  }
+
+  // ─ Hub Investments: Fuel Reserve Tank reduces fuel cost at that hub's routes
+  if (next.hubInvestments?.fuelReserveTankHubs.length > 0) {
+    let fuelSavings = 0;
+    for (const r of next.routes.filter((r) => r.status === "active")) {
+      const touchesInvestedHub =
+        next.hubInvestments.fuelReserveTankHubs.includes(r.originCode) ||
+        next.hubInvestments.fuelReserveTankHubs.includes(r.destCode);
+      if (touchesInvestedHub) {
+        fuelSavings += r.quarterlyFuelCost * 0.15;
+      }
+    }
+    if (fuelSavings > 0) {
+      fuelCost -= fuelSavings;
+      notes.push(`Fuel Reserve Tank saved $${(fuelSavings / 1e6).toFixed(1)}M`);
+    }
   }
 
   // ─ Fuel Storage reconciliation (PRD E2) ────────────────
@@ -829,6 +863,33 @@ export function runQuarterClose(
 
   // Fuel tank maintenance (PRD E2)
   maintenanceCost += fuelTankMaint;
+
+  // Hub Maintenance Depot (PRD D4): 20% fleet maintenance reduction per depot
+  const depotCount = next.hubInvestments?.maintenanceDepotHubs.length ?? 0;
+  if (depotCount > 0) {
+    const reduction = Math.min(0.5, depotCount * 0.2);
+    const saved = maintenanceCost * reduction;
+    maintenanceCost -= saved;
+    notes.push(`Maintenance Depot saved $${(saved / 1e6).toFixed(1)}M`);
+  }
+
+  // Fleet Uniformity Bonus (PRD E8.2): 80%+ same family → maintenance ×0.95, ops +3
+  const activeFleet = next.fleet.filter((f) => f.status === "active");
+  if (activeFleet.length >= 5) {
+    const families: Record<string, number> = {};
+    for (const f of activeFleet) {
+      const family = f.specId.split("-")[0]; // crude family bucket
+      families[family] = (families[family] ?? 0) + 1;
+    }
+    const maxFamilyShare = Math.max(...Object.values(families)) / activeFleet.length;
+    if (maxFamilyShare >= 0.8) {
+      maintenanceCost *= 0.95;
+      next.flags.add("fleet_uniformity");
+      notes.push("Fleet uniformity (80%+ one family): maintenance ×0.95, Ops +3/Q");
+    } else {
+      next.flags.delete("fleet_uniformity");
+    }
+  }
 
   // Insurance premium (PRD E5)
   const insurancePremiumPct: Record<string, number> = {
@@ -1105,6 +1166,47 @@ export function runQuarterClose(
   next.brandPts = newBrandPts;
   next.opsPts = newOpsPts;
   next.customerLoyaltyPct = newLoyalty;
+
+  // ─ Milestone Cards (PRD E8.9) ──────────────────────────
+  const milestonesEarned = new Set(next.milestones ?? []);
+  let milestoneBrand = 0;
+  let milestoneOps = 0;
+  let milestoneLoyalty = 0;
+  const activeRoutes = next.routes.filter((r) => r.status === "active");
+
+  function earn(id: string, ops: number, brand: number, loyalty: number) {
+    if (!milestonesEarned.has(id)) {
+      milestonesEarned.add(id);
+      milestoneOps += ops;
+      milestoneBrand += brand;
+      milestoneLoyalty += loyalty;
+      notes.push(`Milestone: ${id}`);
+    }
+  }
+
+  if (activeRoutes.some((r) => r.isCargo))
+    earn("First Cargo Route", 5, 0, 0);
+  if (activeRoutes.length >= 10)
+    earn("10 Active Routes", 0, 5, 2);
+  if (activeFleet.some((f) => (AIRCRAFT_BY_ID[f.specId]?.seats.first ?? 0) > 0))
+    earn("First Class Service Active", 0, 3, 0);
+  if (activeFleet.length >= 10)
+    earn("Fleet of 10", 5, 0, 0);
+  const continents = new Set(activeRoutes.flatMap((r) => [
+    CITIES_BY_CODE[r.originCode]?.region, CITIES_BY_CODE[r.destCode]?.region,
+  ].filter(Boolean)));
+  if (continents.size >= 3)
+    earn("International Network", 0, 8, 0);
+
+  next.milestones = Array.from(milestonesEarned);
+  next.brandPts = Math.max(0, next.brandPts + milestoneBrand);
+  next.opsPts = Math.max(0, next.opsPts + milestoneOps);
+  next.customerLoyaltyPct = clamp(0, 100, next.customerLoyaltyPct + milestoneLoyalty);
+
+  // Fleet uniformity ops bonus (PRD E8.2)
+  if (next.flags.has("fleet_uniformity")) {
+    next.opsPts = Math.max(0, next.opsPts + 3);
+  }
 
   const newBrandValue = computeBrandValue(next);
 

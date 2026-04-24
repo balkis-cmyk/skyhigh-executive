@@ -185,6 +185,50 @@ export function OverviewPanel() {
         </div>
       </div>
 
+      {/* Milestones */}
+      {player.milestones && player.milestones.length > 0 && (
+        <div>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Milestones earned
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {player.milestones.map((m) => (
+              <Badge key={m} tone="accent">{m}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Fleet efficiency (PRD E8.7) */}
+      {player.fleet.filter((f) => f.status === "active").length > 0 && (
+        <div className="rounded-md border border-line bg-surface-2/60 p-3">
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-1">
+            Fleet efficiency
+          </div>
+          {(() => {
+            const active = player.fleet.filter((f) => f.status === "active");
+            const avg = active.reduce((sum, f) => {
+              const spec = f.specId;
+              // Use PRD fuel burns from aircraft data table
+              const fuelBurn = ({
+                A319: 3.2, A320: 3.4, A321: 3.8, "B737-700": 3.1, "B737-800": 3.3,
+                "B757-200": 3.9, "B767-300ER": 4.8, "A330-200": 4.6,
+                "B777-200ER": 5.2, "B747-400": 8.5, "A380-800": 11.0,
+                "B787-9": 4.2, "A350-900": 4.0, A320neo: 2.8, "A220-300": 2.5,
+                "B737-MAX-8": 2.9, "B777X-9": 5.0, A321XLR: 3.4,
+              } as Record<string, number>)[spec] ?? 4.0;
+              return sum + (f.ecoUpgrade ? fuelBurn * 0.9 : fuelBurn);
+            }, 0) / active.length;
+            return (
+              <div className="flex items-baseline justify-between">
+                <span className="tabular font-display text-[1.25rem] text-ink">{avg.toFixed(2)}</span>
+                <span className="text-[0.75rem] text-ink-muted">L/km fleet average</span>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Pending deferred events */}
       {player.deferredEvents && player.deferredEvents.filter((e) => !e.resolved).length > 0 && (
         <div>

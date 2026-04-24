@@ -18,7 +18,9 @@ export function RoutesPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   if (!player) return null;
 
-  const active = player.routes.filter((r) => r.status === "active");
+  const active = player.routes.filter((r) => r.status === "active" || r.status === "suspended");
+  const suspendRoute = useGame((g) => g.suspendRoute);
+  const resumeRoute = useGame((g) => g.resumeRoute);
 
   return (
     <div className="space-y-3">
@@ -74,7 +76,7 @@ export function RoutesPanel() {
                       {fmtMoney(profit)}
                     </span>
                   </div>
-                  <div className="flex justify-between mt-2 pt-2 border-t border-line">
+                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-line">
                     <button
                       className="inline-flex items-center gap-1.5 text-[0.75rem] text-ink-2 hover:text-ink"
                       onClick={() => setEditingId(editing ? null : r.id)}
@@ -82,12 +84,32 @@ export function RoutesPanel() {
                       {editing ? <X size={13} /> : <Pencil size={13} />}
                       {editing ? "Close edit" : "Edit"}
                     </button>
-                    <button
-                      className="text-[0.75rem] text-negative hover:underline"
-                      onClick={() => { if (confirm("Close this route?")) closeRoute(r.id); }}
-                    >
-                      Close route
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {r.status === "active" ? (
+                        <button
+                          className="text-[0.75rem] text-ink-2 hover:text-warning hover:underline"
+                          onClick={() => suspendRoute(r.id)}
+                        >
+                          Suspend
+                        </button>
+                      ) : (
+                        <>
+                          <Badge tone="warning">Suspended</Badge>
+                          <button
+                            className="text-[0.75rem] text-ink-2 hover:text-positive hover:underline"
+                            onClick={() => resumeRoute(r.id)}
+                          >
+                            Resume
+                          </button>
+                        </>
+                      )}
+                      <button
+                        className="text-[0.75rem] text-negative hover:underline"
+                        onClick={() => { if (confirm("Close this route permanently?")) closeRoute(r.id); }}
+                      >
+                        Close
+                      </button>
+                    </div>
                   </div>
                 </div>
 
