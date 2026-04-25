@@ -970,7 +970,7 @@ export function runQuarterClose(
   const prevBrandValue = computeBrandValue(team);
   const milestonesBefore = new Set(team.milestones ?? []);
 
-  let next: Team = {
+  const next: Team = {
     ...team,
     flags: new Set(team.flags),
     deferredEvents: [...(team.deferredEvents ?? [])],
@@ -1107,7 +1107,7 @@ export function runQuarterClose(
   for (const f of next.fleet) {
     if (f.status !== "active") continue;
     const ageQ = Math.max(0, ctx.quarter - f.purchaseQuarter);
-    let basePct =
+    const basePct =
       ageQ < 20 ? 0.008 :
       ageQ < 40 ? 0.012 :
       ageQ < 60 ? 0.018 : 0.025;
@@ -1229,7 +1229,7 @@ export function runQuarterClose(
   // Clean expired entries (older than 5 quarters)
   const carryFwd = (next.taxLossCarryForward ?? [])
     .filter((entry) => ctx.quarter - entry.quarter < 5);
-  let availableLossOffset = carryFwd.reduce((sum, e) => sum + e.amount, 0);
+  const availableLossOffset = carryFwd.reduce((sum, e) => sum + e.amount, 0);
   let taxBase = pretax;
   if (pretax > 0 && availableLossOffset > 0) {
     const applied = Math.min(pretax, availableLossOffset);

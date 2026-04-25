@@ -5,7 +5,6 @@ import { Badge, Button, Modal, ModalBody, ModalFooter, ModalHeader, Input } from
 import { AIRCRAFT, AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney, fmtPct } from "@/lib/format";
-import { CITIES_BY_CODE } from "@/data/cities";
 import { cn } from "@/lib/cn";
 
 /** Group aircraft by spec id, count quantity, and aggregate utilisation. */

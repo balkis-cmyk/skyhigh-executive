@@ -16,13 +16,10 @@ export function AdminPanel() {
   const [secondaryHub, setSecondaryHub] = useState("");
   const [flashDealCount, setFlashDealCount] = useState(3);
 
-  if (!player) return null;
-
-  const tier1 = CITIES.filter((c) => c.tier === 1).sort((a, b) => a.name.localeCompare(b.name));
-
-  // Dry-run quarter close preview
+  // Dry-run quarter close preview — useMemo MUST run unconditionally above
+  // any early returns (rules of hooks).
   const preview = useMemo(() => {
-    // Deep-clone-ish: structuredClone + restore Set for flags
+    if (!player) return null;
     const clone = {
       ...player,
       flags: new Set(player.flags),
@@ -36,6 +33,10 @@ export function AdminPanel() {
       quarter: s.currentQuarter,
     });
   }, [player, s.baseInterestRatePct, s.fuelIndex, s.currentQuarter]);
+
+  if (!player || !preview) return null;
+
+  const tier1 = CITIES.filter((c) => c.tier === 1).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="space-y-5">

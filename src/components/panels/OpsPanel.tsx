@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Button } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { SLIDER_LABELS, SLIDER_PCT_REVENUE, SLIDER_EFFECTS } from "@/lib/engine";
 import { useGame, selectPlayer } from "@/store/game";
 import type { SliderLevel, Sliders } from "@/types/game";

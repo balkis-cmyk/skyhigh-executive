@@ -11,7 +11,7 @@ import { useUi, type PanelId } from "@/store/ui";
 import { SecondaryHubModal } from "@/components/game/SecondaryHubModal";
 import { HubInvestmentsModal } from "@/components/game/HubInvestmentsModal";
 import { Plus, MapPin, Award, Lock, Layers } from "lucide-react";
-import { MILESTONES, MILESTONES_BY_ID } from "@/data/milestones";
+import { MILESTONES } from "@/data/milestones";
 import { cn } from "@/lib/cn";
 
 export function OverviewPanel() {
