@@ -1935,13 +1935,16 @@ export const useGame = create<GameStore>()(
             const intendedWeekly = r.dailyFrequency * 7;
             const effectiveWeekly = Math.min(intendedWeekly, availO, availD);
             if (effectiveWeekly < 1) {
+              const reason =
+                `held ${slotsO}@${r.originCode} / ${slotsD}@${r.destCode}, ` +
+                `${usedO}/${usedD} used, ${availO}/${availD} free, ` +
+                `need ${intendedWeekly}/wk`;
               if (surfaceDiagnostics) {
-                earlyStillPending.push(
-                  `${r.originCode}→${r.destCode}: held ${slotsO}@${r.originCode}/${slotsD}@${r.destCode}, ` +
-                  `${usedO}/${usedD} used, ${availO}/${availD} free, need ${intendedWeekly}/wk`,
-                );
+                earlyStillPending.push(`${r.originCode}→${r.destCode}: ${reason}`);
               }
-              newRoutes.push(r); // keep pending
+              // Persist the reason on the Route so the Routes panel can
+              // show it any time (not just the one-shot toast at close).
+              newRoutes.push({ ...r, pendingReason: reason });
               continue;
             }
             if (surfaceDiagnostics) earlyActivations += 1;
@@ -1949,6 +1952,7 @@ export const useGame = create<GameStore>()(
               ...r,
               status: "active" as const,
               dailyFrequency: Math.max(1, Math.round(effectiveWeekly / 7)),
+              pendingReason: undefined,
               pendingBidPrices: undefined,
               pendingBidSlots: undefined,
             });

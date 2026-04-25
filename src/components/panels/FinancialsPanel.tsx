@@ -217,6 +217,40 @@ export function FinancialsPanel() {
       {/* Projected P&L — dry-run of this quarter close */}
       {player && <ProjectedPL /> }
 
+      {/* Brand + loyalty + ops trend chart — quick at-a-glance trajectory
+          rather than just absolute numbers. Three sparkline rows
+          (Brand pts, Loyalty %, Ops pts) keyed off financialsByQuarter. */}
+      {player.financialsByQuarter.length >= 2 && (
+        <section>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Brand · Loyalty · Ops trajectory
+          </div>
+          <div className="rounded-md border border-line bg-surface p-3 space-y-2">
+            <TrendRow
+              label="Brand pts"
+              series={player.financialsByQuarter.map((q) => q.brandPts ?? 0)}
+              color="#1E6B5C"
+              suffix=""
+              max={100}
+            />
+            <TrendRow
+              label="Loyalty %"
+              series={player.financialsByQuarter.map((q) => q.loyalty ?? 0)}
+              color="#0072B5"
+              suffix="%"
+              max={100}
+            />
+            <TrendRow
+              label="Ops pts"
+              series={player.financialsByQuarter.map((q) => q.opsPts ?? 0)}
+              color="#C46E27"
+              suffix=""
+              max={100}
+            />
+          </div>
+        </section>
+      )}
+
       {player.financialsByQuarter.length > 0 && (
         <section>
           <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">Quarterly history</div>
@@ -362,4 +396,62 @@ function Th({ children, className }: { children?: React.ReactNode; className?: s
 }
 function Td({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <td className={`px-2 py-1.5 align-top ${className ?? ""}`}>{children}</td>;
+}
+
+/** Compact sparkline row — label, polyline trend, current value, delta
+ *  vs first sample. SVG is fluid-width so it adapts to the container.
+ *  Used by the Reports → Financials brand/loyalty/ops trajectory block. */
+function TrendRow({
+  label, series, color, suffix, max,
+}: {
+  label: string;
+  series: number[];
+  color: string;
+  suffix: string;
+  max: number;
+}) {
+  if (series.length === 0) return null;
+  const w = 220;
+  const h = 28;
+  const lo = 0;
+  const hi = Math.max(max, ...series, 1);
+  const px = (v: number, i: number) => {
+    const x = series.length === 1 ? 0 : (i / (series.length - 1)) * w;
+    const y = h - ((v - lo) / (hi - lo)) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  };
+  const points = series.map(px).join(" ");
+  const current = series[series.length - 1];
+  const start = series[0];
+  const delta = current - start;
+  const fmt = (v: number) =>
+    suffix === "%" ? `${Math.round(v)}%` : Math.round(v).toString();
+  const tone =
+    delta > 0 ? "text-positive" : delta < 0 ? "text-negative" : "text-ink-muted";
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-20 text-[0.75rem] text-ink-2 shrink-0">{label}</span>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        className="flex-1 h-7"
+        aria-label={`${label} trend`}
+      >
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.6}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      </svg>
+      <span className="tabular font-mono text-[0.8125rem] text-ink w-10 text-right">
+        {fmt(current)}
+      </span>
+      <span className={`tabular font-mono text-[0.6875rem] w-12 text-right ${tone}`}>
+        {delta >= 0 ? "+" : ""}{fmt(delta)}
+      </span>
+    </div>
+  );
 }

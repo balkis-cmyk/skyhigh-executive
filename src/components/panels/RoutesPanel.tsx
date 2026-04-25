@@ -794,6 +794,11 @@ function RouteDetailModal({
             bid resolves at end of quarter. The route will activate at the lower
             of (your intended weekly frequency) and (slots actually won). If
             you&apos;re outbid, it cancels and aircraft return idle.
+            {route.pendingReason && (
+              <div className="mt-1.5 pt-1.5 border-t border-warning/20 font-mono text-[0.6875rem] text-ink-2">
+                Last auction: {route.pendingReason}
+              </div>
+            )}
           </div>
         )}
       </ModalHeader>
@@ -1251,11 +1256,37 @@ function DemandBreakdown({
   if (geoMatch && player.geographicPriority !== "global") onboardingBonus *= 1.08;
   if (player.csrTheme === "community" && origin.tier >= 2 && dest.tier >= 2) onboardingBonus *= 1.03;
 
+  // Cabin condition penalty — same min-satisfaction lookup as engine.
+  // Shows the player WHY a route with a beat-up plane is underperforming
+  // even with the right hub + CS settings.
+  const planes = route.aircraftIds
+    .map((id) => player.fleet.find((f) => f.id === id))
+    .filter((p): p is NonNullable<typeof p> => !!p && p.status === "active");
+  let cabinPenalty = 1.0;
+  let cabinLabel = "Cabin condition (no aircraft)";
+  if (planes.length > 0) {
+    const worstSat = Math.min(...planes.map((p) => p.satisfactionPct ?? 75));
+    if (worstSat < 30) { cabinPenalty = 0.92; cabinLabel = `Cabin condition · worst ${Math.round(worstSat)}% (poor)`; }
+    else if (worstSat < 50) { cabinPenalty = 0.96; cabinLabel = `Cabin condition · worst ${Math.round(worstSat)}% (mid)`; }
+    else if (worstSat >= 80) { cabinPenalty = 1.02; cabinLabel = `Cabin condition · worst ${Math.round(worstSat)}% (great)`; }
+    else { cabinLabel = `Cabin condition · worst ${Math.round(worstSat)}% (ok)`; }
+  }
+
+  // Loyalty retention — same band lookup as engine's loyaltyRetentionFactor.
+  const loyalty = player.customerLoyaltyPct ?? 50;
+  const loyaltyMult =
+    loyalty >= 80 ? 1.05 :
+    loyalty >= 65 ? 1.03 :
+    loyalty >= 50 ? 1.0 :
+    loyalty >= 35 ? 0.97 : 0.93;
+
   const rows: Array<{ label: string; mult: number; tone: "pos" | "neg" | "neutral" }> = [
     { label: `Hub bonus${isHub ? "" : isSecondary ? " (secondary)" : " (none)"}`, mult: hubMultiplier, tone: hubMultiplier > 1 ? "pos" : "neutral" },
     { label: `Customer Service · L${csLevel}`, mult: csMultiplier, tone: csMultiplier > 1 ? "pos" : csMultiplier < 1 ? "neg" : "neutral" },
     { label: hasLounge ? "Premium lounge at hub" : "No lounge at endpoints", mult: loungeBonus, tone: loungeBonus > 1 ? "pos" : "neutral" },
     { label: "Doctrine + geography fit", mult: onboardingBonus, tone: onboardingBonus > 1 ? "pos" : "neutral" },
+    { label: cabinLabel, mult: cabinPenalty, tone: cabinPenalty > 1 ? "pos" : cabinPenalty < 1 ? "neg" : "neutral" },
+    { label: `Customer loyalty · ${Math.round(loyalty)}%`, mult: loyaltyMult, tone: loyaltyMult > 1 ? "pos" : loyaltyMult < 1 ? "neg" : "neutral" },
   ];
   const compound = rows.reduce((m, r) => m * r.mult, 1);
 

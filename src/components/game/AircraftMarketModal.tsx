@@ -61,6 +61,13 @@ export function AircraftMarketModal({
 }: Props) {
   const [tab, setTab] = useState<Tab>("boeing");
   const [subfamily, setSubfamily] = useState<Subfamily>("passenger");
+  /** Quick capacity filter for the passenger sub-tab. Range filters
+   *  let the player narrow to "thin-route fleet" / "long-haul wides"
+   *  without scrolling through 40+ cards. */
+  type RangeBucket = "all" | "regional" | "narrow" | "wide";
+  type DistanceBucket = "any-range" | "short" | "medium" | "long";
+  const [rangeBucket, setRangeBucket] = useState<RangeBucket>("all");
+  const [distanceBucket, setDistanceBucket] = useState<DistanceBucket>("any-range");
   /** Spec id of the card the player has expanded. Click another card to
    *  flip the expansion; click the same card to collapse. Only one card
    *  at a time so the modal scroll doesn't get unwieldy. */
@@ -117,6 +124,22 @@ export function AircraftMarketModal({
       const q = marketQuery.toLowerCase();
       return a.name.toLowerCase().includes(q) ||
         a.id.toLowerCase().includes(q);
+    })
+    .filter((a) => {
+      // Capacity bucket — only relevant on the passenger sub-tab.
+      if (a.family !== "passenger" || rangeBucket === "all") return true;
+      const seats = a.seats.first + a.seats.business + a.seats.economy;
+      if (rangeBucket === "regional" && seats >= 100) return false;
+      if (rangeBucket === "narrow" && (seats < 100 || seats > 250)) return false;
+      if (rangeBucket === "wide" && seats <= 250) return false;
+      return true;
+    })
+    .filter((a) => {
+      if (distanceBucket === "any-range") return true;
+      if (distanceBucket === "short" && a.rangeKm >= 4500) return false;
+      if (distanceBucket === "medium" && (a.rangeKm < 4500 || a.rangeKm >= 9500)) return false;
+      if (distanceBucket === "long" && a.rangeKm < 9500) return false;
+      return true;
     });
 
   const tabs: Array<{ id: Tab; label: string; count: number }> = [
@@ -195,6 +218,53 @@ export function AircraftMarketModal({
               value={marketQuery}
               onChange={(e) => setMarketQuery(e.target.value)}
             />
+
+            {/* Capacity + range filter chips — only meaningful on the
+                passenger sub-tab. Keeps the cargo list uncluttered. */}
+            {subfamily === "passenger" && (
+              <div className="flex items-center gap-1.5 flex-wrap text-[0.75rem]">
+                <span className="text-[0.625rem] uppercase tracking-wider text-ink-muted">Capacity</span>
+                {([
+                  { k: "all", label: "All" },
+                  { k: "regional", label: "Regional <100" },
+                  { k: "narrow", label: "Narrow 100-250" },
+                  { k: "wide", label: "Wide 250+" },
+                ] as Array<{ k: RangeBucket; label: string }>).map(({ k, label }) => (
+                  <button
+                    key={k}
+                    onClick={() => setRangeBucket(k)}
+                    className={cn(
+                      "px-2 py-0.5 rounded-md border transition-colors",
+                      rangeBucket === k
+                        ? "bg-primary text-primary-fg border-primary font-medium"
+                        : "border-line text-ink-muted hover:bg-surface-hover",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <span className="text-[0.625rem] uppercase tracking-wider text-ink-muted ml-2">Range</span>
+                {([
+                  { k: "any-range", label: "Any" },
+                  { k: "short", label: "<4,500 km" },
+                  { k: "medium", label: "4.5-9.5K km" },
+                  { k: "long", label: "9,500+ km" },
+                ] as Array<{ k: DistanceBucket; label: string }>).map(({ k, label }) => (
+                  <button
+                    key={k}
+                    onClick={() => setDistanceBucket(k)}
+                    className={cn(
+                      "px-2 py-0.5 rounded-md border transition-colors",
+                      distanceBucket === k
+                        ? "bg-accent text-white border-accent font-medium"
+                        : "border-line text-ink-muted hover:bg-surface-hover",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {list.length === 0 ? (
               <div className="text-[0.8125rem] text-ink-muted italic py-6 text-center">

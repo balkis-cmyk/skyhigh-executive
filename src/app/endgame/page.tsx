@@ -46,7 +46,18 @@ export default function Endgame() {
       const m = aw.reduce((mm, a) => mm * a.airlineValueMult, 1);
       return { ...t, finalAirlineValue: computeAirlineValue(t) * m };
     });
-  const ranked = rankedTeams.sort((a, b) => b.finalAirlineValue - a.finalAirlineValue);
+  // Sort with explicit tiebreakers so two airlines with identical
+  // airline values resolve deterministically: cash > debt-free > brand
+  // > loyalty. The UI surfaces each tiebreaker so players can see WHY
+  // they ranked where they did.
+  const ranked = rankedTeams.sort((a, b) => {
+    if (b.finalAirlineValue !== a.finalAirlineValue)
+      return b.finalAirlineValue - a.finalAirlineValue;
+    if (b.cashUsd !== a.cashUsd) return b.cashUsd - a.cashUsd;
+    if (a.totalDebtUsd !== b.totalDebtUsd) return a.totalDebtUsd - b.totalDebtUsd;
+    if (b.brandPts !== a.brandPts) return b.brandPts - a.brandPts;
+    return b.customerLoyaltyPct - a.customerLoyaltyPct;
+  });
   const finalRank = ranked.findIndex((t) => t.id === player.id) + 1;
   const { title, sub } = legacyTitle(player.brandValue);
   const totalProfit = player.financialsByQuarter.reduce((s, q) => s + q.netProfit, 0);
@@ -424,8 +435,24 @@ export default function Endgame() {
 
         <Card className="mb-6">
           <CardBody>
-            <h2 className="font-display text-[1.5rem] text-ink mb-4">Final leaderboard</h2>
+            <div className="flex items-baseline justify-between mb-4">
+              <h2 className="font-display text-[1.5rem] text-ink">Final leaderboard</h2>
+              <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+                Sorted by airline value · ties broken by cash → debt → brand → loyalty
+              </span>
+            </div>
             <table className="w-full text-[0.9375rem]">
+              <thead>
+                <tr className="border-b border-line text-[0.625rem] uppercase tracking-wider text-ink-muted">
+                  <th className="text-left py-2 w-10">#</th>
+                  <th className="text-left py-2">Airline</th>
+                  <th className="text-right py-2">Airline value</th>
+                  <th className="text-right py-2 hidden md:table-cell">Cash</th>
+                  <th className="text-right py-2 hidden md:table-cell">Debt</th>
+                  <th className="text-right py-2 hidden md:table-cell">Brand</th>
+                  <th className="text-right py-2 hidden md:table-cell">Loyalty</th>
+                </tr>
+              </thead>
               <tbody>
                 {ranked.map((t, i) => (
                   <tr key={t.id} className={`border-b border-line last:border-0 ${t.id === player.id ? "bg-[rgba(20,53,94,0.04)]" : ""}`}>
@@ -445,6 +472,10 @@ export default function Endgame() {
                       </div>
                     </td>
                     <td className="py-3 text-right tabular font-display text-[1.125rem]">{fmtMoney(t.finalAirlineValue)}</td>
+                    <td className="py-3 text-right tabular font-mono text-[0.8125rem] text-ink-2 hidden md:table-cell">{fmtMoney(t.cashUsd)}</td>
+                    <td className="py-3 text-right tabular font-mono text-[0.8125rem] text-ink-2 hidden md:table-cell">{t.totalDebtUsd > 0 ? fmtMoney(t.totalDebtUsd) : "—"}</td>
+                    <td className="py-3 text-right tabular font-mono text-[0.8125rem] text-ink-2 hidden md:table-cell">{Math.round(t.brandPts)}</td>
+                    <td className="py-3 text-right tabular font-mono text-[0.8125rem] text-ink-2 hidden md:table-cell">{Math.round(t.customerLoyaltyPct)}%</td>
                   </tr>
                 ))}
               </tbody>

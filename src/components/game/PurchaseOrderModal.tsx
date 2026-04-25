@@ -368,6 +368,89 @@ function PurchaseOrderBody({
             >
               Reset to factory default
             </button>
+
+            {/* Cabin attractiveness preview — shows how this seat split
+                will compete for passengers in each cabin class. PRD §6.7
+                weights are eco {price 0.55, brand 0.20, loyalty 0.15,
+                service 0.10}, business {0.35/0.35/0.20/0.10}, first
+                {0.25/0.45/0.20/0.10}. Larger premium share earns more
+                BRAND-weighted demand but suppresses raw passenger volume.
+                The preview uses a baseline mid-market 60/60/50 player
+                profile so the comparison reads relative across configs. */}
+            {totalSeats > 0 && (() => {
+              // Mid-market baseline: brand 60, loyalty 50, service 60.
+              // Same args we'd pass to attractivenessByClass at runtime.
+              const baseArgs = {
+                priceScore: 70, // assume "Standard" tier as the mid-point
+                brandPts: 60,
+                loyaltyPct: 50,
+                serviceScore: 60,
+              };
+              // Re-implement the same weights so we don't have to import
+              // engine code into a UI-only component.
+              const score = (cls: "econ" | "bus" | "first") => {
+                const brandScore = Math.min(100, baseArgs.brandPts / 2);
+                const w =
+                  cls === "econ"  ? { p: 0.55, b: 0.20, l: 0.15, s: 0.10 } :
+                  cls === "bus"   ? { p: 0.35, b: 0.35, l: 0.20, s: 0.10 } :
+                                    { p: 0.25, b: 0.45, l: 0.20, s: 0.10 };
+                return baseArgs.priceScore * w.p +
+                  brandScore * w.b +
+                  baseArgs.loyaltyPct * w.l +
+                  baseArgs.serviceScore * w.s;
+              };
+              const econScore = customSeats.economy > 0 ? score("econ") : null;
+              const busScore = customSeats.business > 0 ? score("bus") : null;
+              const firstScore = customSeats.first > 0 ? score("first") : null;
+              const tone = (s: number | null) =>
+                s === null ? "text-ink-muted" :
+                s >= 70 ? "text-positive" :
+                s >= 55 ? "text-ink" : "text-negative";
+              return (
+                <div className="mt-3 rounded-md border border-line bg-surface p-3">
+                  <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+                    Cabin attractiveness preview
+                    <span className="ml-1 text-ink-muted normal-case tracking-normal">
+                      · vs mid-market peer (Brand 60 · Loyalty 50% · Service 60)
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-[0.75rem]">
+                    <div className="rounded bg-surface-2 p-2 text-center">
+                      <div className="text-ink-muted text-[0.625rem] uppercase">Economy</div>
+                      <div className={cn("font-mono tabular text-[1rem] mt-0.5", tone(econScore))}>
+                        {econScore !== null ? econScore.toFixed(1) : "—"}
+                      </div>
+                      <div className="text-[0.625rem] text-ink-muted mt-0.5">
+                        {customSeats.economy} seats
+                      </div>
+                    </div>
+                    <div className="rounded bg-surface-2 p-2 text-center">
+                      <div className="text-ink-muted text-[0.625rem] uppercase">Business</div>
+                      <div className={cn("font-mono tabular text-[1rem] mt-0.5", tone(busScore))}>
+                        {busScore !== null ? busScore.toFixed(1) : "—"}
+                      </div>
+                      <div className="text-[0.625rem] text-ink-muted mt-0.5">
+                        {customSeats.business} seats
+                      </div>
+                    </div>
+                    <div className="rounded bg-surface-2 p-2 text-center">
+                      <div className="text-ink-muted text-[0.625rem] uppercase">First</div>
+                      <div className={cn("font-mono tabular text-[1rem] mt-0.5", tone(firstScore))}>
+                        {firstScore !== null ? firstScore.toFixed(1) : "—"}
+                      </div>
+                      <div className="text-[0.625rem] text-ink-muted mt-0.5">
+                        {customSeats.first} seats
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[0.6875rem] text-ink-muted mt-2 leading-snug">
+                    Premium cabins lean on Brand and Loyalty more than price; Economy
+                    is price-sensitive. Boost Brand to grow First/Business yields,
+                    sharpen pricing to grow Economy load.
+                  </p>
+                </div>
+              );
+            })()}
           </Section>
         )}
 

@@ -137,6 +137,11 @@ export interface Route {
   /** Quarters in a row this route has been loss-making (for PRD G2 badge). */
   consecutiveLosingQuarters: number;
 
+  /** Human-readable reason this route is still pending after the most
+   *  recent close — e.g. "held 0@LHR / 14@SIN, need 14/wk". Lets the
+   *  Routes panel surface the blocker any time, not just via the
+   *  one-shot toast that fires at quarter close. Cleared on activation. */
+  pendingReason?: string;
   /** Bids the player committed to when opening this route as PENDING.
    *  Persists across quarter closes so the route auto re-bids each
    *  auction until it activates OR the player cancels manually. Cleared
