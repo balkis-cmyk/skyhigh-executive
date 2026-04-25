@@ -24,6 +24,10 @@
 .DS_Store
 *.pem
 
+# Reference assets the user keeps locally for visual research,
+# NOT used by the app at runtime.
+/plane images/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

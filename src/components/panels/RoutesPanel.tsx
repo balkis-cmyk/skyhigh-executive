@@ -5,12 +5,13 @@ import { Badge, Input, Modal, ModalBody, ModalFooter, ModalHeader, Button } from
 import { useGame, selectPlayer } from "@/store/game";
 import { useUi } from "@/store/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
-import { CITIES_BY_CODE } from "@/data/cities";
+import { CITIES, CITIES_BY_CODE } from "@/data/cities";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
-import { classFareRange } from "@/lib/engine";
-import type { PricingTier } from "@/types/game";
+import { classFareRange, distanceBetween } from "@/lib/engine";
+import type { City, PricingTier } from "@/types/game";
 import { cn } from "@/lib/cn";
-import { Pause, Play, X } from "lucide-react";
+import { Pause, Play, Plus, X } from "lucide-react";
+import { RouteSetupModal } from "@/components/game/RouteSetupModal";
 
 /**
  * Table-style route list (click a row to open a full detail modal) —
@@ -25,6 +26,14 @@ export function RoutesPanel() {
 
   const [query, setQuery] = useState("");
   const [activeRouteId, setActiveRouteId] = useState<string | null>(null);
+
+  // "New route" flow — opened via the panel's New-Route button so the
+  // player doesn't have to use the world map to start a route.
+  // Two-stage state: pick origin → pick dest → forward to RouteSetupModal.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOrigin, setPickerOrigin] = useState<string | null>(null);
+  const [pickerDest, setPickerDest] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
 
   // If GameCanvas asked us to focus a specific route (because the player
   // clicked an existing route's endpoints on the map), auto-open it once.
@@ -119,13 +128,25 @@ export function RoutesPanel() {
         <div className="text-[0.75rem] text-ink-muted tabular shrink-0">
           {rows.length} of {player.routes.filter((r) => r.status !== "closed").length}
         </div>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => {
+            setPickerOrigin(player.hubCode);  // sensible default
+            setPickerDest(null);
+            setPickerOpen(true);
+          }}
+          className="shrink-0"
+        >
+          <Plus size={13} className="mr-1" /> New route
+        </Button>
       </div>
 
       {rows.length === 0 ? (
         <div className="py-12 text-center text-ink-muted text-[0.875rem] rounded-lg border border-dashed border-line">
           {query
             ? "No routes match that search."
-            : "No routes yet — click any city on the map to open one."}
+            : "No routes yet — click New route above, or pick a city on the map."}
         </div>
       ) : (
         <div className="rounded-md border border-line overflow-hidden">
@@ -242,6 +263,284 @@ export function RoutesPanel() {
           }}
         />
       )}
+
+      {/* New-route picker — opened from the panel's "New route" button. */}
+      <NewRoutePicker
+        open={pickerOpen}
+        origin={pickerOrigin}
+        dest={pickerDest}
+        onOriginChange={setPickerOrigin}
+        onDestChange={setPickerDest}
+        onCancel={() => setPickerOpen(false)}
+        onConfirm={() => {
+          if (pickerOrigin && pickerDest) {
+            setPickerOpen(false);
+            setSetupOpen(true);
+          }
+        }}
+        ownedCodes={
+          new Set([
+            player.hubCode,
+            ...player.secondaryHubCodes,
+            ...player.routes
+              .filter((r) => r.status !== "closed")
+              .flatMap((r) => [r.originCode, r.destCode]),
+          ])
+        }
+      />
+
+      {/* Hand off to the existing route setup flow once both endpoints are picked. */}
+      <RouteSetupModal
+        open={setupOpen}
+        origin={pickerOrigin}
+        dest={pickerDest}
+        onClose={() => {
+          setSetupOpen(false);
+          setPickerOrigin(null);
+          setPickerDest(null);
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Two-input picker: searchable origin + destination dropdowns. When both
+ * are set, the player can confirm and hand off to RouteSetupModal.
+ *
+ * Owned-airports float to the top of each list (hub, secondaries, anything
+ * already touched by an existing route) since those are the codes the
+ * player most often needs.
+ */
+function NewRoutePicker({
+  open, origin, dest, ownedCodes,
+  onOriginChange, onDestChange, onCancel, onConfirm,
+}: {
+  open: boolean;
+  origin: string | null;
+  dest: string | null;
+  ownedCodes: Set<string>;
+  onOriginChange: (code: string | null) => void;
+  onDestChange: (code: string | null) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [picking, setPicking] = useState<"origin" | "dest" | null>(null);
+
+  const sortedCities = useMemo(
+    () =>
+      [...CITIES].sort((a, b) => {
+        const aOwn = ownedCodes.has(a.code) ? 0 : 1;
+        const bOwn = ownedCodes.has(b.code) ? 0 : 1;
+        if (aOwn !== bOwn) return aOwn - bOwn;
+        return a.tier - b.tier || a.name.localeCompare(b.name);
+      }),
+    [ownedCodes],
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sortedCities;
+    return sortedCities.filter(
+      (c) =>
+        c.code.toLowerCase().includes(q) ||
+        c.name.toLowerCase().includes(q) ||
+        c.regionName.toLowerCase().includes(q),
+    );
+  }, [sortedCities, search]);
+
+  const dist =
+    origin && dest && origin !== dest ? distanceBetween(origin, dest) : 0;
+
+  function pick(code: string) {
+    if (picking === "origin") {
+      onOriginChange(code);
+      // Auto-advance to destination picker if dest isn't set yet
+      if (!dest && code !== dest) {
+        setPicking("dest");
+        setSearch("");
+        return;
+      }
+    } else if (picking === "dest") {
+      if (code === origin) return; // can't pick same as origin
+      onDestChange(code);
+    }
+    setPicking(null);
+    setSearch("");
+  }
+
+  return (
+    <Modal open={open} onClose={onCancel} className="w-[min(560px,calc(100vw-2rem))]">
+      <ModalHeader>
+        <div className="flex items-center gap-2 mb-1.5">
+          <Badge tone="accent">New route</Badge>
+        </div>
+        <h2 className="font-display text-[1.5rem] text-ink leading-tight">
+          Pick origin and destination
+        </h2>
+        <p className="text-[0.8125rem] text-ink-muted mt-1">
+          Choose the two endpoints. Aircraft, frequency, and pricing are
+          configured on the next step.
+        </p>
+      </ModalHeader>
+
+      <ModalBody className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <CityField
+            label="From"
+            code={origin}
+            placeholder="Pick origin"
+            highlightHub
+            onClick={() => {
+              setPicking("origin");
+              setSearch("");
+            }}
+            onClear={() => onOriginChange(null)}
+            isOwned={origin ? ownedCodes.has(origin) : false}
+          />
+          <CityField
+            label="To"
+            code={dest}
+            placeholder="Pick destination"
+            onClick={() => {
+              setPicking("dest");
+              setSearch("");
+            }}
+            onClear={() => onDestChange(null)}
+            isOwned={dest ? ownedCodes.has(dest) : false}
+          />
+        </div>
+
+        {origin && dest && origin !== dest && (
+          <div className="rounded-md border border-line bg-surface-2/40 px-3 py-2 text-[0.8125rem] text-ink-2">
+            Great-circle distance:{" "}
+            <strong className="font-mono tabular text-ink">
+              {Math.round(dist).toLocaleString()} km
+            </strong>
+          </div>
+        )}
+
+        {origin && dest && origin === dest && (
+          <div className="rounded-md border border-negative bg-[var(--negative-soft)] px-3 py-2 text-[0.8125rem] text-negative">
+            Origin and destination must be different airports.
+          </div>
+        )}
+
+        {picking !== null && (
+          <div className="rounded-md border border-primary bg-[rgba(20,53,94,0.04)] p-2.5">
+            <div className="text-[0.6875rem] uppercase tracking-wider text-primary font-semibold mb-1.5">
+              Pick {picking === "origin" ? "origin" : "destination"}
+            </div>
+            <Input
+              autoFocus
+              placeholder="Search by code, city, or region…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="mb-2 h-9 text-[0.875rem]"
+            />
+            <div className="max-h-[280px] overflow-y-auto rounded-md border border-line bg-surface">
+              {filtered.length === 0 ? (
+                <div className="py-6 text-center text-[0.8125rem] text-ink-muted">
+                  No cities match.
+                </div>
+              ) : (
+                filtered.slice(0, 80).map((c) => (
+                  <button
+                    key={c.code}
+                    onClick={() => pick(c.code)}
+                    disabled={picking === "dest" && c.code === origin}
+                    className={cn(
+                      "w-full flex items-baseline gap-2 px-3 py-1.5 text-left text-[0.8125rem]",
+                      "hover:bg-surface-hover transition-colors border-b border-line last:border-0",
+                      picking === "dest" && c.code === origin && "opacity-40 cursor-not-allowed",
+                    )}
+                  >
+                    <span className="font-mono font-semibold text-ink shrink-0 w-10">
+                      {c.code}
+                    </span>
+                    <span className="text-ink-2 flex-1 truncate">{c.name}</span>
+                    {ownedCodes.has(c.code) && (
+                      <Badge tone="primary">Network</Badge>
+                    )}
+                    <span className="text-[0.6875rem] text-ink-muted tabular shrink-0">
+                      Tier {c.tier}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </ModalBody>
+
+      <ModalFooter>
+        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button
+          variant="primary"
+          disabled={!origin || !dest || origin === dest}
+          onClick={onConfirm}
+        >
+          Continue →
+        </Button>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+function CityField({
+  label, code, placeholder, isOwned, highlightHub,
+  onClick, onClear,
+}: {
+  label: string;
+  code: string | null;
+  placeholder: string;
+  isOwned: boolean;
+  highlightHub?: boolean;
+  onClick: () => void;
+  onClear: () => void;
+}) {
+  const city = code ? CITIES_BY_CODE[code] : null;
+  return (
+    <div>
+      <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted font-semibold mb-1">
+        {label}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={onClick}
+          className={cn(
+            "flex-1 rounded-md border px-3 py-2 text-left transition-colors",
+            city
+              ? highlightHub && isOwned
+                ? "border-primary bg-[rgba(20,53,94,0.04)]"
+                : "border-line hover:bg-surface-hover"
+              : "border-dashed border-line text-ink-muted hover:bg-surface-hover",
+          )}
+        >
+          {city ? (
+            <>
+              <div className="font-mono font-semibold text-ink text-[0.9375rem] leading-tight">
+                {city.code}
+              </div>
+              <div className="text-[0.6875rem] text-ink-muted truncate">
+                {city.name}
+              </div>
+            </>
+          ) : (
+            <div className="text-[0.875rem] py-1.5">{placeholder}</div>
+          )}
+        </button>
+        {city && (
+          <button
+            onClick={onClear}
+            aria-label="Clear"
+            className="w-8 h-8 rounded-md text-ink-muted hover:text-ink hover:bg-surface-hover flex items-center justify-center"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
