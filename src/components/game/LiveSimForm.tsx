@@ -29,17 +29,18 @@ interface SimDescriptor {
 }
 
 export const LIVE_SIMS: SimDescriptor[] = [
+  // 40-round mapping: PRD timings translated via 2Q-1 (PRD-Q N → round 2N-1).
   {
     id: "L0",
     title: "Brand Building",
-    timing: "Q1",
+    timing: "Round 1 (Q1 2015)",
     who: "All teams",
     hint: "Score on 5 dimensions. Rank → cash injection (1st +$80M, 2nd +$60M, 3rd +$40M, 4th +$20M, 5th $0). Brand Pts multiplier (10×/7×/5×/3×/2×).",
   },
   {
     id: "L1",
     title: "The Strike",
-    timing: "Between Q4–Q5",
+    timing: "Between rounds 7–9",
     who: "Cross-team pairings",
     hint: "Bilateral negotiation. Corporate knows $400K/min cost (3× after min 30). Union has secret dead-stop. Government 50% relief if dead-stop triggers.",
     flags: ["strong_labour_relations", "weak_labour_relations"],
@@ -47,28 +48,28 @@ export const LIVE_SIMS: SimDescriptor[] = [
   {
     id: "L2",
     title: "Talent Heist Live",
-    timing: "Q12 (with S14)",
+    timing: "Round 23 (with S14)",
     who: "CEOs extracted",
     hint: "CEOs bid to poach a rival exec. Remaining team makes S14 counter without CEO. Cross-reference bids with S14 picks.",
   },
   {
     id: "L3",
     title: "The Whistleblower",
-    timing: "Between Q7–Q8",
+    timing: "Between rounds 13–15",
     who: "CEOs only",
     hint: "Junior engineer reveals forged safety sign-offs. Score on listening, honesty, protecting engineer, commitment to action.",
   },
   {
     id: "L4",
     title: "The Podium",
-    timing: "Between Q10–Q11",
+    timing: "Between rounds 19–21",
     who: "CEOs only",
     hint: "Press conference to journalist. Plot twist: any specific verbal promise becomes a game obligation. Log exact commitments.",
   },
   {
     id: "L5",
     title: "Project Aurora",
-    timing: "Between Q13–Q14",
+    timing: "Between rounds 25–27",
     who: "All roles split by function",
     hint: "20 information cards. CEO has hidden agenda card (Route D = personal MVP, team destruction). Three routing options A/B/C.",
     flags: ["integrity_leader", "maverick"],
@@ -76,15 +77,15 @@ export const LIVE_SIMS: SimDescriptor[] = [
   {
     id: "L6",
     title: "FIFA Elevator",
-    timing: "End of Q7",
+    timing: "End of round 13",
     who: "CMOs only",
-    hint: "60-second pitch. Score 5 dim × 5 pts. +3 bonus for BMW/golf reference (Q3 news clue). Combined with Q2 sealed bid → World Cup winner.",
+    hint: "60-second pitch. Score 5 dim × 5 pts. +3 bonus for BMW/golf reference (early world-news clue). Combined with R3 sealed bid → World Cup winner.",
     flags: ["global_brand"],
   },
   {
     id: "L7",
     title: "Crisis Operations Room",
-    timing: "Between Q8–Q9",
+    timing: "Between rounds 15–17",
     who: "CMOs + CFOs",
     hint: "No-fly zone (flight 58 min from dest, 61 from origin) + projectile risk on runway (1:15,750 prob, $50M/$400M loss model).",
   },

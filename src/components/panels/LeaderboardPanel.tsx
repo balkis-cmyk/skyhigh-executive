@@ -15,8 +15,9 @@ export function LeaderboardPanel() {
   return (
     <div className="space-y-3">
       <div className="text-[0.8125rem] text-ink-2">
-        Ranked by Airline Value (book equity × brand multiplier). Competitor
-        finances stay private per PRD.
+        Ranked by Airline Value (book equity × brand multiplier).
+        Competitor finances stay private — only the rank, brand grade,
+        and fleet size are shown.
       </div>
       <div className="space-y-1.5">
         {ranked.map((t, i) => {

@@ -23,40 +23,52 @@ export function fmtDelta(n: number, decimals = 1): string {
 }
 
 /**
- * In-game calendar — the simulation compresses 26 real years (2000–2026)
- * into 20 game quarters. Each game quarter ≈ 1.3 real years. Aircraft
- * unlock dates are anchored to their real-world entry-into-service year
- * via this same mapping (see src/lib/aircraft-unlock.ts).
+ * In-game calendar.
  *
- * Round 1  → Q1 2000   (game start)
- * Round 5  → Q3 2005
- * Round 9  → Q1 2010
- * Round 13 → Q3 2015
- * Round 17 → Q1 2020
- * Round 20 → Q1 2024
+ * Game runs 40 rounds covering 10 calendar years (2015 → end of 2024).
+ * Each round = 1 real calendar quarter. Round 1 = Q1 2015,
+ * Round 4 = Q4 2015, Round 40 = Q4 2024.
+ *
+ * Aircraft release timeline is INDEPENDENTLY compressed: aircraft EIS
+ * year E in the real world maps to game round via a 2:1 compression
+ * anchored at real-2000 = game-Q1-2015. This lets the player experience
+ * the 2000–2026 aviation product cycle (A380 EIS 2007 → ~round 13,
+ * 787-9 EIS 2014 → ~round 29) within the 10 calendar years of game time.
+ * See gameQuarterFromYear below.
  */
-const YEARS_PER_GAME_Q = 1.3;
-const GAME_START_YEAR = 2000;
+export const TOTAL_GAME_ROUNDS = 40;
+const GAME_START_YEAR = 2015;
 
 export function fmtQuarter(q: number): string {
-  const yearsElapsed = (q - 1) * YEARS_PER_GAME_Q;
-  const totalMonths = Math.floor(yearsElapsed * 12);
-  const year = GAME_START_YEAR + Math.floor(totalMonths / 12);
-  const monthOfYear = totalMonths % 12;
-  const quarterOfYear = Math.floor(monthOfYear / 3) + 1;
+  const idx = Math.max(0, q - 1);
+  const year = GAME_START_YEAR + Math.floor(idx / 4);
+  const quarterOfYear = (idx % 4) + 1;
   return `Q${quarterOfYear} ${year}`;
 }
 
-/** Short tag — "Round X of 20". */
+/** Short tag — "Round X of 40". */
 export function fmtQuarterShort(q: number): string {
-  return `Round ${q} of 20`;
+  return `Round ${q} of ${TOTAL_GAME_ROUNDS}`;
 }
 
-/** Convert a real-world EIS year (e.g. 2007 for the A380) to the game
- *  quarter at which the aircraft becomes available. Anchored to the
- *  same 2000 / 1.3-yr-per-Q mapping as fmtQuarter. */
+/**
+ * Convert a real-world EIS year (e.g. 2007 for the A380) to the GAME
+ * round at which the aircraft becomes available.
+ *
+ * Mapping: 2:1 compression. Real year 2000 = Round 1 (Q1 2015).
+ * Real year 2002 = Round 5 (Q1 2016). Real year 2026 = Round 53,
+ * which is clamped back to 40 (last game round) — late aircraft
+ * unlock right at the end of the simulation.
+ *
+ * Implementation:
+ *   yearsFrom2000 = year - 2000
+ *   gameYearsFromStart = yearsFrom2000 / 2     (compression)
+ *   round = floor(gameYearsFromStart) * 4 + 1
+ */
 export function gameQuarterFromYear(year: number): number {
-  if (year <= GAME_START_YEAR) return 1;
-  const elapsed = year - GAME_START_YEAR;
-  return Math.max(1, Math.ceil(elapsed / YEARS_PER_GAME_Q));
+  if (year <= 2000) return 1;
+  const yearsFromAnchor = year - 2000;
+  const gameYearsFromStart = yearsFromAnchor / 2;
+  const round = Math.floor(gameYearsFromStart) * 4 + 1;
+  return Math.max(1, Math.min(TOTAL_GAME_ROUNDS, round));
 }

@@ -397,6 +397,11 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                       </div>
                       <div className="text-[0.6875rem] text-ink-muted font-mono">
                         Range {spec.rangeKm.toLocaleString()} km · {(() => {
+                          // Cargo aircraft don't have passenger seats —
+                          // show tonnage capacity instead.
+                          if (spec.family === "cargo") {
+                            return `${spec.cargoTonnes ?? 0}T cargo`;
+                          }
                           const s = p.customSeats ?? spec.seats;
                           return `${s.first + s.business + s.economy} seats (${s.first}F/${s.business}C/${s.economy}Y)`;
                         })()} · {cruiseSpeedKmh(p.specId)} km/h cruise
@@ -532,9 +537,10 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
         {isCargo && (
           <Section step={3} title="Cargo" disabled={!hasAircraft}>
             <div className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[0.8125rem] text-ink-2">
-              Cargo route · revenue based on minimum of origin/destination
-              business demand as daily tonnes. Storage fees replace slot fees.
-              Rate per tonne is auto-set based on distance (PRD §A4).
+              Cargo route · revenue is based on the lower of the origin
+              and destination business-demand levels (treated as daily
+              tonnes). Storage fees replace slot fees. Rate per tonne is
+              set automatically by distance band.
             </div>
           </Section>
         )}

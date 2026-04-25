@@ -79,7 +79,7 @@ const M = 1_000_000;
 
 export const SCENARIOS: Scenario[] = [
   {
-    id: "S1", title: "The Ghost Fleet", quarter: 4, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S1", title: "The Ghost Fleet", quarter: 7, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "Three aircraft have forged safety sign-offs. Your maintenance chief just called.",
     context:
       "A senior engineer has quietly reported that three of your wide-body aircraft have undocumented maintenance gaps covered by forged sign-offs. You have hours before the regulator learns independently. Self-report, quiet fix, or keep flying?",
@@ -92,13 +92,13 @@ export const SCENARIOS: Scenario[] = [
         description: "Fix it quietly. 42% chance regulator finds out next quarter.",
         effect: {
           cash: -45 * M, brandPts: -5,
-          deferred: { quarter: 5, probability: 0.425, effect: { cash: -40 * M, brandPts: -25 } },
+          deferred: { quarter: 9, probability: 0.425, effect: { cash: -40 * M, brandPts: -25 } },
         },
         effectTags: ["-$45M", "Brand -5", "42% risk Q5"] },
       { id: "C", label: "Continue flying",
         description: "Keep the fleet active. 30% incident probability next quarter.",
         effect: {
-          deferred: { quarter: 5, probability: 0.30, effect: { cash: -150 * M, brandPts: -50, opsPts: -20 } },
+          deferred: { quarter: 9, probability: 0.30, effect: { cash: -150 * M, brandPts: -50, opsPts: -20 } },
         },
         effectTags: ["30% catastrophic risk"] },
       { id: "D", label: "Quiet grounding",
@@ -110,7 +110,7 @@ export const SCENARIOS: Scenario[] = [
     notes: "Most negligent default if team fails to submit.",
   },
   {
-    id: "S2", title: "War in the Corridor", quarter: 8, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S2", title: "War in the Corridor", quarter: 15, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "A geopolitical corridor just closed. Three of your flights are airborne.",
     context:
       "A major conflict has closed airspace over a corridor that hosts $95M of your annual revenue. You have hours to decide on routing.",
@@ -123,7 +123,7 @@ export const SCENARIOS: Scenario[] = [
         description: "Ignore the warning. 25% chance of incident next quarter.",
         effect: {
           brandPts: -5,
-          deferred: { quarter: 9, probability: 0.25, effect: { cash: -30 * M, brandPts: -20, opsPts: -10 } },
+          deferred: { quarter: 17, probability: 0.25, effect: { cash: -30 * M, brandPts: -20, opsPts: -10 } },
         },
         effectTags: ["Brand -5", "25% catastrophic risk"] },
       { id: "C", label: "Suspend corridor operations",
@@ -134,14 +134,14 @@ export const SCENARIOS: Scenario[] = [
         description: "Buy emergency insurance, keep flying.",
         effect: {
           cash: -8 * M, brandPts: -8,
-          deferred: { quarter: 9, probability: 0.25, effect: { cash: -30 * M, brandPts: -20 } },
+          deferred: { quarter: 17, probability: 0.25, effect: { cash: -30 * M, brandPts: -20 } },
         },
         effectTags: ["-$8M", "Brand -8", "25% risk Q9"] },
     ],
     autoSubmitOptionId: "B",
   },
   {
-    id: "S3", title: "The Flash Deal", quarter: 13, severity: "MEDIUM", timeLimitMinutes: 30,
+    id: "S3", title: "The Flash Deal", quarter: 25, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "20 next-gen aircraft available fleet-wide. First come, first served.",
     context:
       "Airbus offers a one-time deal: 20 new eco-engine aircraft across all airlines. First-come pool, $4M deposit each, $1.7M/year fuel saving per plane.",
@@ -164,7 +164,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "C",
   },
   {
-    id: "S4", title: "The Oil Gamble", quarter: 3, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S4", title: "The Oil Gamble", quarter: 5, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "Analysts split on oil. Lock in a hedge or ride open market?",
     context:
       "Fuel is at index 115. Your finance team is split: energy desk says buy long, commodities say short-term dip incoming. Your quarterly fuel bill runs $60M.",
@@ -189,7 +189,7 @@ export const SCENARIOS: Scenario[] = [
     notes: "OPEC drop plot twist reveals at Q4 close.",
   },
   {
-    id: "S5", title: "The Government Lifeline", quarter: 6, severity: "MEDIUM", timeLimitMinutes: 30,
+    id: "S5", title: "The Government Lifeline", quarter: 11, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "Treasury offers $300M in emergency capital — with strings.",
     context:
       "Post-crisis recovery capital. Government will inject $300M if you commit to unprofitable route obligations and a 2-quarter redundancy freeze.",
@@ -215,7 +215,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "C",
   },
   {
-    id: "S6", title: "The Rate Window", quarter: 10, severity: "MEDIUM", timeLimitMinutes: 30,
+    id: "S6", title: "The Rate Window", quarter: 19, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "Interest rates at a 3-year low. Refinance window is 30 minutes.",
     context:
       "Your treasurer has secured refinancing terms at the current rate window. Break fee 3.5% of current debt, locks new rate for remaining term.",
@@ -237,7 +237,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "B",
   },
   {
-    id: "S7", title: "The Hungry Neighbour", quarter: 9, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S7", title: "The Hungry Neighbour", quarter: 17, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "A competing airline is collapsing. Buy, pick at the assets, or let it die?",
     context:
       "A regional competitor is entering administration with 12 active routes, 8 aircraft (mix of narrow- and wide-body), and $180M of outstanding debt. The administrator is accepting bids in three lots: full operation, route rights only, or a codeshare alliance. If you walk away, rivals get first pick.",
@@ -255,7 +255,7 @@ export const SCENARIOS: Scenario[] = [
       { id: "C", label: "Let them collapse",
         description: "Walk away. 60% chance the routes go to your rivals at quarter close.",
         effect: { brandPts: -5,
-          deferred: { quarter: 10, probability: 0.6, effect: { setFlags: ["routes_lost_to_rivals"] } } },
+          deferred: { quarter: 19, probability: 0.6, effect: { setFlags: ["routes_lost_to_rivals"] } } },
         effectTags: [] },
       { id: "D", label: "Codeshare",
         description: "Preserve the airline as an alliance partner. Annual codeshare revenue, no fleet transfer.",
@@ -264,7 +264,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "C",
   },
   {
-    id: "S8", title: "The Political Favour", quarter: 11, severity: "MEDIUM", timeLimitMinutes: 30,
+    id: "S8", title: "The Political Favour", quarter: 21, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "A minister is asking for a favour. So is a regulator.",
     context:
       "State request: subsidize three regional routes at a loss. In exchange, priority hub slot allocation. Decline and you risk regulatory friction.",
@@ -280,7 +280,7 @@ export const SCENARIOS: Scenario[] = [
       { id: "C", label: "Decline politely",
         description: "Keep independence. 40% chance of permit disruption.",
         effect: { brandPts: -10, opsPts: 5,
-          deferred: { quarter: 13, probability: 0.4, effect: { cash: -40 * M, opsPts: -10 } } },
+          deferred: { quarter: 25, probability: 0.4, effect: { cash: -40 * M, opsPts: -10 } } },
         effectTags: ["Brand -10", "40% disruption risk"] },
       { id: "D", label: "Seek public subsidy",
         description: "40% success on public subsidy offsetting cost.",
@@ -289,7 +289,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "C",
   },
   {
-    id: "S9", title: "The Blue Ocean", quarter: 16, severity: "MEDIUM", timeLimitMinutes: 30,
+    id: "S9", title: "The Blue Ocean", quarter: 31, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "A new trans-regional corridor has opened. First mover or second?",
     context:
       "Diplomatic thaw has opened a previously restricted corridor. Early entrants capture market share; late entrants fight for scraps.",
@@ -314,7 +314,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "C",
   },
   {
-    id: "S10", title: "The World Cup Bet", quarter: 2, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S10", title: "The World Cup Bet", quarter: 3, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "Blind bid for official World Cup carrier status. Highest bid + pitch wins.",
     context:
       "FIFA is selecting an official carrier for the upcoming World Cup. Sealed bid + elevator pitch. Winner locks in 100% load factor Q10+Q11 and brand halo.",
@@ -334,14 +334,14 @@ export const SCENARIOS: Scenario[] = [
       { id: "D", label: "Ambush marketing",
         description: "Skip the bid, run guerrilla campaign. Legal risk.",
         effect: { cash: -15 * M, brandPts: 8,
-          deferred: { quarter: 3, probability: 0.20, effect: { cash: -5 * M, brandPts: -15 } } },
+          deferred: { quarter: 5, probability: 0.20, effect: { cash: -5 * M, brandPts: -15 } } },
         effectTags: ["-$15M", "Brand +8", "20% legal risk"] },
     ],
     autoSubmitOptionId: "C",
     notes: "Winner resolved after L6 Elevator pitch (admin-entered).",
   },
   {
-    id: "S11", title: "The Olympic Play", quarter: 7, severity: "MEDIUM", timeLimitMinutes: 30,
+    id: "S11", title: "The Olympic Play", quarter: 13, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "Olympics in four quarters. Official, performance, local, or pass?",
     context:
       "A summer Olympics is four quarters out. Sponsorship tiers range from global partner to pass-entirely.",
@@ -369,7 +369,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "E",
   },
   {
-    id: "S12", title: "The Brand Grenade", quarter: 18, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S12", title: "The Brand Grenade", quarter: 35, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "Your brand ambassador said something unforgivable live on air.",
     context:
       "Ambassador went off-script in a major media moment. Brand is mid-crisis. Terminate the contract, lean in, apologize, or disappear?",
@@ -393,13 +393,13 @@ export const SCENARIOS: Scenario[] = [
       { id: "E", label: "Silence",
         description: "Wait for the cycle to pass. 30% chance it doesn't.",
         effect: { brandPts: -5, loyaltyDelta: -5,
-          deferred: { quarter: 19, probability: 0.3, effect: { brandPts: -18 } } },
+          deferred: { quarter: 37, probability: 0.3, effect: { brandPts: -18 } } },
         effectTags: ["Brand -5", "Loyalty -5%", "30% downside"] },
     ],
     autoSubmitOptionId: "A",
   },
   {
-    id: "S13", title: "The Digital Gamble", quarter: 15, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S13", title: "The Digital Gamble", quarter: 29, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "AI displaces 800 jobs. Three rollout paths, each with different cost.",
     context:
       "Your operations AI platform is ready. Full rollout means $95M/yr savings from Q17 — and a 30% per-quarter strike risk. Phase it, reskill, or cancel.",
@@ -427,7 +427,7 @@ export const SCENARIOS: Scenario[] = [
     notes: "Option A blocked if gov_board_card flag is active.",
   },
   {
-    id: "S14", title: "The Talent Heist", quarter: 12, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S14", title: "The Talent Heist", quarter: 23, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "A rival is poaching three executives. Counter or let them walk?",
     context:
       "Your head of revenue, ops, and digital all received offers from a competitor. Counter-offers burn cash; doing nothing burns two quarters of productivity.",
@@ -452,7 +452,7 @@ export const SCENARIOS: Scenario[] = [
     autoSubmitOptionId: "B",
   },
   {
-    id: "S15", title: "The Recession Gamble", quarter: 14, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S15", title: "The Recession Gamble", quarter: 27, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "Recession deepening. Cut deep, cut light, hold, or invest counter-cyclical?",
     context:
       "Demand is collapsing. Every airline is cutting. The choice is how deep to cut payroll — your headcount runs at quarterly staff cost, and savings here scale with the size of your operation.",
@@ -479,7 +479,7 @@ export const SCENARIOS: Scenario[] = [
     notes: "Option A blocked if gov_board_card flag (redundancy freeze) is active. Savings on A/B are computed as staffSavingsPct × current quarterly staff cost × 2.",
   },
   {
-    id: "S16", title: "The Moscow Signal", quarter: 5, severity: "HIGH", timeLimitMinutes: 30,
+    id: "S16", title: "The Moscow Signal", quarter: 9, severity: "HIGH", timeLimitMinutes: 30,
     teaser: "Intelligence signal: corridor may close. Lock in aggressive cuts or hold?",
     context:
       "Signal intelligence suggests the Moscow corridor may close. Commit to aggressive mitigation (lock-in 1-4 quarters), or trust it's a false alarm.",
@@ -503,7 +503,7 @@ export const SCENARIOS: Scenario[] = [
     notes: "False alarm reveal at Q6. Lock-in teams miss the summer surge.",
   },
   {
-    id: "S17", title: "The Green Ultimatum", quarter: 17, severity: "MEDIUM", timeLimitMinutes: 30,
+    id: "S17", title: "The Green Ultimatum", quarter: 33, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "Carbon levy lands Q17. Absorb, pass through, invest in SAF, or challenge legally?",
     context:
       "A $45/tonne carbon levy takes effect this quarter. Annual cost $55M if unmitigated. Response defines your ESG posture for the rest of the game.",
@@ -523,14 +523,14 @@ export const SCENARIOS: Scenario[] = [
       { id: "D", label: "Legal challenge",
         description: "30% success — levy waived. 70% full levy applies + brand penalty.",
         effect: { cash: -8 * M,
-          deferred: { quarter: 18, probability: 0.7,
+          deferred: { quarter: 35, probability: 0.7,
             effect: { brandPts: -15, setFlags: ["anti_environment", "carbon_levy_active"] } } },
         effectTags: ["−$8M"] },
     ],
     autoSubmitOptionId: "D",
   },
   {
-    id: "S18", title: "The Cocoa Crisis", quarter: 9, severity: "LOW", timeLimitMinutes: 30,
+    id: "S18", title: "The Cocoa Crisis", quarter: 17, severity: "LOW", timeLimitMinutes: 30,
     teaser: "West African cocoa supply has collapsed and prices have tripled.",
     context:
       "Passengers onboard our flights have come to love the signature chocolate we serve in premium cabins — it's a small ritual that's quietly become part of why business and first-class travellers choose us. With the West African cocoa supply collapse, the program now costs triple. How do we respond without losing what made it special?",

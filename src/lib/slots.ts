@@ -36,14 +36,15 @@ export const STARTING_SLOTS_BY_TIER: Record<CityTier, number> = {
   4: 25,
 };
 
-/** Approximate slots added per yearly tick (Q4/Q8/Q12/Q16) per tier.
- *  Uses Math.round((endTarget - start) / 4) so cumulative adds hit the
- *  stated end-of-game targets within ±20% noise. */
+/** Approximate slots added per yearly tick per tier. End-of-game
+ *  targets stay PRD-aligned (T1: ~1000, T2: ~750, T3: ~300, T4: ~150)
+ *  but with 9 yearly ticks in the new 40-round game we add fewer per
+ *  tick. */
 export const YEARLY_SLOTS_BY_TIER: Record<CityTier, number> = {
-  1: 200, // 200 → 1000 over 4 yearly ticks
-  2: 125, // 250 → 750
-  3: 63,  // 50  → ~300
-  4: 32,  // 25  → ~150
+  1: 90,  // 200 → ~1000 over 9 yearly ticks
+  2: 56,  // 250 → ~750
+  3: 28,  // 50  → ~300
+  4: 14,  // 25  → ~150
 };
 
 /** Base price per slot at quarter-close auction (PRD scaling: T2 = anchor). */
@@ -54,8 +55,9 @@ export const BASE_SLOT_PRICE_BY_TIER: Record<CityTier, number> = {
   4: 20_000,  // 0.25× anchor
 };
 
-/** Yearly slot tick fires at Q5, Q9, Q13, Q17 (quarter AFTER the year mark). */
-export const YEARLY_TICK_QUARTERS = [5, 9, 13, 17];
+/** Yearly slot tick — once per calendar year (every 4 rounds in the
+ *  40-round game). Round 5 = Q1 2016, round 9 = Q1 2017, etc. */
+export const YEARLY_TICK_QUARTERS = [5, 9, 13, 17, 21, 25, 29, 33, 37];
 
 export function nextTickQuarter(currentQuarter: number): number {
   return YEARLY_TICK_QUARTERS.find((q) => q > currentQuarter) ?? 99;

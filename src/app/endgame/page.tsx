@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardBody, Sparkline } from "@/components/ui";
-import { fmtMoney, fmtPct } from "@/lib/format";
+import { fmtMoney, fmtPct, TOTAL_GAME_ROUNDS } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
 import { computeAirlineValue, fleetCount, resolveEndgameAwards, brandRating, computeBrandValueBreakdown } from "@/lib/engine";
 import { MILESTONES, MILESTONES_BY_ID } from "@/data/milestones";
@@ -258,7 +258,7 @@ export default function Endgame() {
           // Total quarters played
           facts.push({
             label: "Quarters operated",
-            value: `${player.financialsByQuarter.length} of 20`,
+            value: `${player.financialsByQuarter.length} of ${TOTAL_GAME_ROUNDS}`,
           });
           // Total decisions
           if (player.decisions.length > 0) {

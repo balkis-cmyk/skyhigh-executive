@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Sparkline } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, TOTAL_GAME_ROUNDS } from "@/lib/format";
 import { CITIES } from "@/data/cities";
 import { runQuarterClose } from "@/lib/engine";
 
@@ -44,7 +44,7 @@ export function AdminPanel() {
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">Game state</div>
         <div className="space-y-1.5 text-[0.8125rem]">
           <Row k="Phase" v={s.phase} />
-          <Row k="Quarter" v={`Q${s.currentQuarter} / 20`} />
+          <Row k="Round" v={`${s.currentQuarter} / ${TOTAL_GAME_ROUNDS}`} />
           <Row k="Fuel idx" v={s.fuelIndex.toFixed(0)} />
           <Row k="Base rate" v={`${s.baseInterestRatePct.toFixed(1)}%`} />
           <Row k="Teams" v={`${s.teams.length}`} />
@@ -457,7 +457,7 @@ export function AdminPanel() {
       {player.routes.filter((r) => r.status === "active" || r.status === "suspended").length > 0 && (
         <section>
           <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
-            Ground-stop · slot fee refund (PRD G6)
+            Ground-stop · slot fee refund
           </div>
           <div className="space-y-1 max-h-28 overflow-auto">
             {player.routes
@@ -483,7 +483,7 @@ export function AdminPanel() {
       {/* Hub infrastructure investments (PRD D4) */}
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
-          Hub infrastructure (PRD D4)
+          Hub infrastructure
         </div>
         <div className="grid grid-cols-2 gap-1.5 text-[0.75rem] mb-2">
           <Button size="sm" variant="secondary"
@@ -523,10 +523,10 @@ export function AdminPanel() {
         </div>
       </section>
 
-      {/* Insurance policy (PRD E5) */}
+      {/* Insurance policy */}
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
-          Insurance policy (PRD E5)
+          Insurance policy
         </div>
         <div className="grid grid-cols-4 gap-1.5 text-[0.75rem]">
           {(["none", "low", "medium", "high"] as const).map((lvl) => {

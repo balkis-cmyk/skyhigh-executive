@@ -20,7 +20,7 @@ import {
   type BidEntry,
 } from "@/lib/slots";
 import { toast } from "./toasts";
-import { fmtQuarter } from "@/lib/format";
+import { fmtQuarter, TOTAL_GAME_ROUNDS } from "@/lib/format";
 import { planBotAircraftOrder, planBotRoutes } from "@/lib/ai-bots";
 import type {
   AirportLease,
@@ -475,7 +475,7 @@ export const useGame = create<GameStore>()(
           purchasePrice: 25_000_000, bookValue: 25_000_000,
           leaseQuarterly: null, ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
-          retirementQuarter: 1 + 16, // 20 real years → 16 quarters
+          retirementQuarter: 1 + 20, // PRD §5.2 — 20Q lifespan
           maintenanceDeficit: 0, satisfactionPct: 75,
         };
         const starter2: FleetAircraft = { ...starter1, id: mkId("ac") };
@@ -597,7 +597,7 @@ export const useGame = create<GameStore>()(
               leaseQuarterly: null, ecoUpgrade: false,
               ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
               cabinConfig: "default", routeId: null,
-              retirementQuarter: 1 + 16,
+              retirementQuarter: 1 + 20,
               maintenanceDeficit: 0, satisfactionPct: 70,
             });
             const dailyFreq = doctrine === "budget-expansion" ? 4
@@ -749,7 +749,7 @@ export const useGame = create<GameStore>()(
           customSeats: customSeats && spec.family === "passenger" ? customSeats : undefined,
           engineUpgrade: engineUpgrade ?? null,
           fuselageUpgrade: !!fuselageUpgrade,
-          retirementQuarter: s.currentQuarter + 16,
+          retirementQuarter: s.currentQuarter + 20,
           maintenanceDeficit: 0, satisfactionPct: 75,
         }));
 
@@ -1691,7 +1691,7 @@ export const useGame = create<GameStore>()(
                   ecoUpgradeCost: 0,
                   cabinConfig: "default",
                   routeId: null,
-                  retirementQuarter: s.currentQuarter + 16,
+                  retirementQuarter: s.currentQuarter + 20,
                   maintenanceDeficit: 0,
                   satisfactionPct: 75,
                 }));
@@ -1959,26 +1959,27 @@ export const useGame = create<GameStore>()(
 
       advanceToNext: () => {
         const s = get();
-        if (s.currentQuarter >= 20) {
+        if (s.currentQuarter >= TOTAL_GAME_ROUNDS) {
           set({ phase: "endgame", lastCloseResult: null });
-          toast.accent("Final quarter complete", "Your legacy is sealed.");
+          toast.accent("Final round complete", "Your legacy is sealed.");
           return;
         }
         const nextQ = s.currentQuarter + 1;
 
-        // PRD G4 — 787 Dreamliner delivery delay triggered at Q9 open
-        // Any B787-9 ordered at Q8 gets pushed back 2 quarters (Q9 → Q11).
+        // PRD G4 — 787 Dreamliner delivery delay event.
+        // 40-round mapping: 787-8 unlocks at round 21, the delay event
+        // fires at round 22 (one round after unlock) and pushes any
+        // round-21 orders back by 2 rounds. Mirrors the real-world
+        // 787 program's 3-year delivery slip.
         let delayedTeams = s.teams;
-        if (nextQ === 9) {
+        if (nextQ === 22) {
           let delayedCount = 0;
           delayedTeams = s.teams.map((t) => ({
             ...t,
             fleet: t.fleet.map((f) => {
-              if (f.specId === "B787-9" && f.status === "ordered" && f.purchaseQuarter === 8) {
+              if (f.specId === "B787-8" && f.status === "ordered" && f.purchaseQuarter === 21) {
                 delayedCount += 1;
-                // Keep status as "ordered" and bump purchaseQuarter forward so it
-                // only activates at Q11 quarter-close
-                return { ...f, purchaseQuarter: 10 };
+                return { ...f, purchaseQuarter: 23 };
               }
               return f;
             }),
@@ -1986,7 +1987,7 @@ export const useGame = create<GameStore>()(
           if (delayedCount > 0) {
             toast.warning(
               `Boeing 787 Dreamliner delivery delay`,
-              `${delayedCount} aircraft pushed from Q9 → Q11 due to manufacturing issues`,
+              `${delayedCount} aircraft pushed back 2 rounds due to manufacturing issues`,
             );
           }
         }
@@ -2963,7 +2964,7 @@ export const useGame = create<GameStore>()(
           purchasePrice: 28_000_000, bookValue: 28_000_000,
           leaseQuarterly: null, ecoUpgrade: true, ecoUpgradeQuarter: s.currentQuarter, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
-          retirementQuarter: s.currentQuarter + 16,
+          retirementQuarter: s.currentQuarter + 20,
           maintenanceDeficit: 0, satisfactionPct: 75,
         }));
         set({
@@ -3225,7 +3226,7 @@ export const useGame = create<GameStore>()(
               : false;
             return {
               ...f,
-              retirementQuarter: f.retirementQuarter ?? f.purchaseQuarter + 16,
+              retirementQuarter: f.retirementQuarter ?? f.purchaseQuarter + 20,
               maintenanceDeficit: f.maintenanceDeficit ?? 0,
               satisfactionPct: f.satisfactionPct ?? 75,
               ecoUpgrade: f.ecoUpgrade ?? false,

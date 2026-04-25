@@ -30,11 +30,39 @@ import type {
 const M = 1_000_000;
 
 // ─── Global Travel Index (PRD E6) — master demand multiplier ──
-/** Per-quarter macro demand multiplier, aligned to PRD world-news narrative. */
+/**
+ * Per-round macro demand multiplier across the 40-round game.
+ *
+ * Each PRD §6.2 game-year value applies to TWO consecutive rounds —
+ * round (2N-1) is the scenario quarter at the original PRD-Q index N,
+ * round (2N) is the breather quarter sharing that game-year.
+ *
+ *   Old PRD Q1=100  → Rounds 1-2 = 100
+ *   Old PRD Q2=103  → Rounds 3-4 = 103
+ *   ...
+ *   Old PRD Q20=130 → Rounds 39-40 = 130
+ */
 export const TRAVEL_INDEX: Record<number, number> = {
-  1: 100, 2: 103, 3: 98, 4: 106, 5: 93, 6: 118, 7: 112, 8: 89,
-  9: 104, 10: 128, 11: 97, 12: 91, 13: 72, 14: 76, 15: 90, 16: 110,
-  17: 105, 18: 122, 19: 126, 20: 130,
+  1: 100, 2: 100,   // PRD Q1 — Market open. Baseline.
+  3: 103, 4: 103,   // PRD Q2 — World Cup announced.
+  5: 98,  6: 98,    // PRD Q3 — Fuel spike dampens.
+  7: 106, 8: 106,   // PRD Q4 — Stabilising. Tech conference.
+  9: 93,  10: 93,   // PRD Q5 — Moscow Signal panic.
+  11: 118, 12: 118, // PRD Q6 — False alarm; pent-up summer.
+  13: 112, 14: 112, // PRD Q7 — Olympics; war corridor unease.
+  15: 89, 16: 89,   // PRD Q8 — War escalates.
+  17: 104, 18: 104, // PRD Q9 — Recovery confirmed.
+  19: 128, 20: 128, // PRD Q10 — World Cup peak.
+  21: 97, 22: 97,   // PRD Q11 — Conflict; rate hikes.
+  23: 91, 24: 91,   // PRD Q12 — Recession risk rising.
+  25: 72, 26: 72,   // PRD Q13 — Recession declared.
+  27: 76, 28: 76,   // PRD Q14 — Recession persists.
+  29: 90, 30: 90,   // PRD Q15 — Olympics drives spike.
+  31: 110, 32: 110, // PRD Q16 — Recession over.
+  33: 105, 34: 105, // PRD Q17 — Carbon levy uncertainty.
+  35: 122, 36: 122, // PRD Q18 — Full recovery; Dubai Expo.
+  37: 126, 38: 126, // PRD Q19 — New trade corridors.
+  39: 130, 40: 130, // PRD Q20 — Peak global aviation era.
 };
 
 /** Seasonal multipliers (PRD D5) indexed by quarter-within-game-year. */
@@ -546,9 +574,13 @@ export function computeRouteEconomics(
   //   - Q12: +50% demand uplift over baseline (additive bonus capped at 0.98)
   // Without the flag, no effect.
   if (team.flags?.has("global_brand")) {
-    if (quarter === 10 || quarter === 11) {
+    // PRD §10.3 — World Cup load factor (40-round mapping):
+    //   PRD Q10 → rounds 19-20 (scenario + breather)
+    //   PRD Q11 → rounds 21-22
+    //   PRD Q12 → rounds 23-24 (+50% uplift)
+    if (quarter >= 19 && quarter <= 22) {
       occupancy = 0.98;
-    } else if (quarter === 12) {
+    } else if (quarter === 23 || quarter === 24) {
       occupancy = Math.min(0.98, occupancy * 1.5);
     }
   }
@@ -1317,12 +1349,14 @@ export function runQuarterClose(
     next.flags.has("carbon_levy_active") ||
     next.flags.has("green_leader") ||
     next.flags.has("sustainability_signal");
-  if (ctx.quarter >= 17 && levyActive) {
+  // PRD §5.11 / S17 — carbon levy active from PRD-Q17 = round 33 onward.
+  if (ctx.quarter >= 33 && levyActive) {
     const pricePerL = (ctx.fuelIndex / 100) * 0.18;
     const totalLiters = pricePerL > 0 ? fuelCost / pricePerL : 0;
     const tonnesCO2 = (totalLiters * 0.12) / 1000;
     carbonLevy = tonnesCO2 * 45;
-    if (next.flags.has("green_leader") && ctx.quarter >= 19) {
+    // SAF investment (S17-C) earns 40% reduced levy from PRD-Q19 = round 37
+    if (next.flags.has("green_leader") && ctx.quarter >= 37) {
       carbonLevy *= 0.6;
     }
     if (next.flags.has("sustainability_signal")) {

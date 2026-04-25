@@ -69,7 +69,7 @@ export function SecondaryHubModal({ open, onClose }: Props) {
     <Modal open={open} onClose={onClose} className="max-w-2xl">
       <ModalHeader>
         <span className="text-[0.6875rem] uppercase tracking-[0.2em] text-accent">
-          PRD §4.4 · Network expansion
+          Network expansion
         </span>
         <h2 className="font-display text-[1.5rem] text-ink leading-tight mt-1">
           Activate a secondary hub
