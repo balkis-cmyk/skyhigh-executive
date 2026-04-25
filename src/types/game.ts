@@ -58,6 +58,12 @@ export interface FleetAircraft {
   /** When set and status is "grounded", the aircraft auto-reactivates at the
    *  end of the named quarter (PRD F3: 1-quarter renovation downtime). */
   renovationCompleteQuarter?: number;
+  /** Per-plane passenger satisfaction 0..100 (PRD update). Drifts toward
+   *  60 baseline; modified by age (newer = higher), eco upgrade (+5),
+   *  recent renovation (+15 fading), maintenance slider (high = up,
+   *  low = down). Below 30 triggers a soft demand penalty on routes
+   *  this plane flies. */
+  satisfactionPct: number;
 }
 
 // ─── Insurance (PRD E5) ──────────────────────────────────

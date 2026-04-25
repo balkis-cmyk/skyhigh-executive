@@ -306,6 +306,7 @@ export function FleetPanel() {
                     <Th>Status</Th>
                     <Th>Route</Th>
                     <Th className="text-right">Age</Th>
+                    <Th className="text-right">Cabin sat.</Th>
                     <Th className="text-right">Book value</Th>
                     <Th className="text-right">Q profit</Th>
                     <Th className="text-right w-[110px]">Actions</Th>
@@ -349,6 +350,14 @@ export function FleetPanel() {
                         <td className="py-2 px-3 text-right tabular font-mono text-ink">
                           {ageQ}Q
                           <span className="text-ink-muted ml-1">/ {remainingQ}Q left</span>
+                        </td>
+                        <td className={cn(
+                          "py-2 px-3 text-right tabular font-mono",
+                          (f.satisfactionPct ?? 75) < 30 ? "text-negative" :
+                          (f.satisfactionPct ?? 75) < 50 ? "text-warning" :
+                          (f.satisfactionPct ?? 75) >= 80 ? "text-positive" : "text-ink",
+                        )}>
+                          {Math.round(f.satisfactionPct ?? 75)}%
                         </td>
                         <td className="py-2 px-3 text-right tabular font-mono text-ink">
                           {fmtMoney(f.bookValue)}

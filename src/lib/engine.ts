@@ -503,7 +503,19 @@ export function computeRouteEconomics(
     (team.geographicPriority === "middle-east" && (origin.region === "me" || origin.region === "mea") && (dest.region === "me" || dest.region === "mea"));
   if (geoMatch && team.geographicPriority !== "global") onboardingBonus *= 1.08;
 
-  const effectiveDemand = demand.total * hubBonus * csMultiplier * loungeBonus * onboardingBonus;
+  // Cabin condition penalty (PRD update). If any plane on this route has
+  // satisfactionPct < 30, knock 8% off demand. Below 50, knock 4%. Above 80
+  // bonus 2%. Multiple planes pick the WORST condition (passengers
+  // remember the bad flight).
+  let cabinPenalty = 1.0;
+  if (planes.length > 0) {
+    const worstSat = Math.min(...planes.map((p) => p.satisfactionPct ?? 75));
+    if (worstSat < 30) cabinPenalty = 0.92;
+    else if (worstSat < 50) cabinPenalty = 0.96;
+    else if (worstSat >= 80) cabinPenalty = 1.02;
+  }
+
+  const effectiveDemand = demand.total * hubBonus * csMultiplier * loungeBonus * onboardingBonus * cabinPenalty;
 
   const dailyPax = Math.min(dailyCapacity, effectiveDemand);
   const occupancy =

@@ -393,7 +393,7 @@ export const useGame = create<GameStore>()(
           leaseQuarterly: null, ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
           retirementQuarter: 1 + 16, // 20 real years → 16 quarters
-          maintenanceDeficit: 0,
+          maintenanceDeficit: 0, satisfactionPct: 75,
         };
         const starter2: FleetAircraft = { ...starter1, id: mkId("ac") };
         player.fleet = [starter1, starter2];
@@ -515,7 +515,7 @@ export const useGame = create<GameStore>()(
           ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
           cabinConfig, routeId: null,
           retirementQuarter: s.currentQuarter + 16,
-          maintenanceDeficit: 0,
+          maintenanceDeficit: 0, satisfactionPct: 75,
         };
 
         set({
@@ -977,6 +977,31 @@ export const useGame = create<GameStore>()(
           toast.info(`Aircraft insurance proceeds`,
             `${retiredCount} retirement${retiredCount === 1 ? "" : "s"} · +${fmtMoneyPlain(insuranceProceeds)} at ${(coveragePct * 100).toFixed(0)}% coverage`);
         }
+        // PRD update — Per-plane satisfaction drift each quarter.
+        // Mean-reverts toward 60. Modified by ops slider, eco upgrade,
+        // recent renovation, and aircraft age.
+        const opsLvl = player.sliders.operations;
+        const opsSatBonus =
+          opsLvl >= 4 ? +3 :
+          opsLvl >= 3 ? +1 :
+          opsLvl >= 2 ? 0 :
+          opsLvl === 1 ? -1 : -3;
+        const updatedFleetWithSat = updatedFleet.map((f) => {
+          if (f.status !== "active") return f;
+          const ageQ = s.currentQuarter - f.purchaseQuarter;
+          const ageDecay = Math.min(2, ageQ / 8);  // up to -2/Q on very old planes
+          const ecoBonus = f.ecoUpgrade ? 0.5 : 0;
+          const recentReno = f.renovationCompleteQuarter !== undefined &&
+            s.currentQuarter - f.renovationCompleteQuarter < 4 ? 2 : 0;
+          const cur = f.satisfactionPct ?? 75;
+          const meanRevert = (60 - cur) * 0.05;  // gentle pull
+          const next = Math.max(0, Math.min(100,
+            cur + opsSatBonus + ecoBonus + recentReno - ageDecay + meanRevert,
+          ));
+          return { ...f, satisfactionPct: next };
+        });
+        const finalFleet = updatedFleetWithSat;
+
         // Fleet flag detection (PRD §7.2)
         const activeModern = updatedFleet.filter(
           (f) => f.status === "active" && AIRCRAFT_BY_ID[f.specId]?.unlockQuarter >= 8,
@@ -996,7 +1021,7 @@ export const useGame = create<GameStore>()(
         }
         const teamReady: Team = {
           ...ensureStreaks(player),
-          fleet: updatedFleet,
+          fleet: finalFleet,
           routes: player.routes.map((r) => {
             const stillFlying = r.aircraftIds.filter((id) => {
               const f = player.fleet.find((x) => x.id === id);
@@ -1647,7 +1672,7 @@ export const useGame = create<GameStore>()(
           cabinConfig: listing.cabinConfig,
           routeId: null,
           retirementQuarter: listing.retirementQuarter,
-          maintenanceDeficit: 0,
+          maintenanceDeficit: 0, satisfactionPct: 75,
         };
         set({
           secondHandListings: s.secondHandListings.filter((l) => l.id !== listingId),
@@ -1860,7 +1885,7 @@ export const useGame = create<GameStore>()(
           leaseQuarterly: null, ecoUpgrade: true, ecoUpgradeQuarter: s.currentQuarter, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
           retirementQuarter: s.currentQuarter + 16,
-          maintenanceDeficit: 0,
+          maintenanceDeficit: 0, satisfactionPct: 75,
         }));
         set({
           teams: s.teams.map((t) => t.id === player.id ? {
@@ -2077,6 +2102,7 @@ export const useGame = create<GameStore>()(
             ...f,
             retirementQuarter: f.retirementQuarter ?? f.purchaseQuarter + 16,
             maintenanceDeficit: f.maintenanceDeficit ?? 0,
+            satisfactionPct: f.satisfactionPct ?? 75,
           })),
           insurancePolicy: t.insurancePolicy ?? "none",
           tagline: t.tagline ?? "",
