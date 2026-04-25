@@ -18,6 +18,7 @@ import { NewsPanel } from "@/components/panels/NewsPanel";
 import { LeaderboardPanel } from "@/components/panels/LeaderboardPanel";
 import { AdminPanel } from "@/components/panels/AdminPanel";
 import { RouteSetupModal } from "@/components/game/RouteSetupModal";
+import { RouteLaunchBar } from "@/components/game/RouteLaunchBar";
 import { QuarterTimerDriver } from "@/components/game/QuarterTimer";
 import { Toaster } from "@/components/game/Toaster";
 import { useShallow } from "zustand/react/shallow";
@@ -59,6 +60,8 @@ function CanvasInner() {
   // Route setup state (lifted up to share between map + modal)
   const [origin, setOrigin] = useState<string | null>(null);
   const [dest, setDest] = useState<string | null>(null);
+  const [isCargo, setIsCargo] = useState(false);
+  const [launchOpen, setLaunchOpen] = useState(false);
 
   function handleCityClick(c: City) {
     // No origin yet: select it
@@ -157,11 +160,29 @@ function CanvasInner() {
         </Panel>
       )}
 
-      {/* Route setup modal when both origin + dest selected */}
-      <RouteSetupModal
+      {/* Floating route launch bar — always visible during selection,
+          never blocks the map. Clicking "Launch" opens the detail modal. */}
+      <RouteLaunchBar
         origin={origin}
         dest={dest}
-        onClose={() => { setOrigin(null); setDest(null); }}
+        isCargo={isCargo}
+        setIsCargo={setIsCargo}
+        onCancel={() => { setOrigin(null); setDest(null); setIsCargo(false); }}
+        onLaunch={() => setLaunchOpen(true)}
+      />
+
+      {/* Detail modal for route configuration — only opens post-Launch */}
+      <RouteSetupModal
+        open={launchOpen}
+        origin={origin}
+        dest={dest}
+        forceCargo={isCargo}
+        onClose={() => {
+          setLaunchOpen(false);
+          setOrigin(null);
+          setDest(null);
+          setIsCargo(false);
+        }}
       />
 
       {/* Quarter close modal */}

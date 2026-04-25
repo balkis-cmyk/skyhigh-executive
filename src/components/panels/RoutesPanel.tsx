@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Badge, Button } from "@/components/ui";
+import { useMemo, useState } from "react";
+import { Badge, Input, Modal, ModalBody, ModalFooter, ModalHeader, Button } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { CITIES_BY_CODE } from "@/data/cities";
@@ -9,168 +9,232 @@ import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { classFareRange } from "@/lib/engine";
 import type { PricingTier } from "@/types/game";
 import { cn } from "@/lib/cn";
-import { Pencil, X } from "lucide-react";
+import { Pause, Play, X } from "lucide-react";
 
+/**
+ * Table-style route list (click a row to open a full detail modal) —
+ * scales from a handful to dozens of routes while keeping overview clarity.
+ */
 export function RoutesPanel() {
   const s = useGame();
   const player = selectPlayer(s);
   const closeRoute = useGame((g) => g.closeRoute);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  if (!player) return null;
-
-  const active = player.routes.filter((r) => r.status === "active" || r.status === "suspended");
   const suspendRoute = useGame((g) => g.suspendRoute);
   const resumeRoute = useGame((g) => g.resumeRoute);
 
+  const [query, setQuery] = useState("");
+  const [activeRouteId, setActiveRouteId] = useState<string | null>(null);
+
+  const rows = useMemo(() => {
+    if (!player) return [];
+    const q = query.trim().toUpperCase();
+    return player.routes
+      .filter((r) => r.status === "active" || r.status === "suspended")
+      .filter((r) => {
+        if (!q) return true;
+        return (
+          r.originCode.includes(q) ||
+          r.destCode.includes(q) ||
+          CITIES_BY_CODE[r.originCode]?.name.toUpperCase().includes(q) ||
+          CITIES_BY_CODE[r.destCode]?.name.toUpperCase().includes(q)
+        );
+      })
+      .sort(
+        (a, b) =>
+          b.quarterlyRevenue - b.quarterlyFuelCost - b.quarterlySlotCost -
+          (a.quarterlyRevenue - a.quarterlyFuelCost - a.quarterlySlotCost),
+      );
+  }, [player, query]);
+
+  if (!player) return null;
+
+  const activeRoute = activeRouteId
+    ? player.routes.find((r) => r.id === activeRouteId) ?? null
+    : null;
+
   return (
     <div className="space-y-3">
-      <div className="text-[0.8125rem] text-ink-2">
-        {active.length} routes flying · click a city on the map to open a new route
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="Search by code or city name…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="flex-1 h-9 text-[0.875rem]"
+        />
+        <div className="text-[0.75rem] text-ink-muted tabular shrink-0">
+          {rows.length} of {player.routes.filter((r) => r.status !== "closed").length}
+        </div>
       </div>
-      {active.length === 0 ? (
+
+      {rows.length === 0 ? (
         <div className="py-12 text-center text-ink-muted text-[0.875rem] rounded-lg border border-dashed border-line">
-          No routes yet. Pick an origin and destination from the globe.
+          {query
+            ? "No routes match that search."
+            : "No routes yet — click any city on the map to open one."}
         </div>
       ) : (
-        <div className="space-y-2">
-          {active.map((r) => {
-            const origin = CITIES_BY_CODE[r.originCode];
-            const dest = CITIES_BY_CODE[r.destCode];
-            const profit = r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
-            const specs = r.aircraftIds
-              .map((id) => player.fleet.find((f) => f.id === id))
-              .map((p) => p && AIRCRAFT_BY_ID[p.specId]?.name)
-              .filter(Boolean)
-              .join(", ");
-            const editing = editingId === r.id;
-            // PRD G2 — colour-coded rows by profitability
-            const profitTone =
-              r.status === "suspended" ? "border-line bg-surface opacity-60" :
-              profit > 0 ? "border-[var(--positive-soft)] bg-[var(--positive-soft)]" :
-              profit === 0 || Math.abs(profit) < r.quarterlyRevenue * 0.1
-                ? "border-[var(--warning-soft)] bg-[var(--warning-soft)]" :
-              "border-[var(--negative-soft)] bg-[var(--negative-soft)]";
-            return (
-              <div key={r.id} className={`rounded-md border ${profitTone}`}>
-                <div className="p-3">
-                  <div className="flex items-start justify-between mb-2 gap-2">
-                    <div className="min-w-0">
-                      <div className="font-mono text-ink font-medium">
-                        {r.originCode} → {r.destCode}
-                        {r.isCargo && <Badge tone="warning" className="ml-2">Cargo</Badge>}
-                        {(r.consecutiveLosingQuarters ?? 0) >= 2 && (
-                          <Badge tone="negative" className="ml-2">Route Review · {r.consecutiveLosingQuarters}Q losses</Badge>
+        <div className="rounded-md border border-line overflow-hidden">
+          <table className="w-full text-[0.8125rem]">
+            <thead>
+              <tr className="bg-surface-2 border-b border-line">
+                <Th className="w-[30%]">Route</Th>
+                <Th className="text-right">Load</Th>
+                <Th className="text-right">Freq</Th>
+                <Th className="text-right">Q revenue</Th>
+                <Th className="text-right">Q profit</Th>
+                <Th className="text-right w-[80px]">Status</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const profit = r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
+                const origin = CITIES_BY_CODE[r.originCode];
+                const dest = CITIES_BY_CODE[r.destCode];
+                const suspended = r.status === "suspended";
+                const losing = (r.consecutiveLosingQuarters ?? 0) >= 2;
+                return (
+                  <tr
+                    key={r.id}
+                    onClick={() => setActiveRouteId(r.id)}
+                    className={cn(
+                      "border-b border-line last:border-0 cursor-pointer",
+                      "hover:bg-surface-hover transition-colors",
+                      suspended && "opacity-60",
+                    )}
+                  >
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-ink font-medium">
+                          {r.originCode} → {r.destCode}
+                        </span>
+                        {r.isCargo && (
+                          <Badge tone="warning">Cargo</Badge>
+                        )}
+                        {losing && (
+                          <Badge tone="negative">Review</Badge>
                         )}
                       </div>
-                      <div className="text-[0.75rem] text-ink-muted tabular mt-0.5">
+                      <div className="text-[0.6875rem] text-ink-muted truncate mt-0.5">
                         {origin?.name} · {dest?.name} · {Math.round(r.distanceKm).toLocaleString()} km
                       </div>
-                    </div>
-                    <Badge
-                      tone={r.avgOccupancy > 0.7 ? "positive" : r.avgOccupancy < 0.5 && r.avgOccupancy > 0 ? "negative" : "neutral"}
-                    >
-                      {fmtPct(r.avgOccupancy * 100, 0)} load
-                    </Badge>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[0.75rem]">
-                    <span className="text-ink-muted">Aircraft</span>
-                    <span className="text-right text-ink-2 truncate">{specs || "—"}</span>
-                    <span className="text-ink-muted">Frequency</span>
-                    <span className="text-right tabular font-mono text-ink">{r.dailyFrequency}/day</span>
-                    <span className="text-ink-muted">Pricing</span>
-                    <span className="text-right text-ink capitalize">{r.pricingTier}</span>
-                    {r.isCargo && (() => {
-                      // Cargo capacity display (PRD F11.4 empty-payload visibility)
-                      const capacity = r.aircraftIds.reduce((sum, id) => {
-                        const p = player.fleet.find((f) => f.id === id);
-                        const spec = p && AIRCRAFT_BY_ID[p.specId];
-                        return sum + (spec?.cargoTonnes ?? 0);
-                      }, 0);
-                      const util = r.avgOccupancy;
-                      const carried = Math.round(capacity * util);
-                      return (
-                        <>
-                          <span className="text-ink-muted">Cargo</span>
-                          <span className="text-right tabular font-mono text-ink">
-                            {carried}T / {capacity}T per flight
-                          </span>
-                        </>
-                      );
-                    })()}
-                    <span className="text-ink-muted">Q revenue</span>
-                    <span className="text-right tabular font-mono text-ink">{fmtMoney(r.quarterlyRevenue)}</span>
-                    <span className="text-ink-muted">Q profit</span>
-                    <span className={`text-right tabular font-mono font-medium ${profit >= 0 ? "text-positive" : "text-negative"}`}>
-                      {fmtMoney(profit)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-line">
-                    <button
-                      className="inline-flex items-center gap-1.5 text-[0.75rem] text-ink-2 hover:text-ink"
-                      onClick={() => setEditingId(editing ? null : r.id)}
-                    >
-                      {editing ? <X size={13} /> : <Pencil size={13} />}
-                      {editing ? "Close edit" : "Edit"}
-                    </button>
-                    <div className="flex items-center gap-2">
-                      {r.status === "active" ? (
-                        <button
-                          className="text-[0.75rem] text-ink-2 hover:text-warning hover:underline"
-                          onClick={() => suspendRoute(r.id)}
-                        >
-                          Suspend
-                        </button>
-                      ) : (
-                        <>
-                          <Badge tone="warning">Suspended</Badge>
-                          <button
-                            className="text-[0.75rem] text-ink-2 hover:text-positive hover:underline"
-                            onClick={() => resumeRoute(r.id)}
-                          >
-                            Resume
-                          </button>
-                        </>
-                      )}
-                      <button
-                        className="text-[0.75rem] text-negative hover:underline"
-                        onClick={() => { if (confirm("Close this route permanently?")) closeRoute(r.id); }}
+                    </td>
+                    <td className="py-2.5 px-3 text-right">
+                      <span
+                        className={cn(
+                          "tabular font-mono",
+                          r.avgOccupancy > 0.7
+                            ? "text-positive"
+                            : r.avgOccupancy > 0 && r.avgOccupancy < 0.5
+                              ? "text-negative"
+                              : "text-ink",
+                        )}
                       >
-                        Close
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {editing && (
-                  <RouteEditor routeId={r.id} onDone={() => setEditingId(null)} />
-                )}
-              </div>
-            );
-          })}
+                        {fmtPct(r.avgOccupancy * 100, 0)}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-right tabular font-mono text-ink">
+                      {r.dailyFrequency}/d
+                    </td>
+                    <td className="py-2.5 px-3 text-right tabular font-mono text-ink">
+                      {fmtMoney(r.quarterlyRevenue)}
+                    </td>
+                    <td
+                      className={cn(
+                        "py-2.5 px-3 text-right tabular font-mono font-medium",
+                        profit >= 0 ? "text-positive" : "text-negative",
+                      )}
+                    >
+                      {fmtMoney(profit)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right">
+                      {suspended ? (
+                        <Badge tone="warning">Suspended</Badge>
+                      ) : (
+                        <Badge tone="positive">Active</Badge>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      {activeRoute && (
+        <RouteDetailModal
+          open={true}
+          route={activeRoute}
+          onClose={() => setActiveRouteId(null)}
+          onSuspend={() => {
+            suspendRoute(activeRoute.id);
+            setActiveRouteId(null);
+          }}
+          onResume={() => {
+            resumeRoute(activeRoute.id);
+          }}
+          onClose_close={() => {
+            if (confirm("Close this route permanently? Slots may be forfeited.")) {
+              closeRoute(activeRoute.id);
+              setActiveRouteId(null);
+            }
+          }}
+        />
       )}
     </div>
   );
 }
 
-function RouteEditor({ routeId, onDone }: { routeId: string; onDone: () => void }) {
+function Th({
+  children, className,
+}: {
+  children?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <th
+      className={cn(
+        "text-left px-3 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted",
+        className,
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+
+// ─── Detail modal with edit ────────────────────────────────────────
+
+function RouteDetailModal({
+  open, route, onClose, onSuspend, onResume, onClose_close,
+}: {
+  open: boolean;
+  route: ReturnType<typeof selectPlayer> extends null ? never : NonNullable<ReturnType<typeof selectPlayer>>["routes"][number];
+  onClose: () => void;
+  onSuspend: () => void;
+  onResume: () => void;
+  onClose_close: () => void;
+}) {
   const s = useGame();
   const player = selectPlayer(s);
   const updateRoute = useGame((g) => g.updateRoute);
-  const r = player?.routes.find((x) => x.id === routeId);
-  const [freq, setFreq] = useState<number>(r?.dailyFrequency ?? 2);
-  const [tier, setTier] = useState<PricingTier>(r?.pricingTier ?? "standard");
-  const [econFare, setEconFare] = useState<number | null>(r?.econFare ?? null);
-  const [busFare, setBusFare] = useState<number | null>(r?.busFare ?? null);
-  const [firstFare, setFirstFare] = useState<number | null>(r?.firstFare ?? null);
-  const [selectedPlaneIds, setSelectedPlaneIds] = useState<string[]>(r?.aircraftIds ?? []);
+
+  const [freq, setFreq] = useState<number>(route.dailyFrequency);
+  const [tier, setTier] = useState<PricingTier>(route.pricingTier);
+  const [econFare, setEconFare] = useState<number | null>(route.econFare ?? null);
+  const [busFare, setBusFare] = useState<number | null>(route.busFare ?? null);
+  const [firstFare, setFirstFare] = useState<number | null>(route.firstFare ?? null);
+  const [selectedPlaneIds, setSelectedPlaneIds] = useState<string[]>(route.aircraftIds);
   const [error, setError] = useState<string | null>(null);
 
-  if (!player || !r) return null;
+  if (!player) return null;
 
-  const econRange = classFareRange(r.distanceKm, "econ");
-  const busRange = classFareRange(r.distanceKm, "bus");
-  const firstRange = classFareRange(r.distanceKm, "first");
+  const origin = CITIES_BY_CODE[route.originCode];
+  const dest = CITIES_BY_CODE[route.destCode];
+  const profit = route.quarterlyRevenue - route.quarterlyFuelCost - route.quarterlySlotCost;
+  const econRange = classFareRange(route.distanceKm, "econ");
+  const busRange = classFareRange(route.distanceKm, "bus");
+  const firstRange = classFareRange(route.distanceKm, "first");
 
   const hasBus = selectedPlaneIds.some((id) => {
     const p = player.fleet.find((f) => f.id === id);
@@ -183,181 +247,245 @@ function RouteEditor({ routeId, onDone }: { routeId: string; onDone: () => void 
     return spec && spec.seats.first > 0;
   });
 
-  const assignable = player.fleet.filter(
-    (f) => f.status === "active" && (!f.routeId || f.routeId === routeId),
+  const idleOrOnRoute = player.fleet.filter(
+    (f) => f.status === "active" && (!f.routeId || f.routeId === route.id),
   );
 
   function save() {
-    const result = updateRoute(routeId, {
+    const r = updateRoute(route.id, {
+      aircraftIds: selectedPlaneIds,
       dailyFrequency: freq,
       pricingTier: tier,
       econFare,
       busFare,
       firstFare,
-      aircraftIds: selectedPlaneIds,
     });
-    if (!result.ok) setError(result.error ?? "Failed");
-    else { setError(null); onDone(); }
+    if (!r.ok) {
+      setError(r.error ?? "Failed to save");
+      return;
+    }
+    onClose();
   }
 
   return (
-    <div className="border-t border-line bg-surface-2/60 p-3 space-y-3">
-      {/* Pricing tier */}
-      <div>
-        <Label>Pricing tier</Label>
-        <div className="grid grid-cols-4 gap-1.5">
-          {(["budget", "standard", "premium", "ultra"] as PricingTier[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTier(t)}
-              className={cn(
-                "rounded-md border px-2 py-1.5 text-[0.75rem] capitalize transition-colors",
-                tier === t
-                  ? "border-primary bg-[rgba(20,53,94,0.06)] text-ink font-medium"
-                  : "border-line text-ink-2 hover:bg-surface-hover",
-              )}
-            >
-              {t}
-            </button>
-          ))}
+    <Modal open={open} onClose={onClose} className="w-[min(780px,calc(100vw-3rem))]">
+      <ModalHeader>
+        <div className="flex items-center gap-2 mb-1.5">
+          <Badge tone={route.status === "suspended" ? "warning" : "positive"}>
+            {route.status === "suspended" ? "Suspended" : "Active"}
+          </Badge>
+          {route.isCargo && <Badge tone="warning">Cargo</Badge>}
         </div>
-      </div>
-
-      {/* Frequency */}
-      <div>
-        <Label>Daily frequency</Label>
-        <div className="flex items-center gap-2">
-          <input
-            type="range"
-            min={1}
-            max={24}
-            value={freq}
-            onChange={(e) => setFreq(parseInt(e.target.value, 10))}
-            className="flex-1 accent-primary"
-          />
-          <span className="tabular font-mono text-[0.875rem] w-14 text-right text-ink">
-            {freq}/day
-          </span>
-        </div>
-      </div>
-
-      {/* Fare sliders (passenger only) */}
-      {!r.isCargo && (
-        <div className="space-y-2">
-          <Label>Seat-class fares</Label>
-          <FareRow
-            label="Economy" range={econRange}
-            value={econFare ?? econRange.base}
-            onChange={setEconFare} onReset={() => setEconFare(null)}
-            override={econFare !== null}
-          />
-          {hasBus && (
-            <FareRow
-              label="Business" range={busRange}
-              value={busFare ?? busRange.base}
-              onChange={setBusFare} onReset={() => setBusFare(null)}
-              override={busFare !== null}
-            />
-          )}
-          {hasFirst && (
-            <FareRow
-              label="First" range={firstRange}
-              value={firstFare ?? firstRange.base}
-              onChange={setFirstFare} onReset={() => setFirstFare(null)}
-              override={firstFare !== null}
-            />
+        <h2 className="font-display text-[1.5rem] text-ink leading-tight">
+          {route.originCode} → {route.destCode}
+        </h2>
+        <div className="text-ink-muted text-[0.8125rem] mt-1">
+          {origin?.name} → {dest?.name} · {Math.round(route.distanceKm).toLocaleString()} km ·
+          Opened Q{route.openQuarter}
+          {(route.consecutiveQuartersActive ?? 0) >= 4 && (
+            <span className="ml-2 text-positive">(Established route bonus)</span>
           )}
         </div>
-      )}
+      </ModalHeader>
+      <ModalBody className="space-y-5 max-h-[60vh] overflow-auto">
+        {/* Performance snapshot */}
+        <div className="grid grid-cols-4 gap-3">
+          <MiniStat label="Load" value={fmtPct(route.avgOccupancy * 100, 0)}
+            tone={route.avgOccupancy > 0.7 ? "pos" : route.avgOccupancy > 0 && route.avgOccupancy < 0.5 ? "neg" : undefined} />
+          <MiniStat label="Q revenue" value={fmtMoney(route.quarterlyRevenue)} />
+          <MiniStat label="Q costs" value={fmtMoney(route.quarterlyFuelCost + route.quarterlySlotCost)} tone="neg" />
+          <MiniStat label="Q profit" value={fmtMoney(profit)} tone={profit >= 0 ? "pos" : "neg"} />
+        </div>
 
-      {/* Aircraft assignment */}
-      <div>
-        <Label>Assigned aircraft</Label>
-        <div className="space-y-1 max-h-40 overflow-auto">
-          {assignable.length === 0 ? (
-            <div className="text-[0.75rem] text-ink-muted">No other aircraft available to swap in.</div>
-          ) : (
-            assignable.map((p) => {
+        {/* Pricing tier */}
+        <div>
+          <Label>Pricing tier</Label>
+          <div className="grid grid-cols-4 gap-2">
+            {(["budget", "standard", "premium", "ultra"] as PricingTier[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTier(t)}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-[0.8125rem] capitalize transition-colors",
+                  tier === t
+                    ? "border-primary bg-[rgba(20,53,94,0.06)] text-ink font-medium"
+                    : "border-line text-ink-2 hover:bg-surface-hover",
+                )}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Frequency */}
+        <div>
+          <Label>Daily frequency</Label>
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={1}
+              max={24}
+              value={freq}
+              onChange={(e) => setFreq(parseInt(e.target.value, 10))}
+              className="flex-1 accent-primary"
+            />
+            <span className="tabular font-mono text-ink text-[0.9375rem] w-16 text-right">
+              {freq}/day
+            </span>
+          </div>
+        </div>
+
+        {/* Per-class fares (passenger only) */}
+        {!route.isCargo && (
+          <div className="space-y-3">
+            <Label>Per-class fares (optional override)</Label>
+            <FareRow label="Economy" range={econRange} fare={econFare} setFare={setEconFare} active />
+            <FareRow label="Business" range={busRange} fare={busFare} setFare={setBusFare} active={hasBus} />
+            <FareRow label="First" range={firstRange} fare={firstFare} setFare={setFirstFare} active={hasFirst} />
+          </div>
+        )}
+
+        {/* Aircraft assignment */}
+        <div>
+          <Label>Aircraft assigned</Label>
+          <div className="space-y-1.5 max-h-40 overflow-auto">
+            {idleOrOnRoute.map((p) => {
               const spec = AIRCRAFT_BY_ID[p.specId];
               if (!spec) return null;
-              const canReach = spec.rangeKm >= r.distanceKm;
+              const canReach = spec.rangeKm >= route.distanceKm;
+              const cargoMatch = route.isCargo ? spec.family === "cargo" : spec.family === "passenger";
               const selected = selectedPlaneIds.includes(p.id);
+              const disabled = !canReach || !cargoMatch;
               return (
-                <label key={p.id} className={cn(
-                  "flex items-center gap-2 rounded-md border px-2 py-1.5 cursor-pointer text-[0.8125rem]",
-                  selected ? "border-primary bg-[rgba(20,53,94,0.04)]"
-                    : canReach ? "border-line hover:bg-surface-hover"
-                    : "border-line opacity-50 cursor-not-allowed",
-                )}>
+                <label
+                  key={p.id}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer",
+                    selected
+                      ? "border-primary bg-[rgba(20,53,94,0.04)]"
+                      : disabled
+                        ? "border-line opacity-50 cursor-not-allowed"
+                        : "border-line hover:bg-surface-hover",
+                  )}
+                >
                   <input
                     type="checkbox"
                     checked={selected}
-                    disabled={!canReach}
+                    disabled={disabled}
                     onChange={(e) => {
                       if (e.target.checked) setSelectedPlaneIds([...selectedPlaneIds, p.id]);
                       else setSelectedPlaneIds(selectedPlaneIds.filter((x) => x !== p.id));
                     }}
                     className="accent-primary"
                   />
-                  <span className="flex-1 truncate text-ink">{spec.name}</span>
-                  {!canReach && <span className="text-[0.625rem] text-negative">Out of range</span>}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-ink text-[0.875rem]">{spec.name}</div>
+                    <div className="text-[0.6875rem] text-ink-muted font-mono">
+                      Range {spec.rangeKm.toLocaleString()} km ·
+                      {spec.family === "passenger"
+                        ? ` ${spec.seats.first + spec.seats.business + spec.seats.economy} seats`
+                        : ` ${spec.cargoTonnes ?? 0}T cargo`}
+                    </div>
+                  </div>
+                  {!canReach && <Badge tone="negative">Out of range</Badge>}
+                  {canReach && !cargoMatch && <Badge tone="warning">{route.isCargo ? "Passenger plane" : "Cargo plane"}</Badge>}
                 </label>
               );
-            })
-          )}
+            })}
+          </div>
         </div>
-      </div>
 
-      {error && <div className="text-[0.8125rem] text-negative">{error}</div>}
-
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={onDone}>Cancel</Button>
-        <Button variant="primary" size="sm" onClick={save} disabled={selectedPlaneIds.length === 0}>
-          Save changes
-        </Button>
-      </div>
-    </div>
+        {error && (
+          <div className="text-negative text-[0.875rem] rounded-md border border-[var(--negative-soft)] bg-[var(--negative-soft)] px-3 py-2">
+            {error}
+          </div>
+        )}
+      </ModalBody>
+      <ModalFooter className="justify-between">
+        <div className="flex items-center gap-2">
+          {route.status === "active" ? (
+            <Button variant="secondary" size="sm" onClick={onSuspend}>
+              <Pause size={13} className="mr-1.5" /> Suspend
+            </Button>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={onResume}>
+              <Play size={13} className="mr-1.5" /> Resume
+            </Button>
+          )}
+          <Button variant="danger" size="sm" onClick={onClose_close}>
+            <X size={13} className="mr-1.5" /> Close route
+          </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save}>Save changes</Button>
+        </div>
+      </ModalFooter>
+    </Modal>
   );
 }
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1.5">{children}</div>
+    <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+      {children}
+    </div>
   );
 }
 
-function FareRow({ label, range, value, onChange, onReset, override }: {
-  label: string;
-  range: { min: number; base: number; max: number };
-  value: number;
-  onChange: (n: number) => void;
-  onReset: () => void;
-  override: boolean;
+function MiniStat({
+  label, value, tone,
+}: {
+  label: string; value: string; tone?: "pos" | "neg";
 }) {
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[0.75rem] text-ink-2">{label}</span>
-        <div className="flex items-center gap-2">
-          <span className="tabular font-mono text-[0.75rem] text-ink">
-            ${Math.round(value).toLocaleString()}
-          </span>
-          {override && (
-            <button onClick={onReset} className="text-[0.625rem] text-ink-muted hover:text-ink underline">
-              reset
-            </button>
-          )}
-        </div>
+    <div className="rounded-md border border-line bg-surface-2 p-2.5">
+      <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">
+        {label}
       </div>
+      <div
+        className={cn(
+          "tabular font-display text-[1rem] mt-0.5 leading-none",
+          tone === "pos" ? "text-positive" : tone === "neg" ? "text-negative" : "text-ink",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function FareRow({
+  label, range, fare, setFare, active,
+}: {
+  label: string;
+  range: { min: number; base: number; max: number };
+  fare: number | null;
+  setFare: (v: number | null) => void;
+  active: boolean;
+}) {
+  const v = fare ?? range.base;
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-md border px-3 py-2",
+        active ? "border-line" : "border-line opacity-50",
+      )}
+    >
+      <span className="w-20 text-[0.8125rem] text-ink">{label}</span>
       <input
         type="range"
         min={range.min}
         max={range.max}
-        step={Math.max(1, Math.round((range.max - range.min) / 100))}
-        value={value}
-        onChange={(e) => onChange(parseInt(e.target.value, 10))}
-        className="w-full accent-primary"
+        value={v}
+        disabled={!active}
+        onChange={(e) => setFare(parseInt(e.target.value, 10))}
+        className="flex-1 accent-primary"
       />
+      <span className="tabular font-mono text-ink text-[0.8125rem] w-16 text-right">
+        ${v}
+      </span>
     </div>
   );
 }

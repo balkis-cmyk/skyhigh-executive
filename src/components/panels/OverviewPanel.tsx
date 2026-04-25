@@ -5,7 +5,7 @@ import { fmtMoney, fmtPct } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
 import { NEWS_BY_QUARTER } from "@/data/world-news";
-import { computeAirlineValue, fleetCount } from "@/lib/engine";
+import { computeAirlineValue, fleetCount, brandRating } from "@/lib/engine";
 import { DOCTRINE_BY_ID } from "@/data/doctrines";
 import { useUi, type PanelId } from "@/store/ui";
 
@@ -94,8 +94,8 @@ export function OverviewPanel() {
         </div>
         <div className="grid grid-cols-2 gap-4">
           <MetricWithSpark
-            label="Brand value"
-            value={player.brandValue.toFixed(1)}
+            label="Brand rating"
+            value={brandRating(player).grade}
             series={bvSeries}
             color="var(--accent)"
           />

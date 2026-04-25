@@ -530,8 +530,9 @@ export function depreciateBookValue(
 
 // ─── Interest (PRD §5.7) ───────────────────────────────────
 export function effectiveBorrowingRate(team: Team, baseRatePct: number): number {
-  const airlineValue = computeAirlineValue(team);
-  const debtRatio = airlineValue > 0 ? team.totalDebtUsd / airlineValue : 1;
+  // Lenders price against book equity, not brand-multiplied valuation
+  const equity = computeNetEquityUsdSafe(team);
+  const debtRatio = equity > 0 ? team.totalDebtUsd / equity : 1;
   let premium = 0.5;
   if (debtRatio >= 0.7) premium = 5.0;
   else if (debtRatio >= 0.5) premium = 3.0;
@@ -551,14 +552,55 @@ export function quarterlyInterestUsd(team: Team, baseRatePct: number): number {
 }
 
 export function maxBorrowingUsd(team: Team): number {
-  const v = computeAirlineValue(team);
+  // Against book equity, not brand-multiplied valuation
+  const v = computeNetEquityUsdSafe(team);
   return Math.max(0, v * 0.6 - team.totalDebtUsd);
 }
 
-// ─── Airline Value (= Net Equity, PRD §3.2 + §5.9) ─────────
-export function computeAirlineValue(team: Team): number {
+/** Forward declaration used before computeNetEquityUsd exists in the file. */
+function computeNetEquityUsdSafe(team: Team): number {
   const fleetValue = team.fleet.reduce((s, f) => s + (f.bookValue ?? 0), 0);
   return team.cashUsd + fleetValue - team.totalDebtUsd;
+}
+
+// ─── Airline Value + Brand multiplier (merged per user feedback) ────
+// Brand, loyalty, ops are now a hidden multiplier on the balance-sheet value —
+// so the player sees one "Airline Value" number in dollars, which can rise or
+// fall based on brand strength independently of cash/debt.
+export function computeBrandMultiplier(team: Team): number {
+  // Brand score 0..100 from internal signals
+  const brandScore = Math.min(100, team.brandPts / 2);
+  const opsScore = Math.min(100, team.opsPts);
+  const loyalty = team.customerLoyaltyPct;
+  const composite =
+    brandScore * 0.5 + loyalty * 0.3 + opsScore * 0.2;
+  // Map composite 0..100 → multiplier 0.40..1.80 (linear around 50 = 1.00)
+  // At 50: 1.0, at 100: 1.8, at 0: 0.4
+  return 0.40 + (composite / 100) * 1.40;
+}
+
+export function computeNetEquityUsd(team: Team): number {
+  const fleetValue = team.fleet.reduce((s, f) => s + (f.bookValue ?? 0), 0);
+  return team.cashUsd + fleetValue - team.totalDebtUsd;
+}
+
+/** Player-facing Airline Value — net equity × brand multiplier. */
+export function computeAirlineValue(team: Team): number {
+  const equity = computeNetEquityUsd(team);
+  const mult = computeBrandMultiplier(team);
+  return equity * mult;
+}
+
+/** A letter grade for the brand multiplier — shown instead of raw Brand Pts. */
+export function brandRating(team: Team): { grade: string; color: string } {
+  const m = computeBrandMultiplier(team);
+  if (m >= 1.6) return { grade: "A+", color: "var(--positive)" };
+  if (m >= 1.4) return { grade: "A",  color: "var(--positive)" };
+  if (m >= 1.2) return { grade: "B+", color: "var(--primary)" };
+  if (m >= 1.0) return { grade: "B",  color: "var(--primary)" };
+  if (m >= 0.8) return { grade: "C",  color: "var(--warning)" };
+  if (m >= 0.6) return { grade: "D",  color: "var(--warning)" };
+  return { grade: "F", color: "var(--negative)" };
 }
 
 // ─── End-game card modifiers (PRD G9) ──────────────────────

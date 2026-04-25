@@ -49,12 +49,13 @@
   --info: #2b6b88;
   --info-soft: rgba(43, 107, 136, 0.1);
 
-  /* Map — readable, editorial, not dark-ocean */
-  --map-ocean: #e8eef3;
-  --map-land: #f0ebe0;
-  --map-land-hover: #e5dfce;
-  --map-land-select: #dcd3ba;
-  --map-line: #b9ac94;
+  /* Map — satellite-ish feel, clear land vs water, not photographic */
+  --map-ocean: #c6d7e3;          /* muted steel blue */
+  --map-ocean-deep: #b3c8d8;     /* deeper water tone for depth accents */
+  --map-land: #d8c9a5;            /* warm earth bone */
+  --map-land-hover: #cfbe92;
+  --map-land-select: #c2ad77;
+  --map-line: #9a8766;            /* warmer coastline */
   --map-arc: #d14a2e;
   --map-arc-muted: rgba(185, 172, 148, 0.5);
   --map-hub: #14355e;

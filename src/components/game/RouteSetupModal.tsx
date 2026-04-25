@@ -11,8 +11,12 @@ import { cn } from "@/lib/cn";
 import { fmtMoney } from "@/lib/format";
 
 export interface RouteSetupModalProps {
+  /** Explicit open flag — modal appears only after the user clicks Launch. */
+  open: boolean;
   origin: string | null;
   dest: string | null;
+  /** Pax vs Cargo preselection from the launch bar. */
+  forceCargo?: boolean;
   onClose: () => void;
 }
 
@@ -20,7 +24,7 @@ export interface RouteSetupModalProps {
  *  on the busiest corridors (JFK-LHR, DXB-LHR). We use 24. */
 const MAX_FREQUENCY = 24;
 
-export function RouteSetupModal({ origin, dest, onClose }: RouteSetupModalProps) {
+export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: RouteSetupModalProps) {
   const s = useGame();
   const player = selectPlayer(s);
   const openRoute = useGame((g) => g.openRoute);
@@ -34,18 +38,23 @@ export function RouteSetupModal({ origin, dest, onClose }: RouteSetupModalProps)
   const [firstFare, setFirstFare] = useState<number | null>(null);
   const [isCargo, setIsCargo] = useState(false);
 
-  const isOpen = !!(origin && dest);
+  const isOpen = open && !!(origin && dest);
 
-  // Reset + prefill when a new origin/dest pair arrives
+  // Reset + prefill when modal opens
   useEffect(() => {
     if (!isOpen || !player || !origin || !dest) return;
     const dist = distanceBetween(origin, dest);
+    const cargo = forceCargo ?? false;
     const idle = player.fleet.find(
-      (f) =>
-        f.status === "active" &&
-        !f.routeId &&
-        AIRCRAFT_BY_ID[f.specId] &&
-        AIRCRAFT_BY_ID[f.specId].rangeKm >= dist,
+      (f) => {
+        if (f.status !== "active" || f.routeId) return false;
+        const spec = AIRCRAFT_BY_ID[f.specId];
+        if (!spec) return false;
+        if (spec.rangeKm < dist) return false;
+        return cargo
+          ? spec.family === "cargo"
+          : spec.family === "passenger";
+      },
     );
     setSelectedPlaneIds(idle ? [idle.id] : []);
     setFreq(2);
@@ -53,9 +62,9 @@ export function RouteSetupModal({ origin, dest, onClose }: RouteSetupModalProps)
     setEconFare(null);
     setBusFare(null);
     setFirstFare(null);
-    setIsCargo(false);
+    setIsCargo(cargo);
     setError(null);
-  }, [origin, dest, isOpen, player]);
+  }, [isOpen, origin, dest, forceCargo, player]);
 
   if (!player) return null;
 

@@ -568,6 +568,23 @@ export const useGame = create<GameStore>()(
           return { ok: false, error: "Unknown city" };
         if (aircraftIds.length === 0)
           return { ok: false, error: "Assign at least one aircraft" };
+        // Network rule: origin must be your hub, a secondary hub, or a city
+        // already connected to your network via an active/suspended route.
+        const isInNetwork = (code: string): boolean => {
+          if (code === player.hubCode) return true;
+          if (player.secondaryHubCodes.includes(code)) return true;
+          return player.routes.some(
+            (r) =>
+              r.status !== "closed" &&
+              (r.originCode === code || r.destCode === code),
+          );
+        };
+        if (!isInNetwork(originCode)) {
+          return {
+            ok: false,
+            error: "Origin not in your network. Add it as a secondary hub or open a route to it first.",
+          };
+        }
         const dist = distanceBetween(originCode, destCode);
         const planes = aircraftIds
           .map((id) => player.fleet.find((f) => f.id === id))

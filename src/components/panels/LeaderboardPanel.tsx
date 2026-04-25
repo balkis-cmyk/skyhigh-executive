@@ -2,17 +2,20 @@
 
 import { Badge } from "@/components/ui";
 import { useGame } from "@/store/game";
-import { fmtPct } from "@/lib/format";
-import { fleetCount } from "@/lib/engine";
+import { fmtMoney, fmtPct } from "@/lib/format";
+import { computeAirlineValue, fleetCount, brandRating } from "@/lib/engine";
 
 export function LeaderboardPanel() {
   const s = useGame();
-  const ranked = [...s.teams].sort((a, b) => b.brandValue - a.brandValue);
+  const ranked = [...s.teams].sort(
+    (a, b) => computeAirlineValue(b) - computeAirlineValue(a),
+  );
 
   return (
     <div className="space-y-3">
       <div className="text-[0.8125rem] text-ink-2">
-        Ranked by Brand Value. Competitor financial detail is hidden per PRD.
+        Ranked by Airline Value (book equity × brand multiplier). Competitor
+        finances stay private per PRD.
       </div>
       <div className="space-y-1.5">
         {ranked.map((t, i) => {
@@ -44,12 +47,12 @@ export function LeaderboardPanel() {
               </div>
               <div className="text-right shrink-0">
                 <div className="tabular font-display text-[1.25rem] text-ink leading-none">
-                  {t.brandValue.toFixed(1)}
+                  {fmtMoney(computeAirlineValue(t))}
                 </div>
                 <div className="text-[0.6875rem] text-ink-muted mt-0.5">
                   {isPlayer
-                    ? `${t.routes.filter((r) => r.status === "active").length} routes · ${fleetCount(t.fleet)} ✈ · ${fmtPct(t.customerLoyaltyPct, 0)}`
-                    : "—"}
+                    ? `Brand ${brandRating(t).grade} · ${t.routes.filter((r) => r.status === "active").length} routes · ${fleetCount(t.fleet)} ✈ · ${fmtPct(t.customerLoyaltyPct, 0)}`
+                    : `Brand ${brandRating(t).grade} · ${fleetCount(t.fleet)} ✈`}
                 </div>
               </div>
             </div>

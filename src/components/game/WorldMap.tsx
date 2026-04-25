@@ -10,10 +10,8 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-  geoOrthographic,
+  geoNaturalEarth1,
   geoPath,
-  geoDistance,
-  geoCircle,
 } from "d3-geo";
 import { feature } from "topojson-client";
 import type { FeatureCollection } from "geojson";
@@ -51,9 +49,10 @@ export interface WorldMapProps {
 const VIEW_W = 1600;
 const VIEW_H = 900;
 
-const MIN_SCALE = 240;
-const MAX_SCALE = 1400;
-const DEFAULT_SCALE = 380;
+// Natural Earth projection — flatter, the whole world visible, easy to navigate.
+const MIN_SCALE = 180;
+const MAX_SCALE = 900;
+const DEFAULT_SCALE = 280;
 
 let worldAtlasPromise: Promise<FeatureCollection> | null = null;
 function loadWorldAtlas(): Promise<FeatureCollection> {
@@ -74,8 +73,13 @@ function loadWorldAtlas(): Promise<FeatureCollection> {
 
 function cityRadius(tier: number, hovered: boolean, scale: number): number {
   const zoomFactor = Math.sqrt(scale / DEFAULT_SCALE);
-  const base = (tier === 1 ? 5 : tier === 2 ? 3.5 : tier === 3 ? 2.5 : 2) * zoomFactor;
+  // Wider tier spread so size alone reads tier
+  const base = (tier === 1 ? 6 : tier === 2 ? 4 : tier === 3 ? 2.5 : 1.75) * zoomFactor;
   return hovered ? base * 1.5 : base;
+}
+
+function tierLabel(tier: number): string {
+  return `T${tier}`;
 }
 
 /** Sample the great-circle between a and b into an SVG polyline path
@@ -115,15 +119,15 @@ export function WorldMap({
   const [bbox, setBbox] = useState<DOMRect | null>(null);
   const currentQuarter = useGame((s) => s.currentQuarter);
 
-  // Projection state: rotation (lambda, phi), gamma = 0; scale
-  const [rotation, setRotation] = useState<[number, number]>([-10, -20]);
+  // Projection state: translate offset (px, py) in screen pixels + scale
+  const [translate, setTranslate] = useState<[number, number]>([VIEW_W / 2, VIEW_H / 2]);
   const [scale, setScale] = useState<number>(DEFAULT_SCALE);
 
   // Dragging state
   const dragRef = useRef<{
     startX: number;
     startY: number;
-    startRot: [number, number];
+    startTranslate: [number, number];
     moved: boolean;
   } | null>(null);
 
@@ -149,12 +153,10 @@ export function WorldMap({
   }, []);
 
   const projection = useMemo(() => {
-    return geoOrthographic()
-      .translate([VIEW_W / 2, VIEW_H / 2])
-      .scale(scale)
-      .rotate([rotation[0], rotation[1], 0])
-      .clipAngle(90);
-  }, [scale, rotation]);
+    return geoNaturalEarth1()
+      .translate(translate)
+      .scale(scale);
+  }, [scale, translate]);
 
   const path = useMemo(() => geoPath(projection), [projection]);
 
@@ -181,6 +183,16 @@ export function WorldMap({
     return set;
   }, [activeRoutes]);
 
+  // Sum daily flights per city across all active routes — used for labels.
+  const dailyFlightsByCity = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of activeRoutes) {
+      map[r.originCode] = (map[r.originCode] ?? 0) + r.dailyFrequency;
+      map[r.destCode] = (map[r.destCode] ?? 0) + r.dailyFrequency;
+    }
+    return map;
+  }, [activeRoutes]);
+
   // Sphere + graticule paths (d3-geo handles visibility via clipAngle)
   const spherePath = useMemo(() => path({ type: "Sphere" } as Parameters<typeof path>[0]) ?? "", [path]);
   const graticulePaths = useMemo(() => {
@@ -202,16 +214,16 @@ export function WorldMap({
     return lines;
   }, [path]);
 
-  // Pointer handlers for drag-to-rotate
+  // Pointer handlers for drag-to-pan
   const onPointerDown = useCallback((e: ReactPointerEvent<SVGSVGElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
-      startRot: rotation,
+      startTranslate: translate,
       moved: false,
     };
-  }, [rotation]);
+  }, [translate]);
 
   const onPointerMove = useCallback((e: ReactPointerEvent<SVGSVGElement>) => {
     const d = dragRef.current;
@@ -220,22 +232,18 @@ export function WorldMap({
     const dy = e.clientY - d.startY;
     if (!d.moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) d.moved = true;
     if (d.moved) {
-      // Sensitivity scales with scale (zoomed in = slower rotation)
-      const sens = 140 / scale;
-      const newLambda = d.startRot[0] + dx * sens;
-      const newPhi = Math.max(-89, Math.min(89, d.startRot[1] - dy * sens));
-      setRotation([newLambda, newPhi]);
+      // Convert screen px to SVG viewBox px (assume rect matches)
+      const svg = e.currentTarget;
+      const rect = svg.getBoundingClientRect();
+      const sx = VIEW_W / rect.width;
+      const sy = VIEW_H / rect.height;
+      setTranslate([d.startTranslate[0] + dx * sx, d.startTranslate[1] + dy * sy]);
     }
-  }, [scale]);
+  }, []);
 
   const onPointerUp = useCallback((e: ReactPointerEvent<SVGSVGElement>) => {
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
-    const d = dragRef.current;
     dragRef.current = null;
-    // If the pointer didn't move, it's a click — let children handle it
-    if (d && !d.moved) {
-      // noop — the inner <g> click handler already fires
-    }
   }, []);
 
   const onWheel = useCallback((e: ReactWheelEvent<SVGSVGElement>) => {
@@ -244,19 +252,18 @@ export function WorldMap({
     setScale((s) => Math.max(MIN_SCALE, Math.min(MAX_SCALE, s * factor)));
   }, []);
 
-  // Reset to a sensible view (double-click on sphere)
+  // Reset to a sensible view (double-click)
   const resetView = useCallback(() => {
-    setRotation([-10, -20]);
+    setTranslate([VIEW_W / 2, VIEW_H / 2]);
     setScale(DEFAULT_SCALE);
   }, []);
 
-  // Visibility check for a city: is it on the near hemisphere of current rotation?
+  // Natural Earth shows the whole world — all cities "visible" from projection POV
   const isVisible = useCallback(
-    (lon: number, lat: number): boolean => {
-      const center: [number, number] = [-rotation[0], -rotation[1]];
-      return geoDistance(center, [lon, lat]) < Math.PI / 2 - 0.05;
+    (_lon: number, _lat: number): boolean => {
+      return true;
     },
-    [rotation],
+    [],
   );
 
   return (
@@ -278,25 +285,52 @@ export function WorldMap({
         onWheel={onWheel}
         onDoubleClick={resetView}
       >
-        {/* Globe sphere backdrop */}
+        {/* Globe sphere backdrop — subtle ocean depth gradient */}
         <defs>
           <radialGradient id="globe-glow" cx="50%" cy="50%" r="50%">
-            <stop offset="70%" stopColor="var(--map-ocean)" />
-            <stop offset="100%" stopColor="var(--line-strong)" stopOpacity="0.2" />
+            <stop offset="0%" stopColor="var(--map-ocean)" />
+            <stop offset="85%" stopColor="var(--map-ocean-deep)" />
+            <stop offset="100%" stopColor="var(--map-ocean-deep)" stopOpacity="0.85" />
           </radialGradient>
+          {/* Land gradient: slight tone shift across the globe for depth */}
+          <radialGradient id="land-tone" cx="40%" cy="35%" r="70%">
+            <stop offset="0%" stopColor="#e5d6b0" />
+            <stop offset="100%" stopColor="var(--map-land)" />
+          </radialGradient>
+          {/* Glow shadow under coastlines for subtle depth */}
+          <filter id="coastline-soft" x="-5%" y="-5%" width="110%" height="110%">
+            <feGaussianBlur stdDeviation="0.6" />
+          </filter>
         </defs>
-        <path d={spherePath} fill="url(#globe-glow)" stroke="var(--line-strong)" strokeWidth="0.5" strokeOpacity="0.4" />
+        <path d={spherePath} fill="url(#globe-glow)" stroke="var(--map-ocean-deep)" strokeWidth="0.6" strokeOpacity="0.5" />
 
         {/* Graticule */}
-        <g stroke="var(--map-line)" strokeWidth="0.4" fill="none" opacity="0.35">
+        <g stroke="#8aa1b2" strokeWidth="0.3" fill="none" opacity="0.22">
           {graticulePaths.map((d, i) => (
             <path key={i} d={d} strokeDasharray="2 5" />
           ))}
         </g>
 
-        {/* Countries */}
+        {/* Countries: coastline shadow layer + land fill + border */}
         {atlas && (
           <g>
+            {/* Soft coastline shadow to give subtle depth between land and water */}
+            <g filter="url(#coastline-soft)" opacity="0.35">
+              {atlas.features.map((f, i) => {
+                const d: string = path(f as Parameters<typeof path>[0]) ?? "";
+                if (!d) return null;
+                return (
+                  <path
+                    key={`shadow-${i}`}
+                    d={d}
+                    fill="none"
+                    stroke="var(--map-line)"
+                    strokeWidth="2.5"
+                  />
+                );
+              })}
+            </g>
+            {/* Land fill */}
             {atlas.features.map((f, i) => {
               const d: string = path(f as Parameters<typeof path>[0]) ?? "";
               if (!d) return null;
@@ -304,10 +338,10 @@ export function WorldMap({
                 <path
                   key={i}
                   d={d}
-                  fill="var(--map-land)"
+                  fill="url(#land-tone)"
                   stroke="var(--map-line)"
                   strokeWidth="0.5"
-                  strokeOpacity="0.8"
+                  strokeOpacity="0.65"
                 />
               );
             })}
@@ -364,7 +398,7 @@ export function WorldMap({
           </g>
         )}
 
-        {/* Route arcs + native SVG animated dots (no React re-renders) */}
+        {/* Route arcs + animated plane icons (native SVG, no React re-renders) */}
         <g fill="none" strokeLinecap="round">
           {activeRoutes.map((r, i) => {
             const a = CITIES_BY_CODE[r.originCode];
@@ -383,31 +417,37 @@ export function WorldMap({
               project,
             );
             if (!d) return null;
-            const pathId = `arc-${r.id}`;
-            const duration = `${8 + (i % 5) * 0.8}s`; // staggered, deterministic
+            const duration = `${10 + (i % 5) * 1.2}s`; // staggered
+            // Plane SVG path (centered at origin, nose up at y=-5 — animateMotion
+            // with rotate="auto" handles pointing along the arc)
+            const planeScale = 0.5 * Math.sqrt(scale / DEFAULT_SCALE);
             return (
               <g key={r.id}>
                 <path
-                  id={pathId}
                   d={d}
                   stroke={color}
                   strokeWidth={1.75 * Math.sqrt(scale / DEFAULT_SCALE)}
-                  strokeOpacity="0.6"
+                  strokeOpacity="0.55"
                 />
-                <circle
-                  r={2.4 * Math.sqrt(scale / DEFAULT_SCALE)}
-                  fill={color}
-                  stroke="var(--surface)"
-                  strokeWidth="0.8"
-                >
+                <g>
+                  {/* Tiny plane icon — simple airfoil silhouette */}
+                  <g transform={`scale(${planeScale})`}>
+                    <path
+                      d="M 0,-10 L 2,-3 L 14,0 L 2,3 L 1,8 L 5,11 L 0,10 L -5,11 L -1,8 L -2,3 L -14,0 L -2,-3 Z"
+                      fill={color}
+                      stroke="var(--surface)"
+                      strokeWidth="1"
+                    />
+                  </g>
                   {!reducedMotion && (
                     <animateMotion
                       dur={duration}
                       repeatCount="indefinite"
+                      rotate="auto"
                       path={d}
                     />
                   )}
-                </circle>
+                </g>
               </g>
             );
           })}
@@ -469,37 +509,136 @@ export function WorldMap({
                 }}
               >
                 <circle r={14} fill="transparent" />
+
+                {/* HUB — unique, unmistakable: wedge-badge with HUB label */}
                 {isHub && (
-                  <circle className="hub-pulse" fill="none" stroke="var(--primary)" strokeWidth="1.5" />
-                )}
-                {isSecondaryHub && (
-                  <circle r={10} fill="none" stroke="var(--primary)" strokeWidth="1" opacity="0.5" strokeDasharray="2 3" />
-                )}
-                {isSelected && (
                   <>
-                    <circle
-                      className="city-select-pulse"
-                      fill="none"
-                      stroke="var(--accent)"
-                      strokeWidth="2"
-                    />
-                    <circle r={8} fill="none" stroke="var(--accent)" strokeWidth="2" />
+                    <circle className="hub-pulse" fill="none" stroke={team.color} strokeWidth="2" />
+                    <circle r={r + 6} fill="none" stroke={team.color} strokeWidth="1.5" opacity="0.45" />
+                    <circle r={r + 3} fill="var(--surface)" stroke={team.color} strokeWidth="2.5" />
                   </>
                 )}
+
+                {/* Secondary hub — smaller version with dashed outer ring */}
+                {isSecondaryHub && (
+                  <circle r={r + 4} fill="none" stroke={team.color} strokeWidth="1.5" strokeDasharray="2 2" opacity="0.95" />
+                )}
+
+                {isSelected && (
+                  <>
+                    <circle className="city-select-pulse" fill="none" stroke="var(--accent)" strokeWidth="2" />
+                    <circle r={Math.max(8, r + 6)} fill="none" stroke="var(--accent)" strokeWidth="2" />
+                  </>
+                )}
+
+                {/* City dot — always a circle; size = tier, colour = network status */}
                 <circle
-                  r={r}
-                  fill={isHub ? "var(--primary)" : connected ? team.color : "var(--ink-2)"}
+                  r={isHub ? r * 0.85 : r}
+                  fill={
+                    isHub
+                      ? team.color
+                      : isSecondaryHub
+                        ? team.color
+                        : connected
+                          ? team.color
+                          : "var(--ink-2)"
+                  }
+                  opacity={isHub || isSecondaryHub ? 1 : connected ? 0.95 : 0.5}
                   stroke="var(--surface)"
-                  strokeWidth="1.2"
+                  strokeWidth={isHub ? 0.8 : 1.1}
                 />
-                {showLabel && (
+
+                {/* HUB badge label */}
+                {isHub && (
+                  <g transform={`translate(0,${-r - 12})`}>
+                    <rect
+                      x={-14} y={-6} width={28} height={12} rx={2}
+                      fill={team.color}
+                    />
+                    <text
+                      y={3}
+                      textAnchor="middle"
+                      fontSize={8}
+                      fontWeight={700}
+                      letterSpacing="0.15em"
+                      fontFamily="var(--font-sans)"
+                      fill="var(--surface)"
+                    >
+                      HUB
+                    </text>
+                  </g>
+                )}
+
+                {/* Secondary hub badge */}
+                {isSecondaryHub && (
+                  <g transform={`translate(0,${-r - 11})`}>
+                    <rect
+                      x={-16} y={-5.5} width={32} height={11} rx={2}
+                      fill="var(--surface)"
+                      stroke={team.color}
+                      strokeWidth={1}
+                      strokeDasharray="2 2"
+                    />
+                    <text
+                      y={3}
+                      textAnchor="middle"
+                      fontSize={7.5}
+                      fontWeight={700}
+                      letterSpacing="0.1em"
+                      fontFamily="var(--font-sans)"
+                      fill={team.color}
+                    >
+                      HUB·2
+                    </text>
+                  </g>
+                )}
+
+                {/* City name label for hub, secondary hub, and network cities.
+                    Unconnected cities: small IATA code only on hover or tier-1. */}
+                {(isHub || isSecondaryHub || connected) ? (
+                  <g transform={`translate(0,${isHub || isSecondaryHub ? r + 14 : r + 6})`}>
+                    <text
+                      textAnchor="middle"
+                      fontSize={isHub ? 11 : 10}
+                      fontWeight={700}
+                      fontFamily="var(--font-sans)"
+                      fill={isHub || isSecondaryHub ? team.color : "var(--ink)"}
+                      style={{
+                        paintOrder: "stroke",
+                        stroke: "var(--bg)",
+                        strokeWidth: 3.5,
+                      }}
+                    >
+                      {c.name}
+                    </text>
+                    {/* Daily flight count for network cities */}
+                    {(dailyFlightsByCity[c.code] ?? 0) > 0 && (
+                      <text
+                        y={11}
+                        textAnchor="middle"
+                        fontSize={8.5}
+                        fontWeight={600}
+                        fontFamily="var(--font-mono)"
+                        fill={team.color}
+                        style={{
+                          paintOrder: "stroke",
+                          stroke: "var(--bg)",
+                          strokeWidth: 3,
+                        }}
+                      >
+                        {dailyFlightsByCity[c.code]}/day
+                      </text>
+                    )}
+                  </g>
+                ) : showLabel ? (
                   <text
                     y={-r - 5}
                     textAnchor="middle"
-                    fontSize={c.tier === 1 ? 10 : 9}
-                    fontWeight={600}
+                    fontSize={c.tier === 1 ? 9.5 : c.tier === 2 ? 8.5 : 7.5}
+                    fontWeight={500}
                     fontFamily="var(--font-mono)"
-                    fill={isHub ? "var(--primary)" : "var(--ink)"}
+                    fill="var(--ink-muted)"
+                    opacity={0.75}
                     style={{
                       paintOrder: "stroke",
                       stroke: "var(--bg)",
@@ -508,7 +647,7 @@ export function WorldMap({
                   >
                     {c.code}
                   </text>
-                )}
+                ) : null}
               </g>
             );
           })}
@@ -653,17 +792,24 @@ export function WorldMap({
       })()}
 
       {/* Controls hint + legend */}
-      <div className="absolute bottom-4 left-4 flex items-center gap-4 rounded-md border border-line bg-surface/90 backdrop-blur px-3 py-2 text-[0.75rem]">
+      <div className="absolute bottom-4 left-4 flex items-center gap-3 rounded-md border border-line bg-surface/90 backdrop-blur px-3 py-2 text-[0.75rem]">
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-primary" /> Your hub
+          <span className="w-3 h-3 rounded-sm" style={{ background: team.color }} />
+          <span className="text-ink font-medium">Hub</span>
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full" style={{ background: team.color }} /> Your routes
+          <span className="w-2.5 h-2.5 rounded-sm opacity-80" style={{ background: team.color }} />
+          <span className="text-ink-2">Connected</span>
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="w-3 h-3 rounded-full bg-ink-2" /> 100 cities
+          <span className="w-3 h-3 rounded-sm bg-ink-2 opacity-55" />
+          <span className="text-ink-2">T1</span>
+          <span className="w-2 h-2 rounded-full bg-ink-2 opacity-55 ml-1" />
+          <span className="text-ink-2">T2</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-ink-2 opacity-55 ml-1" />
+          <span className="text-ink-2">T3/T4</span>
         </span>
-        <span className="hidden md:inline text-ink-muted">
+        <span className="hidden lg:inline text-ink-muted border-l border-line pl-3">
           Drag to rotate · scroll to zoom · double-click to reset
         </span>
       </div>

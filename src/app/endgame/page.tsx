@@ -31,16 +31,25 @@ export default function Endgame() {
     );
   }
 
-  // Apply endgame card multipliers (PRD G9)
+  // Apply endgame card multipliers (PRD G9) to the brand multiplier — net
+  // effect lifts/depresses Airline Value by the same factor.
   const awards = resolveEndgameAwards(player);
-  const adjustedBV = finalBrandValueWithAwards(player.brandValue, awards);
+  const cardMult = awards.reduce((m, a) => m * a.airlineValueMult, 1);
+  const baseAirlineValue = computeAirlineValue(player);
+  const finalAirlineValue = baseAirlineValue * cardMult;
   const rankedTeams = [...s.teams]
-    .map((t) => ({ ...t, brandValue: finalBrandValueWithAwards(t.brandValue, resolveEndgameAwards(t)) }));
-  const ranked = rankedTeams.sort((a, b) => b.brandValue - a.brandValue);
+    .map((t) => {
+      const aw = resolveEndgameAwards(t);
+      const m = aw.reduce((mm, a) => mm * a.airlineValueMult, 1);
+      return { ...t, finalAirlineValue: computeAirlineValue(t) * m };
+    });
+  const ranked = rankedTeams.sort((a, b) => b.finalAirlineValue - a.finalAirlineValue);
   const finalRank = ranked.findIndex((t) => t.id === player.id) + 1;
-  const airlineValue = computeAirlineValue(player);
-  const { title, sub } = legacyTitle(adjustedBV);
+  const { title, sub } = legacyTitle(player.brandValue);
   const totalProfit = player.financialsByQuarter.reduce((s, q) => s + q.netProfit, 0);
+  // Backwards-compatible alias for legacy display fragments below
+  const adjustedBV = player.brandValue;
+  const airlineValue = finalAirlineValue;
 
   function playAgain() {
     reset();
@@ -127,7 +136,7 @@ export default function Endgame() {
                         {t.id === player.id && <Badge tone="primary">You</Badge>}
                       </div>
                     </td>
-                    <td className="py-3 text-right tabular font-display text-[1.125rem]">{t.brandValue.toFixed(1)}</td>
+                    <td className="py-3 text-right tabular font-display text-[1.125rem]">{fmtMoney(t.finalAirlineValue)}</td>
                   </tr>
                 ))}
               </tbody>

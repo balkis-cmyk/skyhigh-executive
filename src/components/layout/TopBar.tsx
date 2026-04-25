@@ -3,8 +3,10 @@
 import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney, fmtPct, fmtQuarter, fmtQuarterShort } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { computeAirlineValue } from "@/lib/engine";
+import { computeAirlineValue, brandRating } from "@/lib/engine";
 import { QuarterTimerChip } from "@/components/game/QuarterTimer";
+import { Button } from "@/components/ui";
+import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
 
 export function TopBar() {
   // Fine-grained subscriptions so unrelated store writes don't re-render this.
@@ -54,9 +56,9 @@ export function TopBar() {
           tone={player.totalDebtUsd > 0 ? "neg" : undefined}
         />
         <Divider />
-        <Kpi label="Airline value" value={fmtMoney(airlineValue)} />
+        <Kpi label="Airline value" value={fmtMoney(airlineValue)} emphasize />
         <Divider />
-        <Kpi label="Brand value" value={player.brandValue.toFixed(1)} emphasize />
+        <Kpi label="Brand rating" value={brandRating(player).grade} />
         <Divider />
         <Kpi label="Loyalty" value={fmtPct(player.customerLoyaltyPct, 0)} />
         {player.rcfBalanceUsd > 0 && (
@@ -71,8 +73,8 @@ export function TopBar() {
         )}
       </div>
 
-      {/* Quarter + timer */}
-      <div className="flex items-center gap-4 shrink-0 pl-4 border-l border-line h-full">
+      {/* Quarter + timer + Close-quarter CTA */}
+      <div className="flex items-center gap-3 shrink-0 pl-4 border-l border-line h-full">
         <div className="hidden md:flex flex-col items-end leading-tight">
           <span className="font-display text-[1rem] text-ink">
             {fmtQuarterShort(currentQuarter)}
@@ -82,8 +84,41 @@ export function TopBar() {
           </span>
         </div>
         <QuarterTimerChip />
+        <CloseQuarterButton />
       </div>
     </header>
+  );
+}
+
+function CloseQuarterButton() {
+  const closeQuarter = useGame((s) => s.closeQuarter);
+  const currentQuarter = useGame((s) => s.currentQuarter);
+  const player = useGame(selectPlayer);
+  if (!player) return null;
+
+  const pending = (SCENARIOS_BY_QUARTER[currentQuarter] ?? []).filter(
+    (sc) => !player.decisions.some((d) => d.scenarioId === sc.id && d.quarter === currentQuarter),
+  );
+
+  function onClick() {
+    if (pending.length > 0) {
+      const go = confirm(
+        `${pending.length} board decision${pending.length > 1 ? "s" : ""} still open this quarter. Close anyway?`,
+      );
+      if (!go) return;
+    }
+    closeQuarter();
+  }
+
+  return (
+    <Button
+      variant="primary"
+      size="sm"
+      onClick={onClick}
+      title="Lock decisions + run quarter close processing"
+    >
+      Close Q{currentQuarter} →
+    </Button>
   );
 }
 
