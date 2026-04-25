@@ -47,7 +47,8 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   const openRoute = useGame((g) => g.openRoute);
 
   const [selectedPlaneIds, setSelectedPlaneIds] = useState<string[]>([]);
-  const [freq, setFreq] = useState(1);
+  // UI is weekly throughout; engine still stores daily.
+  const [weeklyFreq, setWeeklyFreq] = useState(7);
   const [tier, setTier] = useState<PricingTier>("standard");
   const [econFare, setEconFare] = useState<number | null>(null);
   const [busFare, setBusFare] = useState<number | null>(null);
@@ -70,7 +71,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
       return cargo ? spec.family === "cargo" : spec.family === "passenger";
     });
     setSelectedPlaneIds(idle ? [idle.id] : []);
-    setFreq(1);
+    setWeeklyFreq(7);
     setTier("standard");
     setEconFare(null);
     setBusFare(null);
@@ -90,14 +91,15 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     [selectedPlaneIds, player],
   );
   const maxDailyFreq = specIds.length > 0 ? maxRouteDailyFrequency(specIds, dist) : 0;
+  const maxWeeklyFreq = maxDailyFreq * 7;
   useEffect(() => {
-    if (maxDailyFreq === 0) {
-      if (freq !== 0) setFreq(0);
+    if (maxWeeklyFreq === 0) {
+      if (weeklyFreq !== 0) setWeeklyFreq(0);
       return;
     }
-    if (freq > maxDailyFreq) setFreq(maxDailyFreq);
-    if (freq < 1) setFreq(1);
-  }, [maxDailyFreq]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (weeklyFreq > maxWeeklyFreq) setWeeklyFreq(maxWeeklyFreq);
+    if (weeklyFreq < 1) setWeeklyFreq(Math.min(7, maxWeeklyFreq));
+  }, [maxWeeklyFreq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cabin availability from selected planes
   const hasFirst = useMemo(
@@ -173,7 +175,8 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
 
   // Projected occupancy preview
   const projection = (() => {
-    if (specIds.length === 0 || freq === 0) return null;
+    if (specIds.length === 0 || weeklyFreq === 0) return null;
+    const dailyFreq = Math.max(1, Math.round(weeklyFreq / 7));
     const demand = routeDemandPerDay(origin!, dest!, s.currentQuarter).total;
     const totalSeats = selectedPlaneIds.reduce((sum, id) => {
       const p = player.fleet.find((f) => f.id === id);
@@ -181,7 +184,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
       if (!spec) return sum;
       return sum + spec.seats.first + spec.seats.business + spec.seats.economy;
     }, 0);
-    const dailyCapacity = totalSeats * freq;
+    const dailyCapacity = totalSeats * dailyFreq;
     if (dailyCapacity === 0) return null;
     const occ = Math.min(1, demand / dailyCapacity);
     return {
@@ -198,15 +201,16 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
       setError("Pick at least one aircraft before opening the route.");
       return;
     }
-    if (freq < 1) {
-      setError("Daily frequency must be at least 1.");
+    if (weeklyFreq < 1) {
+      setError("Weekly frequency must be at least 1.");
       return;
     }
     const r = openRoute({
       originCode: origin,
       destCode: dest,
       aircraftIds: selectedPlaneIds,
-      dailyFrequency: freq,
+      // Engine still tracks daily; convert. Min 1 so route is always operating.
+      dailyFrequency: Math.max(1, Math.round(weeklyFreq / 7)),
       pricingTier: tier,
       econFare,
       busFare,
@@ -293,7 +297,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                     {!canReach ? (
                       <Badge tone="negative">Out of range</Badge>
                     ) : (
-                      <Badge tone="neutral">{planeMaxDaily}/day max</Badge>
+                      <Badge tone="neutral">{planeMaxDaily * 7}/wk max</Badge>
                     )}
                   </label>
                 );
@@ -304,13 +308,13 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
             <div className="text-[0.6875rem] text-ink-muted leading-relaxed mt-2">
               Schedule math: {Math.round(dist).toLocaleString()} km ÷ {scheduleNote.slowestSpeed} km/h
               + 2 × 2 hr turnaround = {scheduleNote.roundTripHrs.toFixed(1)} hr round-trip per
-              aircraft · floor(24 / round-trip) = <strong className="text-ink">{scheduleNote.perPlaneDaily} flights/day per plane</strong>.
+              aircraft · floor(24 / round-trip) × 7 days = <strong className="text-ink">{scheduleNote.perPlaneDaily * 7} flights/week per plane</strong>.
             </div>
           )}
         </Section>
 
-        {/* Step 2 — Daily frequency (capped) */}
-        <Section step={2} title="Daily frequency" disabled={!hasAircraft}>
+        {/* Step 2 — Schedules per week (capped by aircraft physics) */}
+        <Section step={2} title="Schedules per week" disabled={!hasAircraft}>
           {!hasAircraft ? (
             <div className="text-[0.75rem] text-ink-muted italic">
               Pick at least one aircraft above to set frequency.
@@ -321,22 +325,22 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                 <input
                   type="range"
                   min={1}
-                  max={Math.max(1, maxDailyFreq)}
-                  value={freq}
-                  onChange={(e) => setFreq(parseInt(e.target.value, 10))}
+                  max={Math.max(1, maxWeeklyFreq)}
+                  value={weeklyFreq}
+                  onChange={(e) => setWeeklyFreq(parseInt(e.target.value, 10))}
                   className="flex-1 accent-primary"
-                  disabled={maxDailyFreq < 1}
+                  disabled={maxWeeklyFreq < 1}
                 />
-                <span className="tabular font-mono text-ink text-[0.9375rem] w-16 text-right">
-                  {freq}/day
+                <span className="tabular font-mono text-ink text-[0.9375rem] w-20 text-right">
+                  {weeklyFreq}/wk
                 </span>
               </div>
               <div className="flex items-baseline justify-between text-[0.6875rem] text-ink-muted mt-1">
-                <span>1/day</span>
+                <span>1/wk</span>
                 <span>
-                  Cap: <strong className="text-ink">{maxDailyFreq}/day</strong> with {selectedPlaneIds.length} aircraft
+                  Cap: <strong className="text-ink">{maxWeeklyFreq}/week</strong> with {selectedPlaneIds.length} aircraft
                 </span>
-                <span>{maxDailyFreq}/day</span>
+                <span>{maxWeeklyFreq}/wk</span>
               </div>
             </>
           )}
@@ -458,7 +462,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button
           variant="primary"
-          disabled={!hasAircraft || freq < 1}
+          disabled={!hasAircraft || weeklyFreq < 1}
           onClick={confirmRoute}
         >
           Open route →

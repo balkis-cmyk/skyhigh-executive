@@ -61,7 +61,7 @@ export function RoutesPanel() {
   const avgLoad = activeRoutes.length > 0
     ? activeRoutes.reduce((s, r) => s + r.avgOccupancy, 0) / activeRoutes.length
     : 0;
-  const totalFreq = activeRoutes.reduce((s, r) => s + r.dailyFrequency, 0);
+  const totalWeeklyFreq = activeRoutes.reduce((s, r) => s + r.dailyFrequency * 7, 0);
   const passengerRoutes = activeRoutes.filter((r) => !r.isCargo).length;
   const cargoRoutes = activeRoutes.filter((r) => r.isCargo).length;
 
@@ -71,7 +71,7 @@ export function RoutesPanel() {
       <div className="grid grid-cols-4 gap-2">
         <KpiCard label="Active routes" value={`${activeRoutes.length}`} sub={`${passengerRoutes} pax · ${cargoRoutes} cargo`} />
         <KpiCard label="Avg load" value={fmtPct(avgLoad * 100, 0)} tone={avgLoad > 0.7 ? "positive" : avgLoad < 0.5 ? "negative" : "default"} />
-        <KpiCard label="Daily flights" value={`${totalFreq}`} sub="across network" />
+        <KpiCard label="Weekly flights" value={`${totalWeeklyFreq}`} sub="across network" />
         <KpiCard
           label="Net profit/Q"
           value={fmtMoney(totalQProfit)}
@@ -159,7 +159,7 @@ export function RoutesPanel() {
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-right tabular font-mono text-ink">
-                      {r.dailyFrequency}/d
+                      {r.dailyFrequency * 7}/wk
                     </td>
                     <td className="py-2.5 px-3 text-right tabular font-mono text-ink">
                       {fmtMoney(r.quarterlyRevenue)}
@@ -268,7 +268,8 @@ function RouteDetailModal({
   const player = selectPlayer(s);
   const updateRoute = useGame((g) => g.updateRoute);
 
-  const [freq, setFreq] = useState<number>(route.dailyFrequency);
+  // UI works in WEEKLY frequency (engine still stores dailyFrequency).
+  const [weeklyFreq, setWeeklyFreq] = useState<number>(route.dailyFrequency * 7);
   const [tier, setTier] = useState<PricingTier>(route.pricingTier);
   const [econFare, setEconFare] = useState<number | null>(route.econFare ?? null);
   const [busFare, setBusFare] = useState<number | null>(route.busFare ?? null);
@@ -303,7 +304,8 @@ function RouteDetailModal({
   function save() {
     const r = updateRoute(route.id, {
       aircraftIds: selectedPlaneIds,
-      dailyFrequency: freq,
+      // Convert weekly UI back to daily for engine. Round to nearest int.
+      dailyFrequency: Math.max(1, Math.round(weeklyFreq / 7)),
       pricingTier: tier,
       econFare,
       busFare,
@@ -371,22 +373,44 @@ function RouteDetailModal({
           </div>
         </div>
 
-        {/* Frequency */}
+        {/* Frequency — weekly with engine-derived cap */}
         <div>
-          <Label>Daily frequency</Label>
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={1}
-              max={24}
-              value={freq}
-              onChange={(e) => setFreq(parseInt(e.target.value, 10))}
-              className="flex-1 accent-primary"
-            />
-            <span className="tabular font-mono text-ink text-[0.9375rem] w-16 text-right">
-              {freq}/day
-            </span>
-          </div>
+          <Label>Schedules per week</Label>
+          {(() => {
+            const specIds = selectedPlaneIds
+              .map((id) => player.fleet.find((f) => f.id === id)?.specId)
+              .filter((x): x is string => !!x);
+            const maxDaily = specIds.length > 0
+              ? Math.max(1, Math.floor(specIds.reduce((sum, id) => {
+                  const oneWayHrs = route.distanceKm / (
+                    /^A319|^A320|^A321|^B737/.test(id) ? 840 :
+                    /^B757|^B767|^A330/.test(id) ? 870 : 900);
+                  const dailyPerPlane = Math.max(1, Math.floor(24 / (oneWayHrs * 2 + 4)));
+                  return sum + dailyPerPlane * 7;
+                }, 0) / 7))
+              : 1;
+            const maxWeekly = maxDaily * 7;
+            return (
+              <>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={1}
+                    max={maxWeekly}
+                    value={Math.min(weeklyFreq, maxWeekly)}
+                    onChange={(e) => setWeeklyFreq(parseInt(e.target.value, 10))}
+                    className="flex-1 accent-primary"
+                  />
+                  <span className="tabular font-mono text-ink text-[0.9375rem] w-20 text-right">
+                    {weeklyFreq}/wk
+                  </span>
+                </div>
+                <div className="text-[0.6875rem] text-ink-muted mt-1">
+                  Cap with this aircraft set: <strong className="text-ink">{maxWeekly}/week</strong>
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {/* Per-class fares (passenger only) */}

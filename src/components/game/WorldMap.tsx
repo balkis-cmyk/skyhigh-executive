@@ -381,7 +381,7 @@ export function WorldMap({
                   <span className="sf-city-name">{c.name}</span>
                   {flights > 0 && (
                     <span className="sf-flights">
-                      {flights}/day
+                      {flights * 7}/wk
                     </span>
                   )}
                   {isSelected && <span className="sf-selected-dot" />}

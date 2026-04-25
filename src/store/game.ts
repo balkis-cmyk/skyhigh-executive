@@ -681,8 +681,10 @@ export const useGame = create<GameStore>()(
           if (dist > spec.rangeKm)
             return { ok: false, error: `${spec.name} cannot reach ${destCode} (${Math.round(dist)} km > ${spec.rangeKm} km)` };
         }
-        if (dailyFrequency < 1 || dailyFrequency > 10)
-          return { ok: false, error: "Daily frequency 1–10" };
+        // Engine stores daily; UI works in weekly. Cap at 24/day (168/wk)
+        // — that's well past anything achievable with current aircraft physics.
+        if (dailyFrequency < 1 || dailyFrequency > 24)
+          return { ok: false, error: "Frequency must be at least 1/week" };
 
         const route = {
           id: mkId("route"),
