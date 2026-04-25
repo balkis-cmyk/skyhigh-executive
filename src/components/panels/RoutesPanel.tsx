@@ -26,6 +26,10 @@ export function RoutesPanel() {
 
   const [query, setQuery] = useState("");
   const [activeRouteId, setActiveRouteId] = useState<string | null>(null);
+  type SortKey = "profit" | "load" | "revenue" | "fuel";
+  type FilterKey = "all" | "passenger" | "cargo" | "losing";
+  const [sortKey, setSortKey] = useState<SortKey>("profit");
+  const [filterKey, setFilterKey] = useState<FilterKey>("all");
 
   // "New route" flow — opened via the panel's New-Route button so the
   // player doesn't have to use the world map to start a route.
@@ -49,6 +53,10 @@ export function RoutesPanel() {
   const rows = useMemo(() => {
     if (!player) return [];
     const q = query.trim().toUpperCase();
+    const profitOf = (r: typeof player.routes[number]) =>
+      r.quarterlyAllocatedCost !== undefined
+        ? r.quarterlyRevenue - r.quarterlyAllocatedCost
+        : r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
     return player.routes
       // Include pending routes too — they're awaiting auction resolution
       // and the player needs to see them.
@@ -59,6 +67,10 @@ export function RoutesPanel() {
           r.status === "pending",
       )
       .filter((r) => {
+        // Type filter chip
+        if (filterKey === "passenger" && r.isCargo) return false;
+        if (filterKey === "cargo" && !r.isCargo) return false;
+        if (filterKey === "losing" && (r.consecutiveLosingQuarters ?? 0) < 2) return false;
         if (!q) return true;
         return (
           r.originCode.includes(q) ||
@@ -68,28 +80,29 @@ export function RoutesPanel() {
         );
       })
       .sort(
-        // Pending routes float to top so the player sees their bids first;
-        // active sort by profit; suspended last.
+        // Pending routes always float to top so the player sees their
+        // bids; suspended sink to the bottom; the rest sort by the
+        // user-chosen key.
         (a, b) => {
           const ra =
             a.status === "pending" ? -2 : a.status === "active" ? 0 : 1;
           const rb =
             b.status === "pending" ? -2 : b.status === "active" ? 0 : 1;
           if (ra !== rb) return ra - rb;
-          // Sort active routes by allocated profit (revenue − fully-loaded
-          // cost) so the table matches what the player sees in financials.
-          const profitA =
-            a.quarterlyAllocatedCost !== undefined
-              ? a.quarterlyRevenue - a.quarterlyAllocatedCost
-              : a.quarterlyRevenue - a.quarterlyFuelCost - a.quarterlySlotCost;
-          const profitB =
-            b.quarterlyAllocatedCost !== undefined
-              ? b.quarterlyRevenue - b.quarterlyAllocatedCost
-              : b.quarterlyRevenue - b.quarterlyFuelCost - b.quarterlySlotCost;
-          return profitB - profitA;
+          switch (sortKey) {
+            case "load":
+              return b.avgOccupancy - a.avgOccupancy;
+            case "revenue":
+              return b.quarterlyRevenue - a.quarterlyRevenue;
+            case "fuel":
+              return b.quarterlyFuelCost - a.quarterlyFuelCost;
+            case "profit":
+            default:
+              return profitOf(b) - profitOf(a);
+          }
         },
       );
-  }, [player, query]);
+  }, [player, query, sortKey, filterKey]);
 
   if (!player) return null;
 
@@ -130,12 +143,17 @@ export function RoutesPanel() {
         />
       </div>
 
-      <div className="flex items-center gap-2">
+      {/* Tournament window banner — fires only during the relevant rounds.
+          The host city is already shown in news + decisions, this just
+          gives the player a persistent reminder while building routes. */}
+      <TournamentBanner />
+
+      <div className="flex items-center gap-2 flex-wrap">
         <Input
           placeholder="Search by code or city name…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="flex-1 h-9 text-[0.875rem]"
+          className="flex-1 min-w-[180px] h-9 text-[0.875rem]"
         />
         <div className="text-[0.75rem] text-ink-muted tabular shrink-0">
           {rows.length} of {player.routes.filter((r) => r.status !== "closed").length}
@@ -152,6 +170,50 @@ export function RoutesPanel() {
         >
           <Plus size={13} className="mr-1" /> New route
         </Button>
+      </div>
+
+      {/* Filter + sort chips */}
+      <div className="flex items-center gap-1.5 flex-wrap text-[0.75rem]">
+        <span className="text-[0.625rem] uppercase tracking-wider text-ink-muted mr-1">Filter</span>
+        {([
+          { k: "all", label: "All" },
+          { k: "passenger", label: "Passenger" },
+          { k: "cargo", label: "Cargo" },
+          { k: "losing", label: "Losing 2Q+" },
+        ] as Array<{ k: FilterKey; label: string }>).map(({ k, label }) => (
+          <button
+            key={k}
+            onClick={() => setFilterKey(k)}
+            className={cn(
+              "px-2 py-0.5 rounded-md border transition-colors",
+              filterKey === k
+                ? "bg-primary text-primary-fg border-primary font-medium"
+                : "border-line text-ink-muted hover:bg-surface-hover",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="text-[0.625rem] uppercase tracking-wider text-ink-muted mx-1 ml-3">Sort</span>
+        {([
+          { k: "profit", label: "Profit" },
+          { k: "load", label: "Load" },
+          { k: "revenue", label: "Revenue" },
+          { k: "fuel", label: "Fuel" },
+        ] as Array<{ k: SortKey; label: string }>).map(({ k, label }) => (
+          <button
+            key={k}
+            onClick={() => setSortKey(k)}
+            className={cn(
+              "px-2 py-0.5 rounded-md border transition-colors",
+              sortKey === k
+                ? "bg-accent text-white border-accent font-medium"
+                : "border-line text-ink-muted hover:bg-surface-hover",
+            )}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {rows.length === 0 ? (
@@ -620,6 +682,7 @@ function RouteDetailModal({
   const [econFare, setEconFare] = useState<number | null>(route.econFare ?? null);
   const [busFare, setBusFare] = useState<number | null>(route.busFare ?? null);
   const [firstFare, setFirstFare] = useState<number | null>(route.firstFare ?? null);
+  const [cargoRate, setCargoRate] = useState<number | null>(route.cargoRatePerTonne ?? null);
   const [selectedPlaneIds, setSelectedPlaneIds] = useState<string[]>(route.aircraftIds);
   const [error, setError] = useState<string | null>(null);
 
@@ -690,6 +753,7 @@ function RouteDetailModal({
       econFare,
       busFare,
       firstFare,
+      cargoRatePerTonne: cargoRate,
     });
     if (!r.ok) {
       setError(r.error ?? "Failed to save");
@@ -734,13 +798,28 @@ function RouteDetailModal({
         )}
       </ModalHeader>
       <ModalBody className="space-y-5 max-h-[60vh] overflow-auto">
-        {/* Performance snapshot */}
+        {/* Performance snapshot — Q costs uses the fully-loaded allocated
+            number (route's revenue-share of every team-level cost) so
+            Revenue − Costs = Profit reconciles cleanly. The direct-only
+            fuel+slot view can lie by 80%+ on routes that ride high
+            allocated overhead (slot leases, staff, maintenance, etc). */}
         <div className="grid grid-cols-4 gap-3">
-          <MiniStat label="Load" value={fmtPct(route.avgOccupancy * 100, 0)}
-            tone={route.avgOccupancy > 0.7 ? "pos" : route.avgOccupancy > 0 && route.avgOccupancy < 0.5 ? "neg" : undefined} />
-          <MiniStat label="Q revenue" value={fmtMoney(route.quarterlyRevenue)} />
-          <MiniStat label="Q costs" value={fmtMoney(route.quarterlyFuelCost + route.quarterlySlotCost)} tone="neg" />
-          <MiniStat label="Q profit" value={fmtMoney(profit)} tone={profit >= 0 ? "pos" : "neg"} />
+          {(() => {
+            const fullyLoadedCosts =
+              route.quarterlyAllocatedCost !== undefined
+                ? route.quarterlyAllocatedCost
+                : route.quarterlyFuelCost + route.quarterlySlotCost;
+            return (
+              <>
+                <MiniStat label="Load" value={fmtPct(route.avgOccupancy * 100, 0)}
+                  tone={route.avgOccupancy > 0.7 ? "pos" : route.avgOccupancy > 0 && route.avgOccupancy < 0.5 ? "neg" : undefined} />
+                <MiniStat label="Q revenue" value={fmtMoney(route.quarterlyRevenue)} />
+                <MiniStat label="Q costs" value={fmtMoney(fullyLoadedCosts)} tone="neg"
+                  sub={`fuel ${fmtMoney(route.quarterlyFuelCost)} + share of overhead`} />
+                <MiniStat label="Q profit" value={fmtMoney(profit)} tone={profit >= 0 ? "pos" : "neg"} />
+              </>
+            );
+          })()}
         </div>
 
         {/* Why this performance — multipliers breakdown */}
@@ -834,6 +913,70 @@ function RouteDetailModal({
             <FareRow label="First" range={firstRange} fare={firstFare} setFare={setFirstFare} active={hasFirst} />
           </div>
         )}
+
+        {/* Cargo rate (cargo only) — same UX shape as the passenger
+            fares so the player has a clear way to set fee instead of
+            being stuck at the fixed base. */}
+        {route.isCargo && (() => {
+          const baseRate = route.distanceKm < 3000 ? 3.5 : 5.5;
+          const tierMult =
+            tier === "budget" ? 0.5 :
+            tier === "premium" ? 1.5 :
+            tier === "ultra" ? 2.0 : 1.0;
+          const tierBaseRate = baseRate * tierMult;
+          const minRate = baseRate * 0.5;
+          const maxRate = baseRate * 3.0;
+          const effective = cargoRate ?? tierBaseRate;
+          return (
+            <div className="space-y-3">
+              <Label>Cargo rate per tonne (optional override)</Label>
+              <div className="rounded-md border border-line bg-surface-2/40 p-3 space-y-3">
+                <div className="flex items-baseline justify-between text-[0.8125rem]">
+                  <span className="text-ink-2">
+                    Base ${baseRate.toFixed(2)}/T
+                    <span className="text-ink-muted"> · {route.distanceKm < 3000 ? "short-haul" : "long-haul"}</span>
+                  </span>
+                  <span className="text-ink-muted">
+                    Tier × {tierMult.toFixed(1)} → ${tierBaseRate.toFixed(2)}/T
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={minRate}
+                    max={maxRate}
+                    step={0.1}
+                    value={effective}
+                    onChange={(e) => setCargoRate(parseFloat(e.target.value))}
+                    className="flex-1 accent-primary"
+                    aria-label="Cargo rate per tonne"
+                  />
+                  <span className="tabular font-mono text-ink font-semibold w-20 text-right">
+                    ${effective.toFixed(2)}/T
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between text-[0.6875rem] text-ink-muted">
+                  <span>Min ${minRate.toFixed(2)}</span>
+                  {cargoRate !== null && (
+                    <button
+                      type="button"
+                      onClick={() => setCargoRate(null)}
+                      className="text-accent hover:underline"
+                    >
+                      Reset to tier default
+                    </button>
+                  )}
+                  <span>Max ${maxRate.toFixed(2)}</span>
+                </div>
+                <p className="text-[0.6875rem] text-ink-muted leading-relaxed">
+                  Higher rates extract more revenue per tonne but suppress demand against competitors;
+                  lower rates fill capacity at thinner margins. The pricing-tier preset moves the rate
+                  for you; this slider overrides it per route.
+                </p>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Aircraft assignment */}
         <div>
@@ -1161,9 +1304,9 @@ function Label({ children }: { children: React.ReactNode }) {
 }
 
 function MiniStat({
-  label, value, tone,
+  label, value, tone, sub,
 }: {
-  label: string; value: string; tone?: "pos" | "neg";
+  label: string; value: string; tone?: "pos" | "neg"; sub?: string;
 }) {
   return (
     <div className="rounded-md border border-line bg-surface-2 p-2.5">
@@ -1178,6 +1321,11 @@ function MiniStat({
       >
         {value}
       </div>
+      {sub && (
+        <div className="text-[0.625rem] text-ink-muted mt-1 leading-tight truncate">
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
@@ -1212,6 +1360,102 @@ function FareRow({
       <span className="tabular font-mono text-ink text-[0.8125rem] w-16 text-right">
         ${v}
       </span>
+    </div>
+  );
+}
+
+/** Persistent reminder of the active tournament window — shown at the
+ *  top of the Routes panel during World Cup (R19-24) and Olympics
+ *  (R29-32). Gives the player a chance to build capacity into the
+ *  host city *before* the demand surge lands. */
+function TournamentBanner() {
+  const currentQuarter = useGame((s) => s.currentQuarter);
+  const worldCupHostCode = useGame((s) => s.worldCupHostCode);
+  const olympicHostCode = useGame((s) => s.olympicHostCode);
+
+  // Pre-event window starts 2 rounds before so the player has a buffer
+  // to acquire slots / order aircraft / open routes.
+  const wcUpcoming = currentQuarter >= 17 && currentQuarter < 19;
+  const wcActive = currentQuarter >= 19 && currentQuarter <= 24;
+  const olUpcoming = currentQuarter >= 27 && currentQuarter < 29;
+  const olActive = currentQuarter >= 29 && currentQuarter <= 32;
+
+  if (!wcUpcoming && !wcActive && !olUpcoming && !olActive) return null;
+
+  const items: Array<{
+    label: string;
+    city: string | null;
+    sub: string;
+    tone: "info" | "accent";
+  }> = [];
+  if (wcUpcoming && worldCupHostCode) {
+    items.push({
+      label: "World Cup",
+      city: worldCupHostCode,
+      sub: `Kicks off in ${19 - currentQuarter} rounds — build capacity now`,
+      tone: "info",
+    });
+  }
+  if (wcActive && worldCupHostCode) {
+    const tail = currentQuarter >= 23;
+    items.push({
+      label: "World Cup live",
+      city: worldCupHostCode,
+      sub: tail
+        ? "Tail rounds: +50% uplift on host-city routes"
+        : "Host-city routes near full loads through R22",
+      tone: "accent",
+    });
+  }
+  if (olUpcoming && olympicHostCode) {
+    items.push({
+      label: "Olympics",
+      city: olympicHostCode,
+      sub: `Opens in ${29 - currentQuarter} rounds — secure slots before R29`,
+      tone: "info",
+    });
+  }
+  if (olActive && olympicHostCode) {
+    items.push({
+      label: "Olympics live",
+      city: olympicHostCode,
+      sub: "Host-city routes ride the surge through R32",
+      tone: "accent",
+    });
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {items.map((it) => {
+        const cityName = it.city ? CITIES_BY_CODE[it.city]?.name ?? it.city : null;
+        return (
+          <div
+            key={it.label}
+            className={cn(
+              "rounded-md px-3 py-2 flex items-center gap-2 text-[0.8125rem] border",
+              it.tone === "accent"
+                ? "border-accent/40 bg-[var(--accent-soft)]/40"
+                : "border-warning/40 bg-[var(--warning-soft)]/40",
+            )}
+          >
+            <span
+              className={cn(
+                "text-[0.625rem] uppercase tracking-wider font-bold shrink-0",
+                it.tone === "accent" ? "text-accent" : "text-warning",
+              )}
+            >
+              {it.label}
+            </span>
+            {cityName && (
+              <span className="font-medium text-ink shrink-0">
+                <span className="font-mono mr-1 text-ink-2">{it.city}</span>
+                {cityName}
+              </span>
+            )}
+            <span className="text-ink-muted truncate">{it.sub}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

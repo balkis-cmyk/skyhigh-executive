@@ -548,7 +548,15 @@ export function computeRouteEconomics(
     ) * cargoFocusBonus;
     const dailyTonnes = Math.min(dailyCapacityT, cargoDemandT);
     const occupancy = dailyCapacityT > 0 ? Math.min(0.98, dailyTonnes / dailyCapacityT) : 0;
-    const pricePerTonne = distanceKm < 3000 ? 3.5 : 5.5;
+    // Cargo pricing now mirrors passenger fares — base $/tonne by haul
+    // distance, scaled by the route's PricingTier (Budget/Standard/Premium/
+    // Ultra → 0.5×/1.0×/1.5×/2.0×), and player-overridable per route via
+    // route.cargoRatePerTonne. Previously cargo was a fixed $3.50/$5.50
+    // with the Pricing Tier picker silently ignored — players asked
+    // (rightly) where the fee control was.
+    const baseCargoRate = distanceKm < 3000 ? 3.5 : 5.5;
+    const tierMult = PRICE_TIER[route.pricingTier];
+    const pricePerTonne = route.cargoRatePerTonne ?? baseCargoRate * tierMult;
     const quarterlyRevenue = dailyTonnes * pricePerTonne * 1000 * QUARTER_DAYS;
     // Storage cost instead of slot fees (A4)
     const storageCostByTier: Record<number, number> = { 1: 800_000, 2: 450_000, 3: 250_000, 4: 150_000 };

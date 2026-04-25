@@ -370,20 +370,70 @@
   font-size: 9px;
 }
 
-/* Flowing dashes that march along route polylines, creating a sense of
-   traffic moving on each route without rendering actual moving markers
-   (cheap and respects reduced-motion). */
-@keyframes sf-route-flow-march {
-  to { stroke-dashoffset: -32; }
+/* Live route traffic — actual plane glyphs animated along great-circle
+   arcs (positions updated in JS via requestAnimationFrame). The plane
+   icon below is a divIcon container; we control rotation + scale here
+   to stay snappy without re-rendering React on every frame. */
+.sf-plane-marker {
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  /* The marker itself is centered — Leaflet positions by anchor (9,9).
+     We paint the SVG inside via .sf-plane-glyph. */
+  filter: drop-shadow(0 1px 1.5px rgba(0,0,0,0.45));
 }
-.sf-route-flow {
-  animation: sf-route-flow-march 1.6s linear infinite;
+.sf-plane-glyph {
+  width: 100%;
+  height: 100%;
+  /* The bearing rotation comes from inline style; this base transform
+     keeps the SVG's nose pointing along the path. */
+  transform-origin: center center;
+}
+/* Cargo plane variant — overrides the SVG fill via CSS so we keep one
+   shared SVG payload but paint freight aircraft yellow on the map. */
+.sf-plane-marker--cargo .sf-plane-glyph svg path {
+  fill: #f5c542; /* warm cargo yellow */
+  stroke: #5a3e0b;
 }
 @media (prefers-reduced-motion: reduce) {
-  .sf-route-flow {
-    animation: none;
-    opacity: 0.6;
-  }
+  /* Pause planes for users who asked for reduced motion. The route
+     line still tells the story; we just don't animate the glyph. */
+  .sf-plane-marker { display: none; }
+}
+
+/* Pulsing concentric rings around primary hubs — beacon-style without
+   competing with the city label. Two rings staggered for a radar feel. */
+@keyframes sf-hub-pulse {
+  0%   { transform: scale(0.7); opacity: 0.55; }
+  70%  { transform: scale(1.7); opacity: 0; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+.sf-hub-pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  pointer-events: none;
+  animation: sf-hub-pulse 2.6s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+}
+.sf-hub-pulse--delayed {
+  animation-delay: 1.3s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sf-hub-pulse,
+  .sf-hub-pulse--delayed { animation: none; opacity: 0; }
+}
+
+/* Hub center beacon — solid bright dot with halo. Layered above the
+   pulse rings so the rings expand from the center outwards. */
+.sf-hub-beacon {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow:
+    0 0 0 1.5px #ffffff,
+    0 0 8px 2px rgba(255,255,255,0.35);
 }
 
 /* Toast entrance — slides in from the bottom-right */

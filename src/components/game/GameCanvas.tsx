@@ -120,8 +120,12 @@ function CanvasInner() {
 
   useEffect(() => {
     if (!hydrated) return;
-    if (phase === "idle" || !playerTeamId) router.replace("/onboarding");
-    else if (phase === "endgame") router.replace("/endgame");
+    // The pre-game lobby (rendered below) IS the landing page in
+    // production. Previously this effect auto-redirected to /onboarding
+    // the moment the page loaded with no save, which meant new visitors
+    // never saw the marketing intro. Only redirect on terminal endgame
+    // state — idle simply renders the landing.
+    if (phase === "endgame") router.replace("/endgame");
   }, [hydrated, phase, playerTeamId, router]);
 
   if (!hydrated) {
@@ -141,17 +145,19 @@ function CanvasInner() {
             SkyForce · Executive Simulation
           </div>
           <h1 className="font-display text-4xl md:text-5xl text-ink leading-tight mb-4">
-            Your simulation begins shortly.
+            Run a global airline for ten years.
           </h1>
           <p className="text-ink-2 text-[0.9375rem] leading-relaxed mb-2">
-            You&apos;ll run an airline for 20 quarters: open routes across 100 cities,
-            command a fleet of up to 21 aircraft types, and steer through 18
-            board-level scenarios and the global Travel Index.
+            SkyForce is a 40-round executive simulation covering 2015–2024.
+            Open routes across 380+ cities, build a fleet from 40+ commercial
+            aircraft, navigate 18 board-level scenarios, and steer through real
+            macro events — World Cup, Olympics, fuel shocks, talent wars,
+            recession, and the carbon-levy ultimatum.
           </p>
           <p className="text-ink-muted text-[0.8125rem] mb-8">
-            You begin with $150M seed capital. Q1 Brand Building determines your
-            L0 cash injection (up to +$80M) and brand foundation before Q2
-            operations open.
+            You begin with $150M seed capital. Q1 Brand Building sets your
+            opening cash injection (up to +$80M) and brand foundation before
+            Q2 operations open.
           </p>
           <div className="flex items-center justify-center gap-3 flex-wrap">
             <Button variant="primary" size="lg" onClick={() => router.push("/onboarding")}>
@@ -169,9 +175,9 @@ function CanvasInner() {
             Demo seeds a sample airline so you can explore mechanics without setup.
           </div>
           <div className="mt-10 grid grid-cols-2 md:grid-cols-4 gap-4 text-left max-w-2xl mx-auto">
-            <PreGameStat label="Quarters" value="20" sub="Five years of strategy" />
-            <PreGameStat label="Cities" value="100" sub="Tier 1 hubs to T4 outposts" />
-            <PreGameStat label="Aircraft" value="21" sub="A220 to A380, freighters" />
+            <PreGameStat label="Rounds" value="40" sub="2015 → 2024 calendar" />
+            <PreGameStat label="Cities" value="380+" sub="Tier 1 hubs to T4 outposts" />
+            <PreGameStat label="Aircraft" value="40+" sub="Airbus, Boeing, Embraer, ATR, COMAC, Bombardier" />
             <PreGameStat label="Scenarios" value="18" sub="Board-level decisions" />
           </div>
           <div className="mt-8 text-left max-w-2xl mx-auto rounded-md border border-line bg-surface-2/40 p-4">

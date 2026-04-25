@@ -110,6 +110,10 @@ export interface Route {
   econFare: number | null;
   busFare: number | null;
   firstFare: number | null;
+  /** Cargo route override for $/tonne. null = use base tier formula
+   *  ($3.50 short-haul / $5.50 long-haul × pricing-tier multiplier).
+   *  Mirrors how passenger routes use econFare/busFare/firstFare. */
+  cargoRatePerTonne: number | null;
 
   status: "active" | "pending" | "closed" | "suspended";
   openQuarter: number;

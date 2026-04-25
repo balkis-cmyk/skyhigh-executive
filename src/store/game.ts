@@ -150,6 +150,7 @@ export interface GameStore extends GameState {
     econFare?: number | null;
     busFare?: number | null;
     firstFare?: number | null;
+    cargoRatePerTonne?: number | null;
     aircraftIds?: string[];
   }): { ok: boolean; error?: string };
 
@@ -622,6 +623,7 @@ export const useGame = create<GameStore>()(
               dailyFrequency: dailyFreq,
               pricingTier: tier,
               econFare: null, busFare: null, firstFare: null,
+              cargoRatePerTonne: null,
               status: "active" as const,
               openQuarter: 1,
               avgOccupancy: 0.55 + Math.random() * 0.25,
@@ -1310,6 +1312,7 @@ export const useGame = create<GameStore>()(
           econFare: econFare ?? null,
           busFare: busFare ?? null,
           firstFare: firstFare ?? null,
+          cargoRatePerTonne: null,
           // Pending if we're awaiting auction resolution for slot shortfall;
           // active otherwise. Pending routes don't earn revenue this quarter
           // — they activate at next quarter-close once slots resolve.
@@ -1474,6 +1477,9 @@ export const useGame = create<GameStore>()(
               econFare: patch.econFare !== undefined ? patch.econFare : r.econFare,
               busFare: patch.busFare !== undefined ? patch.busFare : r.busFare,
               firstFare: patch.firstFare !== undefined ? patch.firstFare : r.firstFare,
+              cargoRatePerTonne: patch.cargoRatePerTonne !== undefined
+                ? patch.cargoRatePerTonne
+                : r.cargoRatePerTonne,
               aircraftIds: newAircraftIds,
             }),
             fleet: t.fleet.map((f) => {
@@ -2098,6 +2104,7 @@ export const useGame = create<GameStore>()(
               econFare: null,
               busFare: null,
               firstFare: null,
+              cargoRatePerTonne: null,
               status: "active",
               openQuarter: s.currentQuarter,
               avgOccupancy: 0,
@@ -3688,6 +3695,7 @@ export const useGame = create<GameStore>()(
             econFare: r.econFare ?? null,
             busFare: r.busFare ?? null,
             firstFare: r.firstFare ?? null,
+            cargoRatePerTonne: r.cargoRatePerTonne ?? null,
             isCargo: r.isCargo ?? false,
             consecutiveQuartersActive: r.consecutiveQuartersActive ?? 0,
             consecutiveLosingQuarters: r.consecutiveLosingQuarters ?? 0,

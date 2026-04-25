@@ -5,6 +5,7 @@ import {
   MapContainer,
   TileLayer,
   CircleMarker,
+  Marker,
   Polyline,
   Tooltip,
   useMap,
@@ -12,7 +13,7 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { CITIES, CITIES_BY_CODE } from "@/data/cities";
-import type { City, Team } from "@/types/game";
+import type { City, Team, Route } from "@/types/game";
 import { cn } from "@/lib/cn";
 
 /**
@@ -95,6 +96,173 @@ function dailyFlightsByCity(team: Team) {
     map[r.destCode] = (map[r.destCode] ?? 0) + r.dailyFrequency;
   }
   return map;
+}
+
+/** Compute initial bearing (degrees from north, clockwise) at point a→b
+ *  on the great circle. Used to rotate the plane glyph so its nose
+ *  points along the path. */
+function bearingDeg(
+  aLat: number, aLon: number,
+  bLat: number, bLon: number,
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const φ1 = toRad(aLat), φ2 = toRad(bLat);
+  const Δλ = toRad(bLon - aLon);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/** Tiny SVG plane glyph used inside the divIcon. Outlined in white so
+ *  it stays legible on any basemap background. The transform-origin
+ *  keeps the rotation centred on the body. */
+const PLANE_SVG = `
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <path
+    d="M12 1.5 L13.6 9.5 L22 13 L22 14.7 L13.6 12.5 L13.4 18 L16 19.5 L16 21
+       L12 20 L8 21 L8 19.5 L10.6 18 L10.4 12.5 L2 14.7 L2 13 L10.4 9.5 Z"
+    fill="#ffffff"
+    stroke="#0c1624"
+    stroke-width="1"
+    stroke-linejoin="round"
+  />
+</svg>
+`;
+
+/** Static divIcon — size + html identical for every plane, only the
+ *  inline rotation transform changes per-frame. Cached at module scope
+ *  so we don't allocate on every render. Two variants: default (pax)
+ *  and cargo (yellow tint via class) so freight reads visually distinct. */
+const planeIcon = L.divIcon({
+  className: "sf-plane-marker",
+  html: `<div class="sf-plane-glyph" data-plane>${PLANE_SVG}</div>`,
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
+const cargoPlaneIcon = L.divIcon({
+  className: "sf-plane-marker sf-plane-marker--cargo",
+  html: `<div class="sf-plane-glyph" data-plane>${PLANE_SVG}</div>`,
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
+
+/**
+ * One animated plane flying back-and-forth along a great-circle path.
+ * The position is updated via requestAnimationFrame and pushed straight
+ * to the Leaflet marker via setLatLng — no React re-render per frame.
+ *
+ * Each plane has a unique phase + direction so multiple flights on
+ * different routes stagger naturally rather than marching in lockstep.
+ */
+function FlyingPlane({
+  positions,
+  durationMs,
+  phase,
+  cargo = false,
+}: {
+  positions: [number, number][];
+  /** Time in ms for one one-way traversal (origin → destination). */
+  durationMs: number;
+  /** 0..1 starting offset along the path so different planes stagger. */
+  phase: number;
+  /** Cargo flights render with a yellow-tinted glyph so the player
+   *  can tell freight traffic from passenger traffic at any zoom. */
+  cargo?: boolean;
+}) {
+  const markerRef = useRef<L.Marker | null>(null);
+  // Pre-compute bearings between consecutive points so the glyph nose
+  // turns smoothly along the great circle without a per-frame trig hit.
+  const bearings = useMemo(() => {
+    const out: number[] = [];
+    for (let i = 0; i < positions.length - 1; i++) {
+      const [aLat, aLon] = positions[i];
+      const [bLat, bLon] = positions[i + 1];
+      out.push(bearingDeg(aLat, aLon, bLat, bLon));
+    }
+    out.push(out[out.length - 1] ?? 0);
+    return out;
+  }, [positions]);
+
+  useEffect(() => {
+    if (positions.length < 2) return;
+    let raf = 0;
+    const start = performance.now() - phase * durationMs;
+    const step = () => {
+      const m = markerRef.current;
+      if (!m) {
+        raf = requestAnimationFrame(step);
+        return;
+      }
+      const elapsed = (performance.now() - start) / durationMs;
+      // Triangle wave 0→1→0 so the plane flies one way, returns the other,
+      // mirroring a real bidirectional schedule without doubling markers.
+      const t = elapsed % 2;
+      const forward = t < 1;
+      const f = forward ? t : 2 - t;
+      const idxF = f * (positions.length - 1);
+      const i = Math.min(positions.length - 2, Math.floor(idxF));
+      const frac = idxF - i;
+      const [aLat, aLon] = positions[i];
+      const [bLat, bLon] = positions[i + 1];
+      const lat = aLat + (bLat - aLat) * frac;
+      const lon = aLon + (bLon - aLon) * frac;
+      m.setLatLng([lat, lon]);
+      // Bearing flips by 180° on the return leg so the nose stays
+      // pointing in the direction of travel.
+      const bearing = bearings[i] + (forward ? 0 : 180);
+      const el = m.getElement();
+      const glyph = el?.querySelector<HTMLElement>("[data-plane]");
+      if (glyph) {
+        glyph.style.transform = `rotate(${bearing}deg)`;
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [positions, durationMs, phase, bearings]);
+
+  // Initial position = sample at phase
+  const initial = useMemo(() => {
+    if (positions.length < 2) return positions[0] ?? [0, 0];
+    const idxF = phase * (positions.length - 1);
+    const i = Math.min(positions.length - 2, Math.floor(idxF));
+    const frac = idxF - i;
+    const [aLat, aLon] = positions[i];
+    const [bLat, bLon] = positions[i + 1];
+    return [aLat + (bLat - aLat) * frac, aLon + (bLon - aLon) * frac] as [number, number];
+  }, [positions, phase]);
+
+  return (
+    <Marker
+      position={initial}
+      icon={cargo ? cargoPlaneIcon : planeIcon}
+      ref={(m) => { markerRef.current = m; }}
+      // No interaction — these are decorative.
+      interactive={false}
+      keyboard={false}
+    />
+  );
+}
+
+/** Compute a per-route flight time from distance + an arbitrary scale
+ *  so the plane glides at a believable speed on screen. We don't want
+ *  the animation to feel realistic-slow (10h flight = 10 minutes on
+ *  screen), but the relative speeds of short vs long routes should
+ *  read naturally. */
+function flightDurationMs(distanceKm: number, dailyFreq: number): number {
+  // Faster on shorter routes, slower on long-haul. Scale by frequency
+  // so a busy route's plane circles back faster than a thin one.
+  const baseMs = 6_000 + Math.sqrt(distanceKm) * 80; // 6-15s typical
+  const freqScale = Math.max(0.6, 1 / Math.max(0.5, Math.log10(1 + dailyFreq)));
+  return Math.round(baseMs * freqScale);
+}
+
+/** Hash a route id to a stable 0..1 phase so identical routes don't
+ *  start at the same point and animate in lockstep. */
+function phaseFromId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return Math.abs(h % 1000) / 1000;
 }
 
 function MapEventBridge({
@@ -215,44 +383,81 @@ export function WorldMap({
             .filter(Boolean) as React.ReactElement[];
         })}
 
-        {/* Player route arcs — base line + animated flow on top */}
+        {/* Player route arcs — single clean line + an animated plane
+            glyph traversing the great circle. Cargo routes get a
+            slightly desaturated colour so they're distinguishable from
+            passenger routes at a glance. */}
         {activeRoutes.map((r) => {
           const a = CITIES_BY_CODE[r.originCode];
           const b = CITIES_BY_CODE[r.destCode];
           if (!a || !b) return null;
           const profitable = r.avgOccupancy > 0.7;
           const losing = r.avgOccupancy > 0 && r.avgOccupancy < 0.5;
-          const color = profitable
-            ? "#1E6B5C"
+          // Cargo lanes get a distinct amber/yellow palette so the
+          // network visibly distinguishes pax (team color / health
+          // shaded) from freight at any zoom level.
+          const passengerColor = profitable
+            ? "#1E6B5C"  // healthy emerald
+            : losing
+              ? "#C23B1F"  // warning rose
+              : team.color;
+          const cargoColor = profitable
+            ? "#E0A93B"  // amber/gold (also matches the pending-bid line)
             : losing
               ? "#C23B1F"
-              : team.color;
+              : "#F2C063"; // softer yellow for at-baseline cargo
+          const color = r.isCargo ? cargoColor : passengerColor;
           const positions = greatCirclePath(a.lon, a.lat, b.lon, b.lat, 64);
+          const dur = flightDurationMs(r.distanceKm, r.dailyFrequency);
+          const phase = phaseFromId(r.id);
+          // High-frequency routes earn a second plane offset 180° in
+          // phase so heavy corridors visibly carry more traffic.
+          const showSecondPlane = r.dailyFrequency >= 3;
           return (
             <Fragment key={r.id}>
-              {/* Base arc */}
+              {/* Soft halo — wider, very translucent line under the
+                  main stroke. Gives long-haul routes a subtle bloom
+                  without committing to a bright colour. */}
               <Polyline
                 positions={positions}
                 pathOptions={{
                   color,
-                  weight: 2.5,
-                  opacity: 0.65,
+                  weight: 4,
+                  opacity: 0.14,
                   lineCap: "round",
+                  interactive: false,
                 }}
               />
-              {/* Flow overlay — short dashes that march along the path,
-                  giving the illusion of planes traversing the route. */}
+              {/* Main stroke — thinner per user feedback. Cargo dashes
+                  more sparsely so the line reads "freight schedule"
+                  rather than a solid passenger corridor. */}
               <Polyline
                 positions={positions}
                 pathOptions={{
-                  color: "#fde047",
-                  weight: 1.6,
-                  opacity: 0.95,
+                  color,
+                  weight: r.isCargo ? 1.1 : 1.5,
+                  opacity: r.isCargo ? 0.7 : 0.9,
                   lineCap: "round",
-                  dashArray: "2 14",
-                  className: "sf-route-flow",
+                  dashArray: r.isCargo ? "1 5" : undefined,
                 }}
               />
+              {/* Animated flying plane(s) along the path. Cargo planes
+                  get a yellow tint via className so they read as a
+                  different traffic category at a glance. */}
+              <FlyingPlane
+                positions={positions}
+                durationMs={dur}
+                phase={phase}
+                cargo={!!r.isCargo}
+              />
+              {showSecondPlane && (
+                <FlyingPlane
+                  positions={positions}
+                  durationMs={dur}
+                  phase={(phase + 0.5) % 1}
+                  cargo={!!r.isCargo}
+                />
+              )}
             </Fragment>
           );
         })}
@@ -274,6 +479,70 @@ export function WorldMap({
                 lineCap: "round",
                 dashArray: "6 8",
               }}
+            />
+          );
+        })}
+
+        {/* Hub beacon — pulsing concentric rings + bright core, painted
+            BELOW the regular CircleMarker so the city dot sits visually
+            on top. The beacon takes its colour from the team and uses
+            CSS animations defined in globals.css. */}
+        {(() => {
+          const hub = CITIES_BY_CODE[team.hubCode];
+          if (!hub) return null;
+          const beaconIcon = L.divIcon({
+            className: "",
+            // 36×36 stage, two pulse rings + center beacon. Inline color
+            // = team brand so the beacon reads as "yours" at a glance.
+            html: `
+              <div style="position:relative;width:36px;height:36px;color:${team.color}">
+                <span class="sf-hub-pulse"></span>
+                <span class="sf-hub-pulse sf-hub-pulse--delayed"></span>
+                <span class="sf-hub-beacon" style="
+                  width:8px;height:8px;left:50%;top:50%;
+                  transform:translate(-50%,-50%);
+                  position:absolute;inset:auto;
+                "></span>
+              </div>
+            `,
+            iconSize: [36, 36],
+            iconAnchor: [18, 18],
+          });
+          return (
+            <Marker
+              position={[hub.lat, hub.lon]}
+              icon={beaconIcon}
+              interactive={false}
+              keyboard={false}
+            />
+          );
+        })()}
+        {/* Secondary-hub beacons — same pulse, dimmer + smaller. */}
+        {team.secondaryHubCodes.map((code) => {
+          const hub = CITIES_BY_CODE[code];
+          if (!hub) return null;
+          const beaconIcon = L.divIcon({
+            className: "",
+            html: `
+              <div style="position:relative;width:28px;height:28px;color:${team.color};opacity:0.75">
+                <span class="sf-hub-pulse"></span>
+                <span class="sf-hub-beacon" style="
+                  width:6px;height:6px;left:50%;top:50%;
+                  transform:translate(-50%,-50%);
+                  position:absolute;inset:auto;
+                "></span>
+              </div>
+            `,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+          });
+          return (
+            <Marker
+              key={`sh-beacon-${code}`}
+              position={[hub.lat, hub.lon]}
+              icon={beaconIcon}
+              interactive={false}
+              keyboard={false}
             />
           );
         })}

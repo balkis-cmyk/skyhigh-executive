@@ -266,14 +266,51 @@ export function planBotAircraftOrder(
   });
   if (candidates.length === 0) return null;
 
-  // Pick the cheapest plane that meets the criteria (steady expansion).
-  // HARD picks the most modern available. MEDIUM prefers eco upgrades.
-  let pick: typeof candidates[number];
-  if (difficulty === "hard") {
-    pick = candidates.sort((a, b) => b.unlockQuarter - a.unlockQuarter)[0];
-  } else {
-    pick = candidates.sort((a, b) => a.buyPriceUsd - b.buyPriceUsd)[0];
+  // Diversification scoring — bots used to "pick the cheapest" or "pick
+  // the most modern" which led to monoculture fleets (10× A320, 5× A380).
+  // Now we score each candidate by:
+  //   - base score (price for EASY/MEDIUM, modernity for HARD)
+  //   - diversification bonus (under-represented sub-family)
+  //   - regional preference (encourage the new turboprops + regional jets
+  //     once the fleet is mature enough to support thin spokes)
+  const classify = (s: typeof availableSpecs[number]): string => {
+    if (s.family === "cargo") return "cargo";
+    const seats = s.seats.first + s.seats.business + s.seats.economy;
+    if (seats < 100) return "regional";
+    if (seats > 250) return "wide";
+    return "narrow";
+  };
+  const fleetBuckets: Record<string, number> = {};
+  for (const f of team.fleet) {
+    if (f.status === "retired") continue;
+    const s = AIRCRAFT_BY_ID[f.specId];
+    if (!s) continue;
+    const b = classify(s);
+    fleetBuckets[b] = (fleetBuckets[b] ?? 0) + 1;
   }
+  const fleetTotal = Math.max(1, Object.values(fleetBuckets).reduce((s, n) => s + n, 0));
+  // Mature fleets without any regional jet should consider one for thin
+  // routes — handled as a soft bias rather than a hard filter so the
+  // primary cargo / wide / narrow logic still wins where appropriate.
+  const wantsRegional =
+    fleetCount >= 8 &&
+    !wantsCargo &&
+    !wantsWide &&
+    (fleetBuckets["regional"] ?? 0) === 0;
+  const candidatesScored = candidates.map((c) => {
+    const bucket = classify(c);
+    const share = (fleetBuckets[bucket] ?? 0) / fleetTotal;
+    // Under-represented buckets earn up to +0.5; saturated ones earn 0.
+    const diversityBonus = (1 - share) * 0.5;
+    const regionalBonus = wantsRegional && bucket === "regional" ? 0.4 : 0;
+    const base =
+      difficulty === "hard"
+        ? c.unlockQuarter / 40                    // 0..1
+        : -c.buyPriceUsd / 200_000_000;            // -1..0 (cheaper = higher)
+    return { spec: c, score: base + diversityBonus + regionalBonus };
+  });
+  candidatesScored.sort((a, b) => b.score - a.score);
+  const pick = candidatesScored[0].spec;
 
   // Quantity: 1 for easy, 1-2 for medium, 1-3 for hard. Cargo orders
   // are usually solo (one big freighter at a time).
