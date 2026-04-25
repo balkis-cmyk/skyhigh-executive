@@ -115,9 +115,9 @@ function CloseQuarterButton() {
       variant="primary"
       size="sm"
       onClick={onClick}
-      title="Lock decisions + run quarter close processing"
+      title="Lock decisions + run quarter close. In multi-team play this signals 'I'm ready' — the round advances when all teams (or admin) confirm."
     >
-      Close Q{currentQuarter} →
+      Next Quarter →
     </Button>
   );
 }

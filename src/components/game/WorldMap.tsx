@@ -158,16 +158,11 @@ export function WorldMap({
         style={{ width: "100%", height: "100%", background: "var(--map-ocean-deep)" }}
         attributionControl={false}
       >
-        {/* Toned-down satellite tile basemap */}
+        {/* Toned-down satellite tile basemap.
+            No labels overlay — only our 100 cities are named on the map. */}
         <TileLayer
           url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
           className="sf-tone-tile"
-        />
-        {/* Subtle label overlay so place names stay legible */}
-        <TileLayer
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-          opacity={0.6}
-          className="sf-tone-labels"
         />
 
         <MapEventBridge onClickEmpty={() => onClearSelection?.()} />
@@ -251,23 +246,32 @@ export function WorldMap({
           const isSelected = c.code === selectedOriginCode;
           const flights = flightsByCity[c.code] ?? 0;
 
-          // Visual sizing
+          // Visual sizing — bumped so dots pop against the satellite imagery
           const radius = isHub
-            ? 9
+            ? 11
             : isSecondaryHub
-              ? 7
+              ? 9
               : inNetwork
-                ? 6
+                ? 7.5
                 : c.tier === 1
-                  ? 4.5
+                  ? 6
                   : c.tier === 2
-                    ? 3
+                    ? 4.5
                     : c.tier === 3
-                      ? 2.5
-                      : 2;
+                      ? 3.5
+                      : 3;
 
-          const fillColor = isHub || isSecondaryHub || inNetwork ? team.color : "#3a4a5e";
-          const fillOpacity = inNetwork ? 1.0 : 0.55;
+          // Cool warm-white for unconnected cities so they're clearly visible
+          // on top of the satellite imagery without competing with the team
+          // colour for hubs/network.
+          const fillColor = isHub || isSecondaryHub || inNetwork ? team.color : "#fef9ec";
+          const fillOpacity = 1.0;
+          const strokeColor = isHub || isSecondaryHub
+            ? "#ffffff"
+            : inNetwork
+              ? "#ffffff"
+              : "#1a1a1a";
+          const strokeWeight = isHub ? 2.5 : isSecondaryHub ? 2 : inNetwork ? 1.8 : 1.4;
 
           // Show name labels only for hub/secondary/connected; tier-1 unconnected gets IATA only
           const showName = isHub || isSecondaryHub || inNetwork;
@@ -279,10 +283,11 @@ export function WorldMap({
               center={[c.lat, c.lon]}
               radius={radius}
               pathOptions={{
-                color: "white",
+                color: strokeColor,
                 fillColor,
                 fillOpacity,
-                weight: isHub ? 2 : 1.2,
+                weight: strokeWeight,
+                className: "sf-city-dot",
               }}
               eventHandlers={{
                 click: () => onCityClick?.(c),
