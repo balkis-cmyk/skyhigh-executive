@@ -131,6 +131,12 @@ export interface GameStore extends GameState {
   }): { ok: boolean; error?: string };
 
   closeRoute(routeId: string): void;
+
+  /** Cancel a pending route (one whose status is "pending"). Frees its
+   *  aircraft to idle, removes the route. Pending bids for the airports
+   *  remain queued — release them via Slot Market if you want a refund
+   *  on the auction. */
+  cancelPendingRoute(routeId: string): { ok: boolean; error?: string };
   updateRoute(routeId: string, patch: {
     dailyFrequency?: number;
     pricingTier?: PricingTier;
@@ -1101,6 +1107,36 @@ export const useGame = create<GameStore>()(
             },
           ),
         });
+      },
+
+      cancelPendingRoute: (routeId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        const route = player.routes.find((r) => r.id === routeId);
+        if (!route) return { ok: false, error: "Route not found" };
+        if (route.status !== "pending") {
+          return { ok: false, error: "Only pending routes can be cancelled here" };
+        }
+        set({
+          teams: s.teams.map((t) =>
+            t.id !== s.playerTeamId ? t : {
+              ...t,
+              routes: t.routes.filter((r) => r.id !== routeId),
+              fleet: t.fleet.map((f) =>
+                f.routeId === routeId
+                  ? { ...f, status: "active" as const, routeId: null }
+                  : f,
+              ),
+            },
+          ),
+        });
+        toast.info(
+          `Pending route cancelled`,
+          `${route.originCode} → ${route.destCode} · aircraft returned to idle. ` +
+            `Slot bids stay queued — release in Slot Market if you don't want them.`,
+        );
+        return { ok: true };
       },
 
       updateRoute: (routeId, patch) => {

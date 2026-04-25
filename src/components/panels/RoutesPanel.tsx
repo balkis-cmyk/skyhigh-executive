@@ -312,14 +312,13 @@ function RouteDetailModal({
   const [selectedPlaneIds, setSelectedPlaneIds] = useState<string[]>(route.aircraftIds);
   const [error, setError] = useState<string | null>(null);
 
-  if (!player) return null;
-
   // Auto-clamp weeklyFreq when aircraft selection changes — fewer planes
   // means a lower physics cap, and the slider/value MUST drop to match.
   // PRD update: removing an aircraft from a route should automatically
-  // reduce capacity.
+  // reduce capacity. Hooks must run before early-return so we compute
+  // these even when player is null (clampMaxWeekly = 0 in that case).
   const clampSpecIds = selectedPlaneIds
-    .map((id) => player.fleet.find((f) => f.id === id)?.specId)
+    .map((id) => player?.fleet.find((f) => f.id === id)?.specId)
     .filter((x): x is string => !!x);
   const clampMaxDaily = clampSpecIds.length > 0
     ? Math.max(1, Math.floor(clampSpecIds.reduce((sum, id) => {
@@ -337,6 +336,8 @@ function RouteDetailModal({
       setWeeklyFreq(clampMaxWeekly);
     }
   }, [clampMaxWeekly, weeklyFreq]);
+
+  if (!player) return null;
 
   const origin = CITIES_BY_CODE[route.originCode];
   const dest = CITIES_BY_CODE[route.destCode];
@@ -578,22 +579,47 @@ function RouteDetailModal({
       </ModalBody>
       <ModalFooter className="justify-between">
         <div className="flex items-center gap-2">
-          {route.status === "active" ? (
-            <Button variant="secondary" size="sm" onClick={onSuspend}>
-              <Pause size={13} className="mr-1.5" /> Suspend
+          {route.status === "pending" ? (
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => {
+                if (
+                  confirm(
+                    `Cancel pending route ${route.originCode} → ${route.destCode}?\n\n` +
+                    `Aircraft return to idle. Slot bids stay queued — release in Slot Market if you don't want them.`,
+                  )
+                ) {
+                  const r = useGame.getState().cancelPendingRoute(route.id);
+                  if (!r.ok) alert(r.error ?? "Cancel failed");
+                  else onClose();
+                }
+              }}
+            >
+              <X size={13} className="mr-1.5" /> Cancel pending route
             </Button>
           ) : (
-            <Button variant="secondary" size="sm" onClick={onResume}>
-              <Play size={13} className="mr-1.5" /> Resume
-            </Button>
+            <>
+              {route.status === "active" ? (
+                <Button variant="secondary" size="sm" onClick={onSuspend}>
+                  <Pause size={13} className="mr-1.5" /> Suspend
+                </Button>
+              ) : (
+                <Button variant="secondary" size="sm" onClick={onResume}>
+                  <Play size={13} className="mr-1.5" /> Resume
+                </Button>
+              )}
+              <Button variant="danger" size="sm" onClick={onClose_close}>
+                <X size={13} className="mr-1.5" /> Close route
+              </Button>
+            </>
           )}
-          <Button variant="danger" size="sm" onClick={onClose_close}>
-            <X size={13} className="mr-1.5" /> Close route
-          </Button>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={save}>Save changes</Button>
+          {route.status !== "pending" && (
+            <Button variant="primary" onClick={save}>Save changes</Button>
+          )}
         </div>
       </ModalFooter>
     </Modal>

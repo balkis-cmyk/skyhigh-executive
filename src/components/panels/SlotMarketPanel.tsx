@@ -267,7 +267,7 @@ export function SlotMarketPanel() {
         </div>
         Once per simulated year, a fresh batch of slots opens at every
         airport. Tier 1 ~200/year, Tier 2 ~125/year, Tier 3 ~63/year,
-        Tier 4 ~32/year (±20% jitter). The "Next Q" column shows the
+        Tier 4 ~32/year (±20% jitter). The &ldquo;Next Q&rdquo; column shows the
         announced opening per airport so you can plan bids.
       </div>
     </div>
@@ -436,7 +436,7 @@ function BidPanel({
             </div>
             <div className="col-span-5 text-[0.75rem] text-ink-2 leading-relaxed">
               Stops the recurring fee on the released slots and returns
-              them to the airport's open pool. Routes touching this
+              them to the airport&apos;s open pool. Routes touching this
               airport must still fit within remaining slots.
             </div>
             <div className="col-span-3">
