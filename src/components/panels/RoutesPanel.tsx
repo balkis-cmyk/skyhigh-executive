@@ -346,6 +346,10 @@ function RouteDetailModal({
           <MiniStat label="Q profit" value={fmtMoney(profit)} tone={profit >= 0 ? "pos" : "neg"} />
         </div>
 
+        {/* Why this performance — multipliers breakdown */}
+        <DemandBreakdown route={route} player={player} />
+
+
         {/* Pricing tier */}
         <div>
           <Label>Pricing tier</Label>
@@ -472,6 +476,85 @@ function RouteDetailModal({
         </div>
       </ModalFooter>
     </Modal>
+  );
+}
+
+function DemandBreakdown({
+  route, player,
+}: {
+  route: NonNullable<ReturnType<typeof selectPlayer>>["routes"][number];
+  player: NonNullable<ReturnType<typeof selectPlayer>>;
+}) {
+  const origin = CITIES_BY_CODE[route.originCode];
+  const dest = CITIES_BY_CODE[route.destCode];
+  if (!origin || !dest) return null;
+  const isHub = route.originCode === player.hubCode || route.destCode === player.hubCode;
+  const isSecondary =
+    player.secondaryHubCodes.includes(route.originCode) ||
+    player.secondaryHubCodes.includes(route.destCode);
+  const hubMultiplier = isHub ? 1.18 : isSecondary ? 1.10 : 1.0;
+  const csLevel = player.sliders.customerService ?? 2;
+  const csMultiplier = [0.92, 0.96, 1.0, 1.03, 1.06, 1.10][csLevel] ?? 1.0;
+  const hasLounge =
+    player.hubInvestments?.premiumLoungeHubs?.includes(route.originCode) ||
+    player.hubInvestments?.premiumLoungeHubs?.includes(route.destCode);
+  const loungeBonus = hasLounge ? 1.04 : 1.0;
+  const hasFuelTank = player.hubInvestments?.fuelReserveTankHubs?.includes(route.originCode);
+
+  // Onboarding bonus — same logic as engine
+  let onboardingBonus = 1.0;
+  if (player.marketFocus === "passenger" && !route.isCargo) onboardingBonus *= 1.05;
+  if (player.marketFocus === "cargo" && route.isCargo) onboardingBonus *= 1.15;
+  const geoMatch =
+    player.geographicPriority === "global" ||
+    (player.geographicPriority === "north-america" && origin.region === "na" && dest.region === "na") ||
+    (player.geographicPriority === "europe" && origin.region === "eu" && dest.region === "eu") ||
+    (player.geographicPriority === "asia-pacific" && (origin.region === "as" || origin.region === "oc") && (dest.region === "as" || dest.region === "oc")) ||
+    (player.geographicPriority === "middle-east" && (origin.region === "me" || origin.region === "mea") && (dest.region === "me" || dest.region === "mea"));
+  if (geoMatch && player.geographicPriority !== "global") onboardingBonus *= 1.08;
+  if (player.csrTheme === "community" && origin.tier >= 2 && dest.tier >= 2) onboardingBonus *= 1.03;
+
+  const rows: Array<{ label: string; mult: number; tone: "pos" | "neg" | "neutral" }> = [
+    { label: `Hub bonus${isHub ? "" : isSecondary ? " (secondary)" : " (none)"}`, mult: hubMultiplier, tone: hubMultiplier > 1 ? "pos" : "neutral" },
+    { label: `Customer Service · L${csLevel}`, mult: csMultiplier, tone: csMultiplier > 1 ? "pos" : csMultiplier < 1 ? "neg" : "neutral" },
+    { label: hasLounge ? "Premium lounge at hub" : "No lounge at endpoints", mult: loungeBonus, tone: loungeBonus > 1 ? "pos" : "neutral" },
+    { label: "Doctrine + geography fit", mult: onboardingBonus, tone: onboardingBonus > 1 ? "pos" : "neutral" },
+  ];
+  const compound = rows.reduce((m, r) => m * r.mult, 1);
+
+  return (
+    <details className="rounded-md border border-line">
+      <summary className="px-3 py-2 cursor-pointer text-[0.625rem] uppercase tracking-wider font-semibold text-ink-2 hover:bg-surface-hover flex items-center justify-between">
+        <span>Demand multipliers · why this route performs</span>
+        <span className={`tabular font-mono ${compound > 1 ? "text-positive" : compound < 1 ? "text-negative" : "text-ink"}`}>
+          ×{compound.toFixed(2)}
+        </span>
+      </summary>
+      <div className="p-3 space-y-1.5 border-t border-line">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-baseline justify-between text-[0.75rem]">
+            <span className="text-ink-2">{r.label}</span>
+            <span className={`tabular font-mono ${
+              r.tone === "pos" ? "text-positive" :
+              r.tone === "neg" ? "text-negative" : "text-ink-muted"
+            }`}>
+              ×{r.mult.toFixed(2)}
+            </span>
+          </div>
+        ))}
+        {hasFuelTank && (
+          <div className="flex items-baseline justify-between text-[0.75rem] pt-1.5 border-t border-line">
+            <span className="text-ink-2">Fuel reserve tank discount</span>
+            <span className="tabular font-mono text-positive">−5% fuel</span>
+          </div>
+        )}
+        <div className="text-[0.6875rem] text-ink-muted leading-relaxed pt-1.5 border-t border-line">
+          The compounded multiplier scales the base origin↔destination demand
+          before capacity is applied. A multiplier of ×1.20 means demand is
+          20% higher than a vanilla version of this same route.
+        </div>
+      </div>
+    </details>
   );
 }
 
