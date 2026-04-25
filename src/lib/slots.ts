@@ -47,12 +47,24 @@ export const YEARLY_SLOTS_BY_TIER: Record<CityTier, number> = {
   4: 14,  // 25  → ~150
 };
 
-/** Base price per slot at quarter-close auction (PRD scaling: T2 = anchor). */
+/** Base price per slot at quarter-close auction (PRD scaling: T2 = anchor).
+ *
+ *  These are PER-WEEK rents. A team with 105 weekly slots at a T1 hub
+ *  was previously paying ~$1.5M/Q × 105 = ~$160M just at one airport,
+ *  which crushed the operating P&L disproportionately to the rest of
+ *  the cost stack and to real-world numbers (Heathrow's recurring slot
+ *  rent is ~$100K/year per slot, not per quarter).
+ *
+ *  Anchored T2 down 62.5% ($80K → $30K weekly), with the same relative
+ *  spread across tiers preserved. Combined with the fuel-price triple
+ *  in this same release, total operating cost stays roughly neutral
+ *  but the mix shifts toward a more realistic share between fuel,
+ *  slots, and the rest of the stack. */
 export const BASE_SLOT_PRICE_BY_TIER: Record<CityTier, number> = {
-  1: 120_000, // 1.5× anchor
-  2: 80_000,  // anchor
-  3: 40_000,  // 0.5× anchor
-  4: 20_000,  // 0.25× anchor
+  1: 45_000, // 1.5× anchor
+  2: 30_000, // anchor
+  3: 15_000, // 0.5× anchor
+  4: 7_500,  // 0.25× anchor
 };
 
 /** Yearly slot tick — once per calendar year (every 4 rounds in the

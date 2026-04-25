@@ -557,7 +557,7 @@ export function computeRouteEconomics(
       (storageCostByTier[dest.tier] ?? 150_000);
 
     // Fuel
-    const fuelPricePerL = (fuelIndex / 100) * 0.18;
+    const fuelPricePerL = (fuelIndex / 100) * 0.55;
     const totalFuelBurnPerFlight = planes.reduce((sum, p) => {
       const spec = AIRCRAFT_BY_ID[p.specId];
       if (!spec) return sum;
@@ -1314,7 +1314,7 @@ export function runQuarterClose(
   // ─ Fuel Storage reconciliation (PRD E2) ────────────────
   // Route economics computed fuel at market; draw from storage first if any.
   if ((next.fuelStorageLevelL ?? 0) > 0 && fuelCost > 0) {
-    const marketPricePerL = (ctx.fuelIndex / 100) * 0.18;
+    const marketPricePerL = (ctx.fuelIndex / 100) * 0.55;
     if (marketPricePerL > 0) {
       const litresBurned = fuelCost / marketPricePerL;
       const fromStorage = Math.min(next.fuelStorageLevelL, litresBurned);
