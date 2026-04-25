@@ -245,6 +245,10 @@ export function OverviewPanel() {
         </ul>
       </div>
 
+      {/* Strategic insights — live hints from current game state */}
+      <StrategicInsights player={player} currentQuarter={s.currentQuarter} fuelIndex={s.fuelIndex} onOpen={onOpen} />
+
+
       {/* World news lives in the sidebar now (past + current quarter, by outlet). */}
 
       {/* Cargo contracts */}
@@ -466,6 +470,154 @@ export function OverviewPanel() {
         open={hubInvestmentsOpen}
         onClose={() => setHubInvestmentsOpen(false)}
       />
+    </div>
+  );
+}
+
+interface Insight {
+  tone: "info" | "warn" | "neg" | "pos" | "accent";
+  title: string;
+  detail: string;
+  action?: { label: string; onClick: () => void };
+}
+
+function StrategicInsights({
+  player, currentQuarter, fuelIndex, onOpen,
+}: {
+  player: NonNullable<ReturnType<typeof selectPlayer>>;
+  currentQuarter: number;
+  fuelIndex: number;
+  onOpen: (id: PanelId) => void;
+}) {
+  const insights: Insight[] = [];
+  const activeRoutes = player.routes.filter((r) => r.status === "active");
+
+  // 1. Idle cash sitting on the balance sheet
+  if (player.cashUsd > 60_000_000 && currentQuarter > 4 && activeRoutes.length < 8) {
+    insights.push({
+      tone: "info",
+      title: "Idle capital",
+      detail: `${fmtMoney(player.cashUsd)} sitting in cash. Order aircraft, open routes, or invest in hub infrastructure.`,
+      action: { label: "Open Fleet", onClick: () => onOpen("fleet") },
+    });
+  }
+
+  // 2. Routes losing money
+  const losingRoutes = activeRoutes.filter((r) => (r.consecutiveLosingQuarters ?? 0) >= 2);
+  if (losingRoutes.length > 0) {
+    insights.push({
+      tone: "neg",
+      title: `${losingRoutes.length} route${losingRoutes.length > 1 ? "s" : ""} losing money`,
+      detail: "Reprice, suspend, or close. Two consecutive losing quarters signal a structural problem.",
+      action: { label: "Review routes", onClick: () => onOpen("routes") },
+    });
+  }
+
+  // 3. Low load factor
+  const lowLoadRoutes = activeRoutes.filter((r) => r.avgOccupancy > 0 && r.avgOccupancy < 0.5);
+  if (lowLoadRoutes.length >= 3) {
+    insights.push({
+      tone: "warn",
+      title: `${lowLoadRoutes.length} routes under 50% load`,
+      detail: "Cut frequency or drop pricing tier to bring load factor up. Empty seats burn fuel.",
+      action: { label: "Review routes", onClick: () => onOpen("routes") },
+    });
+  }
+
+  // 4. Fuel index high → consider hedging or fuel tank
+  const hasHedge = player.flags.has("hedged_12m") || player.flags.has("hedged_6m") || player.flags.has("hedged_50_50");
+  if (fuelIndex > 130 && !hasHedge) {
+    insights.push({
+      tone: "warn",
+      title: `Fuel index ${Math.round(fuelIndex)}`,
+      detail: "Fuel costs are elevated. Hub fuel reserve tanks give you a 5% discount per route — worth ~$8M.",
+      action: { label: "Hub investments", onClick: () => onOpen("overview") },
+    });
+  }
+
+  // 5. Brand below B grade with no scenarios pending
+  if (player.brandPts < 40 && currentQuarter > 5) {
+    insights.push({
+      tone: "warn",
+      title: "Brand strength low",
+      detail: "Brand pts under 40 cap your airline-value multiplier. Push Marketing slider, take pro-brand scenario options.",
+      action: { label: "Open Ops", onClick: () => onOpen("ops") },
+    });
+  }
+
+  // 6. High debt + sliding cash
+  if (player.totalDebtUsd > 120_000_000 && player.cashUsd < 30_000_000) {
+    insights.push({
+      tone: "neg",
+      title: "Liquidity tight",
+      detail: "Cash low while debt high. Refinance high-rate loans, sell low-utilisation aircraft, or pause fleet orders.",
+      action: { label: "Open Financials", onClick: () => onOpen("financials") },
+    });
+  }
+
+  // 7. Strong loyalty — milestone close
+  if (player.customerLoyaltyPct >= 75 && !player.milestones.includes("Loyal Following")) {
+    insights.push({
+      tone: "accent",
+      title: "Loyal Following milestone close",
+      detail: "Push loyalty to 80%+ this quarter to unlock the milestone (+5 brand).",
+    });
+  }
+
+  // 8. Q3+ and no secondary hub yet
+  if (currentQuarter >= 5 && player.secondaryHubCodes.length === 0 && activeRoutes.length >= 6) {
+    insights.push({
+      tone: "info",
+      title: "Network bottleneck",
+      detail: "All routes still spoke from your primary hub. Activating a secondary hub opens new origin/destination paths.",
+    });
+  }
+
+  // 9. Crew strike risk
+  if (player.labourRelationsScore <= 35) {
+    insights.push({
+      tone: "neg",
+      title: "Strike risk elevated",
+      detail: `Labour relations at ${player.labourRelationsScore.toFixed(0)}. Raise the salary slider or take pro-employee decisions before a wildcat hits.`,
+      action: { label: "Open Ops", onClick: () => onOpen("ops") },
+    });
+  }
+
+  if (insights.length === 0) return null;
+
+  return (
+    <div>
+      <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+        Strategic signals
+      </div>
+      <div className="space-y-1.5">
+        {insights.slice(0, 4).map((i, idx) => {
+          const cls =
+            i.tone === "neg" ? "border-negative bg-[var(--negative-soft)] text-negative"
+              : i.tone === "warn" ? "border-warning bg-[var(--warning-soft)] text-warning"
+              : i.tone === "pos" ? "border-positive bg-[var(--positive-soft)] text-positive"
+              : i.tone === "accent" ? "border-accent bg-[var(--accent-soft)] text-accent"
+              : "border-info bg-[var(--info-soft)] text-info";
+          return (
+            <div key={idx} className={cn("rounded-md border px-3 py-2", cls)}>
+              <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                <span className="text-[0.75rem] font-semibold uppercase tracking-wider">
+                  {i.title}
+                </span>
+                {i.action && (
+                  <button
+                    onClick={i.action.onClick}
+                    className="text-[0.6875rem] underline hover:no-underline shrink-0"
+                  >
+                    {i.action.label}
+                  </button>
+                )}
+              </div>
+              <div className="text-[0.75rem] text-ink-2 leading-relaxed">{i.detail}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
