@@ -14,8 +14,9 @@ import { fmtMoney } from "@/lib/format";
 
 const SLIDER_LIST: Array<{ key: keyof Sliders; label: string; sub: string }> = [
   { key: "staff", label: "Staff & Training", sub: "Cabin, pilots, ground, training" },
-  // Rewards merged into Marketing per PRD update — single brand+loyalty lever.
-  { key: "marketing", label: "Marketing & Loyalty", sub: "Campaigns, PR, frequent-flyer rewards" },
+  // Rewards programme merged into Marketing per PRD update — single lever
+  // for both ad spend and frequent-flyer rewards.
+  { key: "marketing", label: "Marketing", sub: "Campaigns, PR, frequent-flyer rewards" },
   { key: "service", label: "In-Flight Service", sub: "Food, amenities, cabin" },
   { key: "operations", label: "Operations", sub: "Maintenance, engineering" },
   { key: "customerService", label: "Office Capacity", sub: "Check-in, ground ops, contact centre" },

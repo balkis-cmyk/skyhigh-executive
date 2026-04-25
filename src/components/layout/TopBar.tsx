@@ -80,11 +80,12 @@ export function TopBar() {
       {/* Quarter + timer + Close-quarter CTA */}
       <div className="flex items-center gap-3 shrink-0 pl-4 border-l border-line h-full">
         <div className="hidden md:flex flex-col items-end leading-tight">
-          <span className="font-display text-[1rem] text-ink">
-            {fmtQuarterShort(currentQuarter)}
+          {/* Larger date label up top, "Round X of 20" beneath. */}
+          <span className="font-display text-[1.0625rem] text-ink">
+            {fmtQuarter(currentQuarter)}
           </span>
           <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mt-0.5 tabular">
-            {fmtQuarter(currentQuarter)}
+            {fmtQuarterShort(currentQuarter)}
           </span>
         </div>
         <QuarterTimerChip />
