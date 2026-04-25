@@ -9,6 +9,7 @@ import {
   applyOptionEffect,
   computeBrandValue,
   distanceBetween,
+  maxRouteDailyFrequency,
   runQuarterClose,
   serializeEffect,
   type QuarterCloseResult,
@@ -992,18 +993,113 @@ export const useGame = create<GameStore>()(
             destCode = rawOrigin;
           }
         }
-        // Duplicate-route guard: an active or pending route between the
-        // same two endpoints (in either direction) is the same route.
+        // Duplicate-route detection.
+        //
+        // Cargo and passenger between the same OD pair are DIFFERENT
+        // operations (tonnes vs cabin classes) and coexist as two
+        // separate routes. We only treat as a duplicate when the OD
+        // pair AND the cargo flag match.
+        //
+        // When a same-family duplicate IS found we DON'T block — we
+        // MERGE: the player's freshly-picked aircraft are added to the
+        // existing route's roster and the daily frequency is bumped to
+        // leverage the new capacity. Any slot shortfall at the new
+        // weekly schedule is queued as a bid via the same path as a
+        // brand-new pending route.
+        const wantsCargo = isCargo ?? false;
         const duplicate = player.routes.find((r) =>
           r.status !== "closed" &&
+          (r.isCargo ?? false) === wantsCargo &&
           ((r.originCode === originCode && r.destCode === destCode) ||
            (r.originCode === destCode && r.destCode === originCode)),
         );
         if (duplicate) {
-          return {
-            ok: false,
-            error: `You already operate ${duplicate.originCode} ↔ ${duplicate.destCode}. Edit the existing route to add capacity instead of opening a duplicate.`,
-          };
+          // Same-family merge path. Compute the new combined fleet's
+          // max physics-capped weekly frequency and use the LOWER of
+          // (intended weekly = current sum) and (physics cap).
+          const mergedAircraftIds = Array.from(new Set([
+            ...duplicate.aircraftIds,
+            ...aircraftIds,
+          ]));
+          const mergedSpecIds = mergedAircraftIds
+            .map((id) => player.fleet.find((f) => f.id === id)?.specId)
+            .filter((x): x is string => !!x);
+          const mergedMaxDaily =
+            mergedSpecIds.length > 0
+              ? maxRouteDailyFrequency(mergedSpecIds, duplicate.distanceKm)
+              : duplicate.dailyFrequency;
+          // Player asked for `dailyFrequency` (weekly/7); honor that as
+          // a target up to the merged cap.
+          const targetDaily = Math.max(duplicate.dailyFrequency, dailyFrequency);
+          const newDaily = Math.min(targetDaily, mergedMaxDaily);
+          const newWeekly = newDaily * 7;
+          // Capacity check at both endpoints — sum across player's
+          // OTHER active routes touching each airport, plus this route's
+          // new weekly load.
+          const usedAtOriginOther = player.routes
+            .filter((r) =>
+              r.id !== duplicate.id && r.status === "active" &&
+              (r.originCode === duplicate.originCode || r.destCode === duplicate.originCode))
+            .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
+          const usedAtDestOther = player.routes
+            .filter((r) =>
+              r.id !== duplicate.id && r.status === "active" &&
+              (r.originCode === duplicate.destCode || r.destCode === duplicate.destCode))
+            .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
+          const slotsAtO = player.airportLeases?.[duplicate.originCode]?.slots ?? 0;
+          const slotsAtD = player.airportLeases?.[duplicate.destCode]?.slots ?? 0;
+          const mergeShortAtOrigin = Math.max(0, usedAtOriginOther + newWeekly - slotsAtO);
+          const mergeShortAtDest   = Math.max(0, usedAtDestOther + newWeekly - slotsAtD);
+          const mergeHasShortfall = mergeShortAtOrigin > 0 || mergeShortAtDest > 0;
+          const mergeWantsAutoBid = (slotBids ?? []).length > 0;
+          if (mergeHasShortfall && !mergeWantsAutoBid) {
+            return {
+              ok: false,
+              error:
+                `Adding these aircraft to ${duplicate.originCode} ↔ ${duplicate.destCode} ` +
+                `would push you over your slot lease (need ${mergeShortAtOrigin} more at ` +
+                `${duplicate.originCode}, ${mergeShortAtDest} more at ${duplicate.destCode}). ` +
+                `Set an inline bid or release slots elsewhere first.`,
+            };
+          }
+          // Submit any provided bids for the missing slots
+          if (mergeWantsAutoBid) {
+            for (const bid of slotBids ?? []) {
+              const need =
+                bid.airportCode === duplicate.originCode ? mergeShortAtOrigin :
+                bid.airportCode === duplicate.destCode   ? mergeShortAtDest : 0;
+              if (need <= 0) continue;
+              const slotsToBid = Math.max(need, bid.slots ?? need);
+              const r = get().submitSlotBid(bid.airportCode, slotsToBid, bid.pricePerSlot);
+              if (!r.ok) {
+                return { ok: false, error: `Bid at ${bid.airportCode} failed: ${r.error}` };
+              }
+            }
+          }
+          // Apply merge.
+          set({
+            teams: s.teams.map((t) =>
+              t.id !== s.playerTeamId ? t : {
+                ...t,
+                routes: t.routes.map((r) =>
+                  r.id === duplicate.id
+                    ? { ...r, aircraftIds: mergedAircraftIds, dailyFrequency: newDaily }
+                    : r,
+                ),
+                fleet: t.fleet.map((f) =>
+                  aircraftIds.includes(f.id)
+                    ? { ...f, status: "active" as const, routeId: duplicate.id }
+                    : f,
+                ),
+              },
+            ),
+          });
+          toast.success(
+            `Capacity added to ${duplicate.originCode} ↔ ${duplicate.destCode}`,
+            `${aircraftIds.length} aircraft joined the route · now ${newWeekly}/wk` +
+              (mergeHasShortfall ? " (pending slot bids)" : ""),
+          );
+          return { ok: true };
         }
         // Network rule: origin must be your hub, a secondary hub, or a city
         // already connected to your network via an active/suspended route.

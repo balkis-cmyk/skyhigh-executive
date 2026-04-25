@@ -352,16 +352,32 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
             </div>
           ) : (
             <div className="space-y-1.5 max-h-44 overflow-auto">
+              {/* Family lock: once the first aircraft is picked, the
+                  route's family is set. Mixed cargo+passenger on a
+                  single route makes no sense — different revenue
+                  models, different capacity units. The off-family
+                  planes grey out below. */}
               {idlePlanes.map((p) => {
                 const spec = AIRCRAFT_BY_ID[p.specId];
                 if (!spec) return null;
                 const canReach = spec.rangeKm >= dist;
                 const selected = selectedPlaneIds.includes(p.id);
+                // Family lock — once first aircraft is picked, the rest
+                // must be the same family. Picking a passenger plane
+                // greys out cargo planes (and vice versa).
+                const firstSelected = selectedPlaneIds[0]
+                  ? player.fleet.find((f) => f.id === selectedPlaneIds[0])
+                  : null;
+                const lockedFamily = firstSelected
+                  ? AIRCRAFT_BY_ID[firstSelected.specId]?.family
+                  : null;
+                const familyMismatch = !!lockedFamily && lockedFamily !== spec.family;
                 const planeMaxDaily = canReach
                   ? Math.max(1, Math.floor(
                       24 / ((dist / cruiseSpeedKmh(p.specId)) * 2 + 4),
                     ))
                   : 0;
+                const disabled = !canReach || familyMismatch;
                 return (
                   <label
                     key={p.id}
@@ -369,15 +385,15 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                       "flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer",
                       selected
                         ? "border-primary bg-[rgba(20,53,94,0.04)]"
-                        : canReach
-                          ? "border-line hover:bg-surface-hover"
-                          : "border-line opacity-60 cursor-not-allowed",
+                        : disabled
+                          ? "border-line opacity-50 cursor-not-allowed"
+                          : "border-line hover:bg-surface-hover",
                     )}
                   >
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={!canReach}
+                      disabled={disabled}
                       onChange={(e) => {
                         if (e.target.checked)
                           setSelectedPlaneIds([...selectedPlaneIds, p.id]);
@@ -409,6 +425,10 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                     </div>
                     {!canReach ? (
                       <Badge tone="negative">Out of range</Badge>
+                    ) : familyMismatch ? (
+                      <Badge tone="warning">
+                        {lockedFamily === "cargo" ? "Cargo route locked" : "Passenger route locked"}
+                      </Badge>
                     ) : (
                       <Badge tone="neutral">{planeMaxDaily * 7}/wk max</Badge>
                     )}
