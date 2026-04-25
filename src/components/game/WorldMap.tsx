@@ -153,6 +153,7 @@ export function WorldMap({
   }, [team]);
 
   const activeRoutes = team.routes.filter((r) => r.status === "active");
+  const pendingRoutes = team.routes.filter((r) => r.status === "pending");
 
   return (
     <div
@@ -247,6 +248,27 @@ export function WorldMap({
                 }}
               />
             </Fragment>
+          );
+        })}
+
+        {/* Pending route arcs — dashed amber to signal "awaiting auction" */}
+        {pendingRoutes.map((r) => {
+          const a = CITIES_BY_CODE[r.originCode];
+          const b = CITIES_BY_CODE[r.destCode];
+          if (!a || !b) return null;
+          const positions = greatCirclePath(a.lon, a.lat, b.lon, b.lat, 64);
+          return (
+            <Polyline
+              key={r.id}
+              positions={positions}
+              pathOptions={{
+                color: "#E0A93B",       // amber/gold for pending
+                weight: 2.2,
+                opacity: 0.85,
+                lineCap: "round",
+                dashArray: "6 8",
+              }}
+            />
           );
         })}
 
@@ -426,6 +448,14 @@ export function WorldMap({
           <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" />
           <span className="text-ink-2">Cities</span>
         </span>
+        {pendingRoutes.length > 0 && (
+          <span className="flex items-center gap-1.5 border-l border-line pl-3">
+            <svg width="20" height="6" aria-hidden>
+              <line x1="0" y1="3" x2="20" y2="3" stroke="#E0A93B" strokeWidth="2.2" strokeDasharray="6 4" />
+            </svg>
+            <span className="text-ink-2">Pending bid</span>
+          </span>
+        )}
         <span className="hidden lg:inline text-ink-muted border-l border-line pl-3">
           Drag to pan · scroll to zoom · world wraps
         </span>
