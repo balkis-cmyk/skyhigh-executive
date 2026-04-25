@@ -591,10 +591,42 @@ export const useGame = create<GameStore>()(
 
       decommissionAircraft: (aircraftId) => {
         const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return;
+        const plane = player.fleet.find((f) => f.id === aircraftId);
+        if (!plane) return;
+
+        // PRD §6.4 — lease early-termination penalty.
+        // Owned aircraft sell for 75% of book value (insurance / market resale).
+        // Leased aircraft pay a penalty if returned before 4 quarters: 2 quarters
+        // of lease cost as early termination, no resale proceeds.
+        let cashDelta = 0;
+        let toastTitle = "Aircraft retired";
+        let toastDetail = "";
+        if (plane.acquisitionType === "buy") {
+          cashDelta = plane.bookValue * 0.75;
+          toastTitle = "Aircraft sold";
+          toastDetail = `${AIRCRAFT_BY_ID[plane.specId]?.name ?? "Aircraft"} · +${fmtMoneyPlain(cashDelta)} (75% of book)`;
+        } else if (plane.acquisitionType === "lease") {
+          const quartersHeld = s.currentQuarter - plane.purchaseQuarter;
+          const minTerm = 4;
+          const lease = plane.leaseQuarterly ?? 0;
+          if (quartersHeld < minTerm && lease > 0) {
+            const penalty = lease * 2;
+            cashDelta = -penalty;
+            toastTitle = "Lease terminated early — penalty applied";
+            toastDetail = `${minTerm}Q minimum · returned at Q${quartersHeld + 1} of term · −${fmtMoneyPlain(penalty)} penalty`;
+          } else {
+            toastTitle = "Leased aircraft returned";
+            toastDetail = `${AIRCRAFT_BY_ID[plane.specId]?.name ?? "Aircraft"} · clean handback`;
+          }
+        }
+
         set({
           teams: s.teams.map((t) =>
             t.id !== s.playerTeamId ? t : {
               ...t,
+              cashUsd: t.cashUsd + cashDelta,
               fleet: t.fleet.filter((f) => f.id !== aircraftId),
               routes: t.routes.map((r) =>
                 r.aircraftIds.includes(aircraftId)
@@ -603,6 +635,8 @@ export const useGame = create<GameStore>()(
             },
           ),
         });
+        if (cashDelta < 0) toast.warning(toastTitle, toastDetail);
+        else toast.info(toastTitle, toastDetail);
       },
 
       openRoute: ({ originCode, destCode, aircraftIds, dailyFrequency, pricingTier, econFare, busFare, firstFare, isCargo }) => {

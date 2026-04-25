@@ -52,8 +52,34 @@ export function RoutesPanel() {
     ? player.routes.find((r) => r.id === activeRouteId) ?? null
     : null;
 
+  // Network-wide KPIs across active routes
+  const activeRoutes = player.routes.filter((r) => r.status === "active");
+  const totalQRev = activeRoutes.reduce((s, r) => s + r.quarterlyRevenue, 0);
+  const totalQProfit = activeRoutes.reduce(
+    (s, r) => s + r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost, 0,
+  );
+  const avgLoad = activeRoutes.length > 0
+    ? activeRoutes.reduce((s, r) => s + r.avgOccupancy, 0) / activeRoutes.length
+    : 0;
+  const totalFreq = activeRoutes.reduce((s, r) => s + r.dailyFrequency, 0);
+  const passengerRoutes = activeRoutes.filter((r) => !r.isCargo).length;
+  const cargoRoutes = activeRoutes.filter((r) => r.isCargo).length;
+
   return (
     <div className="space-y-3">
+      {/* Network KPIs */}
+      <div className="grid grid-cols-4 gap-2">
+        <KpiCard label="Active routes" value={`${activeRoutes.length}`} sub={`${passengerRoutes} pax · ${cargoRoutes} cargo`} />
+        <KpiCard label="Avg load" value={fmtPct(avgLoad * 100, 0)} tone={avgLoad > 0.7 ? "positive" : avgLoad < 0.5 ? "negative" : "default"} />
+        <KpiCard label="Daily flights" value={`${totalFreq}`} sub="across network" />
+        <KpiCard
+          label="Net profit/Q"
+          value={fmtMoney(totalQProfit)}
+          tone={totalQProfit >= 0 ? "positive" : "negative"}
+          sub={`from ${fmtMoney(totalQRev)} rev`}
+        />
+      </div>
+
       <div className="flex items-center gap-2">
         <Input
           placeholder="Search by code or city name…"
@@ -180,6 +206,29 @@ export function RoutesPanel() {
             }
           }}
         />
+      )}
+    </div>
+  );
+}
+
+function KpiCard({
+  label, value, sub, tone = "default",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "default" | "positive" | "negative";
+}) {
+  const valueColor =
+    tone === "positive" ? "text-positive" : tone === "negative" ? "text-negative" : "text-ink";
+  return (
+    <div className="rounded-md border border-line bg-surface px-2.5 py-2">
+      <div className="text-[0.5625rem] uppercase tracking-wider text-ink-muted">{label}</div>
+      <div className={`tabular font-display text-[1rem] leading-tight mt-0.5 ${valueColor}`}>
+        {value}
+      </div>
+      {sub && (
+        <div className="text-[0.5625rem] text-ink-muted truncate mt-0.5">{sub}</div>
       )}
     </div>
   );

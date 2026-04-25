@@ -123,6 +123,50 @@ export function FinancialsPanel() {
         </section>
       )}
 
+      {/* Tax loss carryforward — only show if there's anything pending. */}
+      {(player.taxLossCarryForward ?? []).length > 0 && (
+        <section>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Tax loss carryforward · 5-quarter expiry
+          </div>
+          <div className="rounded-md border border-line bg-surface-2/40 p-3 space-y-1.5">
+            {(() => {
+              const total = player.taxLossCarryForward.reduce((sum, e) => sum + e.amount, 0);
+              return (
+                <>
+                  <div className="flex items-baseline justify-between text-[0.875rem]">
+                    <span className="font-semibold text-ink">Available offset</span>
+                    <span className="tabular font-mono text-ink font-semibold">
+                      {fmtMoney(total)}
+                    </span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {[...player.taxLossCarryForward]
+                      .sort((a, b) => a.quarter - b.quarter)
+                      .map((e) => {
+                        const expiresIn = Math.max(0, 5 - (s.currentQuarter - e.quarter));
+                        return (
+                          <div key={e.quarter} className="flex items-baseline justify-between text-[0.6875rem] tabular font-mono">
+                            <span className="text-ink-muted">
+                              Q{e.quarter} loss · expires in {expiresIn}Q
+                            </span>
+                            <span className="text-ink">{fmtMoney(e.amount)}</span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                  <div className="text-[0.6875rem] text-ink-muted leading-relaxed pt-1.5 border-t border-line">
+                    Profitable quarters consume oldest losses first to reduce
+                    your 20% corporate tax bill. Losses older than 5 quarters
+                    expire unused.
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </section>
+      )}
+
       {/* Projected P&L — dry-run of this quarter close */}
       {player && <ProjectedPL /> }
 
