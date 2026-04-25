@@ -481,6 +481,13 @@ export function computeRouteEconomics(
   // Match-rewarded ("focus matches the route"), but never punitive.
   let onboardingBonus = 1.0;
   if (team.marketFocus === "passenger" && !route.isCargo) onboardingBonus *= 1.05;
+  // CSR theme — environment leans loyalty (already wired via flags), but the
+  // community theme nudges short-haul familiarity, employees nudges ops,
+  // both expressed as a small demand bonus on tier 2-4 cities (less obvious
+  // than a hub bonus, more like local goodwill).
+  if (team.csrTheme === "community" && (origin.tier >= 2 && dest.tier >= 2)) {
+    onboardingBonus *= 1.03;
+  }
   // Geographic priority — both endpoints in the priority region get the bump
   const geoMatch =
     team.geographicPriority === "global" ||
@@ -738,7 +745,28 @@ export function finalBrandValueWithAwards(
 }
 
 // ─── Brand Value (PRD §5.9) ────────────────────────────────
-export function computeBrandValue(team: Team): number {
+export interface BrandValueBreakdown {
+  cashRatio: number;
+  debtRatioScore: number;
+  revGrowth: number;
+  financialHealth: number;
+
+  brandPtsScore: number;
+  customerLoyalty: number;
+  reputationEvents: number;
+  brandHealth: number;
+
+  opsPtsScore: number;
+  fleetEfficiency: number;
+  staffCommitment: number;
+  operationsHealth: number;
+
+  composite: number;
+}
+
+/** Returns the full breakdown of how Brand Value is constructed.
+ *  Same arithmetic as computeBrandValue, exposed for the dashboard card. */
+export function computeBrandValueBreakdown(team: Team): BrandValueBreakdown {
   const cashRatio =
     team.cashUsd + team.totalDebtUsd > 0
       ? team.cashUsd / (team.cashUsd + team.totalDebtUsd)
@@ -746,7 +774,6 @@ export function computeBrandValue(team: Team): number {
   const airlineValue = computeAirlineValue(team);
   const debtRatioScore =
     100 - Math.min(100, airlineValue > 0 ? (team.totalDebtUsd / airlineValue) * 100 : 100);
-  // Revenue growth vs peers not available in single-team — default to 50
   const revGrowth = 50;
 
   const financialHealth =
@@ -768,20 +795,37 @@ export function computeBrandValue(team: Team): number {
   const activeFleet = team.fleet.filter((f) => f.status === "active");
   const modernFleetCount = activeFleet.filter((f) => {
     const spec = AIRCRAFT_BY_ID[f.specId];
-    return spec && spec.unlockQuarter >= 8; // modern family
+    return spec && spec.unlockQuarter >= 8;
   }).length;
   const fleetEfficiency =
-    activeFleet.length > 0
-      ? (modernFleetCount / activeFleet.length) * 100
-      : 0;
+    activeFleet.length > 0 ? (modernFleetCount / activeFleet.length) * 100 : 0;
   const staffCommitment = Math.min(100, team.sliders.staff * 10 + 50);
 
   const operationsHealth =
     opsPtsScore * 0.4 + fleetEfficiency * 0.35 + staffCommitment * 0.25;
 
-  return (
-    financialHealth * 0.35 + brandHealth * 0.5 + operationsHealth * 0.15
-  );
+  const composite =
+    financialHealth * 0.35 + brandHealth * 0.5 + operationsHealth * 0.15;
+
+  return {
+    cashRatio: cashRatio * 100,
+    debtRatioScore,
+    revGrowth,
+    financialHealth,
+    brandPtsScore,
+    customerLoyalty,
+    reputationEvents,
+    brandHealth,
+    opsPtsScore,
+    fleetEfficiency,
+    staffCommitment,
+    operationsHealth,
+    composite,
+  };
+}
+
+export function computeBrandValue(team: Team): number {
+  return computeBrandValueBreakdown(team).composite;
 }
 
 // ─── Loyalty multiplier (PRD §5.8) ─────────────────────────

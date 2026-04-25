@@ -5,7 +5,7 @@ import { Badge, Button, Metric, Sparkline } from "@/components/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
-import { computeAirlineValue, fleetCount, brandRating } from "@/lib/engine";
+import { computeAirlineValue, fleetCount, brandRating, computeBrandValueBreakdown } from "@/lib/engine";
 import { DOCTRINE_BY_ID } from "@/data/doctrines";
 import { useUi, type PanelId } from "@/store/ui";
 import { SecondaryHubModal } from "@/components/game/SecondaryHubModal";
@@ -114,6 +114,7 @@ export function OverviewPanel() {
           />
           <Metric label="Ops pts" value={player.opsPts.toFixed(0)} />
         </div>
+        <BrandValueBreakdown player={player} />
       </div>
 
       {/* Network — primary + secondary hubs (PRD §4.4) */}
@@ -465,6 +466,90 @@ export function OverviewPanel() {
         open={hubInvestmentsOpen}
         onClose={() => setHubInvestmentsOpen(false)}
       />
+    </div>
+  );
+}
+
+function BrandValueBreakdown({ player }: { player: Parameters<typeof computeBrandValueBreakdown>[0] }) {
+  const b = computeBrandValueBreakdown(player);
+  return (
+    <details className="mt-3 rounded-md border border-line">
+      <summary className="px-3 py-2 cursor-pointer text-[0.6875rem] uppercase tracking-wider font-semibold text-ink-2 hover:bg-surface-hover flex items-center justify-between">
+        <span>Brand Value formula</span>
+        <span className="tabular font-mono text-ink">{b.composite.toFixed(1)}</span>
+      </summary>
+      <div className="p-3 space-y-3 border-t border-line">
+        <BrandSection
+          title="Financial health · 35%"
+          composite={b.financialHealth}
+          rows={[
+            { label: "Cash ratio", value: b.cashRatio, weight: 30 },
+            { label: "Debt ratio score", value: b.debtRatioScore, weight: 35 },
+            { label: "Revenue growth", value: b.revGrowth, weight: 35 },
+          ]}
+        />
+        <BrandSection
+          title="Brand health · 50%"
+          composite={b.brandHealth}
+          rows={[
+            { label: "Brand pts score", value: b.brandPtsScore, weight: 40 },
+            { label: "Customer loyalty", value: b.customerLoyalty, weight: 35 },
+            { label: "Reputation events", value: b.reputationEvents, weight: 25 },
+          ]}
+        />
+        <BrandSection
+          title="Operations health · 15%"
+          composite={b.operationsHealth}
+          rows={[
+            { label: "Ops pts score", value: b.opsPtsScore, weight: 40 },
+            { label: "Fleet efficiency", value: b.fleetEfficiency, weight: 35 },
+            { label: "Staff commitment", value: b.staffCommitment, weight: 25 },
+          ]}
+        />
+      </div>
+    </details>
+  );
+}
+
+function BrandSection({
+  title, composite, rows,
+}: {
+  title: string;
+  composite: number;
+  rows: Array<{ label: string; value: number; weight: number }>;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1.5">
+        <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted font-semibold">
+          {title}
+        </span>
+        <span className="text-[0.875rem] tabular font-mono font-semibold text-ink">
+          {composite.toFixed(1)}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {rows.map((r) => {
+          const pct = Math.max(0, Math.min(100, r.value));
+          return (
+            <div key={r.label} className="flex items-center gap-2 text-[0.6875rem]">
+              <span className="text-ink-2 w-32 shrink-0">{r.label}</span>
+              <div className="flex-1 h-1 rounded-full bg-surface-2 overflow-hidden">
+                <div
+                  className="h-full bg-primary"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="tabular font-mono text-ink w-10 text-right">
+                {r.value.toFixed(0)}
+              </span>
+              <span className="text-[0.5625rem] uppercase tracking-wider text-ink-muted w-8 text-right">
+                {r.weight}%
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
