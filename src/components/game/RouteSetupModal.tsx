@@ -1,14 +1,19 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Badge, Button, Card, CardBody, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
+import { Badge, Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
-import { classFareRange, distanceBetween, routeDemandPerDay } from "@/lib/engine";
+import {
+  classFareRange,
+  cruiseSpeedKmh,
+  distanceBetween,
+  maxRouteDailyFrequency,
+  routeDemandPerDay,
+} from "@/lib/engine";
 import { CITIES_BY_CODE } from "@/data/cities";
-import type { FleetAircraft, PricingTier } from "@/types/game";
+import type { PricingTier } from "@/types/game";
 import { cn } from "@/lib/cn";
-import { fmtMoney } from "@/lib/format";
 
 export interface RouteSetupModalProps {
   /** Explicit open flag — modal appears only after the user clicks Launch. */
@@ -20,44 +25,52 @@ export interface RouteSetupModalProps {
   onClose: () => void;
 }
 
-/** Max daily frequency for a single route. Real-world airlines run 20+ rotations
- *  on the busiest corridors (JFK-LHR, DXB-LHR). We use 24. */
-const MAX_FREQUENCY = 24;
-
+/**
+ * Route setup modal — PRD-aligned flow.
+ *
+ * Order of operations matters:
+ *   1. Aircraft selection comes FIRST. Without it, frequency cap and
+ *      cabin-class availability are undefined.
+ *   2. Daily frequency is capped at `maxRouteDailyFrequency` for the
+ *      selected aircraft set + distance (PRD §D1: cruise speed × distance
+ *      + 2hr ground turnaround at each end). Slider physically can't
+ *      exceed the math.
+ *   3. Per-class fares (econ / business / first) only render for cabin
+ *      classes the selected aircraft actually has. The default is the
+ *      base fare from PRD §A11; sliding adjusts demand sensitivity.
+ *   4. Pricing tier is a quick preset that scales all class fares — kept
+ *      visible but optional, gated behind aircraft selection.
+ */
 export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: RouteSetupModalProps) {
   const s = useGame();
   const player = selectPlayer(s);
   const openRoute = useGame((g) => g.openRoute);
 
-  const [freq, setFreq] = useState(2);
-  const [tier, setTier] = useState<PricingTier>("standard");
   const [selectedPlaneIds, setSelectedPlaneIds] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [freq, setFreq] = useState(1);
+  const [tier, setTier] = useState<PricingTier>("standard");
   const [econFare, setEconFare] = useState<number | null>(null);
   const [busFare, setBusFare] = useState<number | null>(null);
   const [firstFare, setFirstFare] = useState<number | null>(null);
   const [isCargo, setIsCargo] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const isOpen = open && !!(origin && dest);
 
-  // Reset + prefill when modal opens
+  // Reset + auto-pick a viable plane when the modal opens
   useEffect(() => {
     if (!isOpen || !player || !origin || !dest) return;
     const dist = distanceBetween(origin, dest);
     const cargo = forceCargo ?? false;
-    const idle = player.fleet.find(
-      (f) => {
-        if (f.status !== "active" || f.routeId) return false;
-        const spec = AIRCRAFT_BY_ID[f.specId];
-        if (!spec) return false;
-        if (spec.rangeKm < dist) return false;
-        return cargo
-          ? spec.family === "cargo"
-          : spec.family === "passenger";
-      },
-    );
+    const idle = player.fleet.find((f) => {
+      if (f.status !== "active" || f.routeId) return false;
+      const spec = AIRCRAFT_BY_ID[f.specId];
+      if (!spec) return false;
+      if (spec.rangeKm < dist) return false;
+      return cargo ? spec.family === "cargo" : spec.family === "passenger";
+    });
     setSelectedPlaneIds(idle ? [idle.id] : []);
-    setFreq(2);
+    setFreq(1);
     setTier("standard");
     setEconFare(null);
     setBusFare(null);
@@ -66,15 +79,129 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     setError(null);
   }, [isOpen, origin, dest, forceCargo, player]);
 
+  // Cap frequency to the engine-computed max as soon as aircraft selection
+  // changes, so the slider can never exceed the physics-derived ceiling.
+  const dist = origin && dest ? distanceBetween(origin, dest) : 0;
+  const specIds = useMemo(
+    () =>
+      selectedPlaneIds
+        .map((id) => player?.fleet.find((f) => f.id === id)?.specId)
+        .filter((x): x is string => !!x),
+    [selectedPlaneIds, player],
+  );
+  const maxDailyFreq = specIds.length > 0 ? maxRouteDailyFrequency(specIds, dist) : 0;
+  useEffect(() => {
+    if (maxDailyFreq === 0) {
+      if (freq !== 0) setFreq(0);
+      return;
+    }
+    if (freq > maxDailyFreq) setFreq(maxDailyFreq);
+    if (freq < 1) setFreq(1);
+  }, [maxDailyFreq]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cabin availability from selected planes
+  const hasFirst = useMemo(
+    () =>
+      selectedPlaneIds.some((id) => {
+        const p = player?.fleet.find((f) => f.id === id);
+        const spec = p && AIRCRAFT_BY_ID[p.specId];
+        return spec && spec.seats.first > 0;
+      }),
+    [selectedPlaneIds, player],
+  );
+  const hasBusiness = useMemo(
+    () =>
+      selectedPlaneIds.some((id) => {
+        const p = player?.fleet.find((f) => f.id === id);
+        const spec = p && AIRCRAFT_BY_ID[p.specId];
+        return spec && spec.seats.business > 0;
+      }),
+    [selectedPlaneIds, player],
+  );
+  const allCargo = useMemo(
+    () =>
+      selectedPlaneIds.length > 0 &&
+      selectedPlaneIds.every((id) => {
+        const p = player?.fleet.find((f) => f.id === id);
+        const spec = p && AIRCRAFT_BY_ID[p.specId];
+        return spec && spec.family === "cargo";
+      }),
+    [selectedPlaneIds, player],
+  );
+
+  // Auto-flip cargo flag when aircraft selection is purely cargo
+  useEffect(() => {
+    if (allCargo && !isCargo) setIsCargo(true);
+    if (!allCargo && isCargo) setIsCargo(false);
+  }, [allCargo]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!player) return null;
 
-  const dist = origin && dest ? distanceBetween(origin, dest) : 0;
   const idlePlanes = player.fleet.filter((f) => f.status === "active" && !f.routeId);
   const originCity = origin ? CITIES_BY_CODE[origin] : null;
   const destCity = dest ? CITIES_BY_CODE[dest] : null;
 
+  // Schedule math summary used to explain the frequency cap
+  const scheduleNote = (() => {
+    if (specIds.length === 0) return null;
+    const fastestSpeed = Math.max(...specIds.map((id) => cruiseSpeedKmh(id)));
+    const slowestSpeed = Math.min(...specIds.map((id) => cruiseSpeedKmh(id)));
+    const oneWayHrs = dist / slowestSpeed;
+    const turnaround = 2.0;
+    const roundTripHrs = oneWayHrs * 2 + turnaround * 2;
+    return {
+      perPlaneDaily: Math.max(1, Math.floor(24 / roundTripHrs)),
+      roundTripHrs,
+      fastestSpeed,
+      slowestSpeed,
+    };
+  })();
+
+  const econRange = origin && dest ? classFareRange(dist, "econ") : null;
+  const busRange = origin && dest ? classFareRange(dist, "bus") : null;
+  const firstRange = origin && dest ? classFareRange(dist, "first") : null;
+
+  // Apply pricing-tier preset to all per-class fares (player can still
+  // override individual classes after; reset clears the override).
+  function applyTier(t: PricingTier) {
+    setTier(t);
+    const mult = t === "budget" ? 0.7 : t === "premium" ? 1.3 : t === "ultra" ? 1.6 : 1.0;
+    if (econRange) setEconFare(Math.round(econRange.base * mult));
+    if (hasBusiness && busRange) setBusFare(Math.round(busRange.base * mult));
+    if (hasFirst && firstRange) setFirstFare(Math.round(firstRange.base * mult));
+  }
+
+  // Projected occupancy preview
+  const projection = (() => {
+    if (specIds.length === 0 || freq === 0) return null;
+    const demand = routeDemandPerDay(origin!, dest!, s.currentQuarter).total;
+    const totalSeats = selectedPlaneIds.reduce((sum, id) => {
+      const p = player.fleet.find((f) => f.id === id);
+      const spec = p && AIRCRAFT_BY_ID[p.specId];
+      if (!spec) return sum;
+      return sum + spec.seats.first + spec.seats.business + spec.seats.economy;
+    }, 0);
+    const dailyCapacity = totalSeats * freq;
+    if (dailyCapacity === 0) return null;
+    const occ = Math.min(1, demand / dailyCapacity);
+    return {
+      demand,
+      capacity: dailyCapacity,
+      occupancy: occ,
+      tone: occ < 0.25 ? "neg" : occ < 0.55 ? "warn" : "pos",
+    } as const;
+  })();
+
   function confirmRoute() {
     if (!origin || !dest) return;
+    if (selectedPlaneIds.length === 0) {
+      setError("Pick at least one aircraft before opening the route.");
+      return;
+    }
+    if (freq < 1) {
+      setError("Daily frequency must be at least 1.");
+      return;
+    }
     const r = openRoute({
       originCode: origin,
       destCode: dest,
@@ -93,53 +220,10 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     onClose();
   }
 
-  // Class availability from selected planes
-  const hasFirst = useMemo(() => selectedPlaneIds.some((id) => {
-    const p = player?.fleet.find((f) => f.id === id);
-    const spec = p && AIRCRAFT_BY_ID[p.specId];
-    return spec && spec.seats.first > 0;
-  }), [selectedPlaneIds, player]);
-  const hasBusiness = useMemo(() => selectedPlaneIds.some((id) => {
-    const p = player?.fleet.find((f) => f.id === id);
-    const spec = p && AIRCRAFT_BY_ID[p.specId];
-    return spec && spec.seats.business > 0;
-  }), [selectedPlaneIds, player]);
-  const allCargo = useMemo(() => selectedPlaneIds.every((id) => {
-    const p = player?.fleet.find((f) => f.id === id);
-    const spec = p && AIRCRAFT_BY_ID[p.specId];
-    return spec && spec.family === "cargo";
-  }) && selectedPlaneIds.length > 0, [selectedPlaneIds, player]);
-  const econRange = dest ? classFareRange(dist, "econ") : null;
-  const busRange = dest ? classFareRange(dist, "bus") : null;
-  const firstRange = dest ? classFareRange(dist, "first") : null;
-
-  // PRD G1: low-demand warning (<25% projected occupancy)
-  const lowDemandWarning = (() => {
-    if (!origin || !dest || selectedPlaneIds.length === 0) return null;
-    const demand = routeDemandPerDay(origin, dest, s.currentQuarter).total;
-    const totalSeats = selectedPlaneIds.reduce((sum, id) => {
-      const p = player.fleet.find((f) => f.id === id);
-      const spec = p && AIRCRAFT_BY_ID[p.specId];
-      if (!spec) return sum;
-      return sum + spec.seats.first + spec.seats.business + spec.seats.economy;
-    }, 0);
-    const dailyCapacity = totalSeats * freq;
-    if (dailyCapacity === 0) return null;
-    const projected = Math.min(1, demand / dailyCapacity);
-    if (projected < 0.25) {
-      return `Low Demand Alert — projected occupancy ${(projected * 100).toFixed(0)}%. This route may not be profitable at current demand levels.`;
-    }
-    return null;
-  })();
-
-  // Auto-enable cargo if all selected planes are cargo
-  useEffect(() => {
-    if (allCargo && !isCargo) setIsCargo(true);
-    if (!allCargo && isCargo) setIsCargo(false);
-  }, [allCargo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasAircraft = selectedPlaneIds.length > 0;
 
   return (
-    <Modal open={isOpen} onClose={onClose}>
+    <Modal open={isOpen} onClose={onClose} className="w-[min(640px,calc(100vw-2rem))]">
       <ModalHeader>
         <div className="flex items-center gap-2 mb-1.5">
           <Badge tone="accent">New route</Badge>
@@ -153,96 +237,15 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
           </div>
         )}
       </ModalHeader>
-      <ModalBody className="space-y-5">
-        <div>
-          <Label>Pricing tier</Label>
-          <div className="grid grid-cols-4 gap-2">
-            {(["budget", "standard", "premium", "ultra"] as PricingTier[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTier(t)}
-                className={`rounded-md border px-3 py-2 text-[0.8125rem] capitalize transition-colors ${
-                  tier === t
-                    ? "border-primary bg-[rgba(20,53,94,0.06)] text-ink font-medium"
-                    : "border-line text-ink-2 hover:bg-surface-hover"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </div>
 
-        <div>
-          <Label>Daily frequency</Label>
-          <div className="flex items-center gap-3">
-            <input
-              type="range"
-              min={1}
-              max={MAX_FREQUENCY}
-              value={freq}
-              onChange={(e) => setFreq(parseInt(e.target.value, 10))}
-              className="flex-1 accent-primary"
-            />
-            <span className="tabular font-mono text-ink text-[0.9375rem] w-16 text-right">
-              {freq}/day
-            </span>
-          </div>
-          <div className="text-[0.6875rem] text-ink-muted mt-1">
-            Real-world trunks run up to ~20 daily each way (JFK–LHR, DXB–LHR).
-          </div>
-        </div>
-
-        {/* Per-class fare sliders (passenger routes only) */}
-        {!isCargo && selectedPlaneIds.length > 0 && econRange && (
-          <div className="space-y-3">
-            <Label>Seat-class fares (optional override)</Label>
-            <FareSlider
-              label="Economy"
-              range={econRange}
-              value={econFare ?? econRange.base}
-              onChange={setEconFare}
-              onReset={() => setEconFare(null)}
-              isOverride={econFare !== null}
-            />
-            {hasBusiness && busRange && (
-              <FareSlider
-                label="Business"
-                range={busRange}
-                value={busFare ?? busRange.base}
-                onChange={setBusFare}
-                onReset={() => setBusFare(null)}
-                isOverride={busFare !== null}
-              />
-            )}
-            {hasFirst && firstRange && (
-              <FareSlider
-                label="First"
-                range={firstRange}
-                value={firstFare ?? firstRange.base}
-                onChange={setFirstFare}
-                onReset={() => setFirstFare(null)}
-                isOverride={firstFare !== null}
-              />
-            )}
-          </div>
-        )}
-
-        {isCargo && (
-          <div className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[0.8125rem] text-ink-2">
-            Cargo route · revenue based on minimum of origin/destination business
-            demand as daily tonnes. Storage fees replace slot fees.
-          </div>
-        )}
-
-        <div>
-          <Label>Assign aircraft (idle fleet)</Label>
+      <ModalBody className="space-y-5 max-h-[70vh] overflow-y-auto">
+        {/* Step 1 — Assign aircraft (REQUIRED FIRST) */}
+        <Section step={1} title="Assign aircraft">
           {idlePlanes.length === 0 ? (
-            <Card>
-              <CardBody className="text-[0.8125rem] text-ink-muted">
-                No idle aircraft. Order or reassign in the Fleet panel.
-              </CardBody>
-            </Card>
+            <div className="rounded-md border border-line bg-surface-2 px-3 py-3 text-[0.8125rem] text-ink-muted">
+              No idle aircraft available. Order or reassign in the Fleet panel
+              before opening this route.
+            </div>
           ) : (
             <div className="space-y-1.5 max-h-44 overflow-auto">
               {idlePlanes.map((p) => {
@@ -250,6 +253,11 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                 if (!spec) return null;
                 const canReach = spec.rangeKm >= dist;
                 const selected = selectedPlaneIds.includes(p.id);
+                const planeMaxDaily = canReach
+                  ? Math.max(1, Math.floor(
+                      24 / ((dist / cruiseSpeedKmh(p.specId)) * 2 + 4),
+                    ))
+                  : 0;
                 return (
                   <label
                     key={p.id}
@@ -267,41 +275,190 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                       checked={selected}
                       disabled={!canReach}
                       onChange={(e) => {
-                        if (e.target.checked) setSelectedPlaneIds([...selectedPlaneIds, p.id]);
-                        else setSelectedPlaneIds(selectedPlaneIds.filter((x) => x !== p.id));
+                        if (e.target.checked)
+                          setSelectedPlaneIds([...selectedPlaneIds, p.id]);
+                        else
+                          setSelectedPlaneIds(
+                            selectedPlaneIds.filter((x) => x !== p.id),
+                          );
                       }}
                       className="accent-primary"
                     />
                     <div className="flex-1 min-w-0">
                       <div className="text-ink text-[0.875rem]">{spec.name}</div>
                       <div className="text-[0.6875rem] text-ink-muted font-mono">
-                        Range {spec.rangeKm.toLocaleString()} km · {spec.seats.first + spec.seats.business + spec.seats.economy} seats
+                        Range {spec.rangeKm.toLocaleString()} km · {spec.seats.first + spec.seats.business + spec.seats.economy} seats · {cruiseSpeedKmh(p.specId)} km/h cruise
                       </div>
                     </div>
-                    {!canReach && <Badge tone="negative">Out of range</Badge>}
+                    {!canReach ? (
+                      <Badge tone="negative">Out of range</Badge>
+                    ) : (
+                      <Badge tone="neutral">{planeMaxDaily}/day max</Badge>
+                    )}
                   </label>
                 );
               })}
             </div>
           )}
-        </div>
+          {hasAircraft && scheduleNote && (
+            <div className="text-[0.6875rem] text-ink-muted leading-relaxed mt-2">
+              Schedule math: {Math.round(dist).toLocaleString()} km ÷ {scheduleNote.slowestSpeed} km/h
+              + 2 × 2 hr turnaround = {scheduleNote.roundTripHrs.toFixed(1)} hr round-trip per
+              aircraft · floor(24 / round-trip) = <strong className="text-ink">{scheduleNote.perPlaneDaily} flights/day per plane</strong>.
+            </div>
+          )}
+        </Section>
 
-        {lowDemandWarning && (
-          <div className="text-warning text-[0.8125rem] rounded-md border border-[var(--warning-soft)] bg-[var(--warning-soft)] px-3 py-2">
-            {lowDemandWarning}
+        {/* Step 2 — Daily frequency (capped) */}
+        <Section step={2} title="Daily frequency" disabled={!hasAircraft}>
+          {!hasAircraft ? (
+            <div className="text-[0.75rem] text-ink-muted italic">
+              Pick at least one aircraft above to set frequency.
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={1}
+                  max={Math.max(1, maxDailyFreq)}
+                  value={freq}
+                  onChange={(e) => setFreq(parseInt(e.target.value, 10))}
+                  className="flex-1 accent-primary"
+                  disabled={maxDailyFreq < 1}
+                />
+                <span className="tabular font-mono text-ink text-[0.9375rem] w-16 text-right">
+                  {freq}/day
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between text-[0.6875rem] text-ink-muted mt-1">
+                <span>1/day</span>
+                <span>
+                  Cap: <strong className="text-ink">{maxDailyFreq}/day</strong> with {selectedPlaneIds.length} aircraft
+                </span>
+                <span>{maxDailyFreq}/day</span>
+              </div>
+            </>
+          )}
+        </Section>
+
+        {/* Step 3 — Pricing (per-class sliders) */}
+        {!isCargo && (
+          <Section step={3} title="Per-class fares" disabled={!hasAircraft}>
+            {!hasAircraft ? (
+              <div className="text-[0.75rem] text-ink-muted italic">
+                Cabin classes are determined by the aircraft you pick.
+              </div>
+            ) : (
+              <>
+                {/* Quick-preset tier strip — applies to all classes */}
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  {(["budget", "standard", "premium", "ultra"] as PricingTier[]).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => applyTier(t)}
+                      className={cn(
+                        "rounded-md border px-2.5 py-1.5 text-[0.75rem] capitalize transition-colors",
+                        tier === t
+                          ? "border-primary bg-[rgba(20,53,94,0.06)] text-ink font-medium"
+                          : "border-line text-ink-2 hover:bg-surface-hover",
+                      )}
+                    >
+                      {t}
+                      <div className="text-[0.5625rem] text-ink-muted">
+                        {t === "budget" ? "0.7×" : t === "standard" ? "1.0×" : t === "premium" ? "1.3×" : "1.6×"} base
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[0.625rem] text-ink-muted mb-2 leading-relaxed">
+                  Tier preset scales all classes at once. Each slider below
+                  can fine-tune one class against demand sensitivity.
+                </div>
+
+                {econRange && (
+                  <FareSlider
+                    label="Economy"
+                    range={econRange}
+                    value={econFare ?? econRange.base}
+                    onChange={setEconFare}
+                    onReset={() => setEconFare(null)}
+                    isOverride={econFare !== null}
+                  />
+                )}
+                {hasBusiness && busRange && (
+                  <FareSlider
+                    label="Business"
+                    range={busRange}
+                    value={busFare ?? busRange.base}
+                    onChange={setBusFare}
+                    onReset={() => setBusFare(null)}
+                    isOverride={busFare !== null}
+                  />
+                )}
+                {hasFirst && firstRange && (
+                  <FareSlider
+                    label="First"
+                    range={firstRange}
+                    value={firstFare ?? firstRange.base}
+                    onChange={setFirstFare}
+                    onReset={() => setFirstFare(null)}
+                    isOverride={firstFare !== null}
+                  />
+                )}
+                {!hasBusiness && !hasFirst && (
+                  <div className="text-[0.6875rem] text-ink-muted italic">
+                    Selected aircraft is all-economy — no business or first
+                    class to price.
+                  </div>
+                )}
+              </>
+            )}
+          </Section>
+        )}
+
+        {isCargo && (
+          <Section step={3} title="Cargo" disabled={!hasAircraft}>
+            <div className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[0.8125rem] text-ink-2">
+              Cargo route · revenue based on minimum of origin/destination
+              business demand as daily tonnes. Storage fees replace slot fees.
+              Rate per tonne is auto-set based on distance (PRD §A4).
+            </div>
+          </Section>
+        )}
+
+        {/* Live projection */}
+        {projection && (
+          <div className={cn(
+            "rounded-md border px-3 py-2.5 text-[0.8125rem]",
+            projection.tone === "neg" && "border-negative bg-[var(--negative-soft)] text-negative",
+            projection.tone === "warn" && "border-warning bg-[var(--warning-soft)] text-warning",
+            projection.tone === "pos" && "border-positive bg-[var(--positive-soft)] text-positive",
+          )}>
+            <div className="font-semibold uppercase tracking-wider text-[0.6875rem] mb-0.5">
+              Projected occupancy · {(projection.occupancy * 100).toFixed(0)}%
+            </div>
+            <div className="text-ink-2 text-[0.75rem]">
+              Daily demand {Math.round(projection.demand)} pax vs capacity {projection.capacity} seats.
+              {projection.tone === "neg" && " Route is unlikely to be profitable at this configuration."}
+              {projection.tone === "warn" && " Consider lowering frequency or adjusting fares."}
+              {projection.tone === "pos" && " Strong load factor."}
+            </div>
           </div>
         )}
+
         {error && (
           <div className="text-negative text-[0.875rem] rounded-md border border-[var(--negative-soft)] bg-[var(--negative-soft)] px-3 py-2">
             {error}
           </div>
         )}
       </ModalBody>
+
       <ModalFooter>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button
           variant="primary"
-          disabled={selectedPlaneIds.length === 0}
+          disabled={!hasAircraft || freq < 1}
           onClick={confirmRoute}
         >
           Open route →
@@ -311,11 +468,31 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   );
 }
 
-function Label({ children }: { children: React.ReactNode }) {
+function Section({
+  step, title, disabled = false, children,
+}: {
+  step: number;
+  title: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+    <section className={cn(disabled && "opacity-60")}>
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className={cn(
+            "inline-flex w-5 h-5 rounded-full items-center justify-center text-[0.625rem] font-semibold",
+            disabled ? "bg-surface-2 text-ink-muted" : "bg-primary text-primary-fg",
+          )}
+        >
+          {step}
+        </span>
+        <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted font-semibold">
+          {title}
+        </span>
+      </div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -330,11 +507,11 @@ function FareSlider({
   isOverride: boolean;
 }) {
   return (
-    <div>
+    <div className="mb-3">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[0.75rem] text-ink-2">{label}</span>
+        <span className="text-[0.75rem] text-ink-2 font-medium">{label}</span>
         <div className="flex items-center gap-2">
-          <span className="tabular font-mono text-[0.75rem] text-ink">
+          <span className="tabular font-mono text-[0.8125rem] text-ink font-semibold">
             ${Math.round(value).toLocaleString()}
           </span>
           {isOverride && (
