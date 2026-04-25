@@ -297,14 +297,15 @@ function makeStartingTeam(args: {
     fuelTanks: { small: 0, medium: 0, large: 0 },
     fuelStorageLevelL: 0,
     fuelStorageAvgCostPerL: 0,
-    // PRD G10 — each team starts with 30 slots at their hub.
-    // Legacy field kept for save migration; airportLeases is the active
-    // bookkeeping model now.
-    slotsByAirport: { [args.hubCode]: 30 },
-    // PRD update — Model B recurring slot fees. Hub starts free (sunk
-    // capex baked into hub terminal fee) so totalWeeklyCost is 0 there.
-    // Slots won via auction will populate this with their bid prices.
-    airportLeases: { [args.hubCode]: { slots: 30, totalWeeklyCost: 0 } },
+    // PRD G10 — each team starts with 50 slots at their hub (free,
+    // grandfathered baked into the hub terminal fee). Legacy field
+    // kept for save migration; airportLeases is the active bookkeeping
+    // model now.
+    slotsByAirport: { [args.hubCode]: 50 },
+    // PRD update — Model B recurring slot fees. Hub seed is free so
+    // totalWeeklyCost is 0; new slots won via auction add their weekly
+    // rent to the lease.
+    airportLeases: { [args.hubCode]: { slots: 50, totalWeeklyCost: 0 } },
     pendingSlotBids: [],
     // PRD C9 — hub auto-activated for cargo (bundled with hub terminal fee)
     cargoStorageActivations: [args.hubCode],
@@ -408,6 +409,29 @@ export const useGame = create<GameStore>()(
         };
         const starter2: FleetAircraft = { ...starter1, id: mkId("ac") };
         player.fleet = [starter1, starter2];
+
+        // PRD update — give the player a small grant of free starter slots
+        // at their hub's nearest popular destinations so they can open
+        // routes in Q2 without waiting for the first auction round.
+        // Per-airport allocation: 30 free slots, no recurring fee.
+        const STARTER_DESTINATIONS_BY_HUB: Record<string, string[]> = {
+          DXB: ["LHR", "JFK", "SIN", "CDG", "BOM"],
+          LHR: ["JFK", "DXB", "CDG", "FRA", "AMS"],
+          JFK: ["LHR", "CDG", "LAX", "MIA", "ORD"],
+          SIN: ["HKG", "BKK", "KUL", "BOM", "SYD"],
+          NRT: ["HKG", "SIN", "LAX", "ICN", "PVG"],
+          HKG: ["NRT", "SIN", "BKK", "PVG", "SYD"],
+          CDG: ["LHR", "JFK", "FRA", "AMS", "MAD"],
+          FRA: ["LHR", "CDG", "JFK", "AMS", "ZRH"],
+          ORD: ["JFK", "LAX", "SFO", "LHR", "FRA"],
+          LAX: ["JFK", "ORD", "SFO", "NRT", "SYD"],
+        };
+        const starterDests = STARTER_DESTINATIONS_BY_HUB[hubCode] ??
+          ["LHR", "JFK", "SIN", "CDG", "DXB"];
+        for (const dest of starterDests) {
+          player.slotsByAirport[dest] = 30;
+          player.airportLeases[dest] = { slots: 30, totalWeeklyCost: 0 };
+        }
 
         // Backfill a Q1 "brand-building" snapshot so charts/sparklines have
         // an honest starting point. Costs/revenue are 0 — Q1 was about
@@ -530,6 +554,19 @@ export const useGame = create<GameStore>()(
             // Link aircraft to route
             const planeIdx = r.fleet.findIndex((f) => f.id === planeId);
             if (planeIdx >= 0) r.fleet[planeIdx].routeId = route.id;
+          }
+          // Backfill rival airport leases for the airports they fly to,
+          // so their existing routes are valid against the slot system.
+          // Free starter slots (no recurring fee) for incumbents.
+          const usage: Record<string, number> = {};
+          for (const r2 of r.routes) {
+            const wf = r2.dailyFrequency * 7;
+            usage[r2.originCode] = (usage[r2.originCode] ?? 0) + wf;
+            usage[r2.destCode] = (usage[r2.destCode] ?? 0) + wf;
+          }
+          for (const code of Object.keys(usage)) {
+            r.airportLeases[code] = { slots: usage[code], totalWeeklyCost: 0 };
+            r.slotsByAirport[code] = usage[code];
           }
           rivals.push(r);
         }
