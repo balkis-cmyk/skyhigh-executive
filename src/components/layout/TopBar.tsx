@@ -1,17 +1,21 @@
 "use client";
 
+import { useState } from "react";
 import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney, fmtPct, fmtQuarter, fmtQuarterShort } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { computeAirlineValue, brandRating } from "@/lib/engine";
 import { QuarterTimerChip } from "@/components/game/QuarterTimer";
+import { HelpModal } from "@/components/game/HelpModal";
 import { Button } from "@/components/ui";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
+import { HelpCircle } from "lucide-react";
 
 export function TopBar() {
   // Fine-grained subscriptions so unrelated store writes don't re-render this.
   const player = useGame(selectPlayer);
   const currentQuarter = useGame((state) => state.currentQuarter);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   if (!player) return null;
 
@@ -84,8 +88,17 @@ export function TopBar() {
           </span>
         </div>
         <QuarterTimerChip />
+        <button
+          onClick={() => setHelpOpen(true)}
+          aria-label="Help &amp; reference"
+          title="Quick reference (cheat sheet)"
+          className="w-8 h-8 rounded-md text-ink-muted hover:text-ink hover:bg-surface-hover flex items-center justify-center transition-colors"
+        >
+          <HelpCircle size={16} />
+        </button>
         <CloseQuarterButton />
       </div>
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </header>
   );
 }
