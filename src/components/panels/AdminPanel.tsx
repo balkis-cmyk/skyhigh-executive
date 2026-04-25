@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Input } from "@/components/ui";
+import { Badge, Button, Input, Sparkline } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney } from "@/lib/format";
 import { CITIES } from "@/data/cities";
@@ -345,6 +345,107 @@ export function AdminPanel() {
             >
               Claim {fmtMoney(4_000_000 * flashDealCount)}
             </Button>
+          </div>
+        </section>
+      )}
+
+      {/* Brand Value trajectory across teams (PRD §10.10) */}
+      {s.teams.some((t) => t.financialsByQuarter.length > 0) && (
+        <section>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Brand Value trajectory · all teams
+          </div>
+          <div className="space-y-1.5">
+            {[...s.teams]
+              .sort((a, b) => b.brandValue - a.brandValue)
+              .map((t) => {
+                const series =
+                  t.financialsByQuarter.length > 0
+                    ? t.financialsByQuarter.map((q) => q.brandValue)
+                    : [t.brandValue, t.brandValue];
+                return (
+                  <div
+                    key={t.id}
+                    className="flex items-center gap-2 text-[0.75rem]"
+                  >
+                    <span
+                      className="inline-block w-5 h-5 rounded flex items-center justify-center font-mono text-[0.625rem] text-primary-fg shrink-0"
+                      style={{ background: t.color }}
+                    >
+                      {t.code}
+                    </span>
+                    <span className="text-ink-2 truncate flex-1 min-w-0">
+                      {t.name}
+                    </span>
+                    <Sparkline values={series} color={t.color} width={80} height={20} />
+                    <span className="tabular font-mono text-ink w-10 text-right">
+                      {t.brandValue.toFixed(1)}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        </section>
+      )}
+
+      {/* Cargo contracts (PRD E8.6) */}
+      <section>
+        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+          Cargo contracts
+        </div>
+        <div className="grid grid-cols-2 gap-1.5 text-[0.75rem] mb-2">
+          <Button size="sm" variant="secondary" onClick={() => s.adminGrantCargoContract({
+            originCode: player.hubCode, destCode: "FRA",
+            tonnesPerWeek: 150, ratePerTonneUsd: 4500, quarters: 4,
+            source: "Dubai Expo 2040 equipment",
+          })}>
+            Dubai Expo · 4Q
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => s.adminGrantCargoContract({
+            originCode: player.hubCode, destCode: "HKG",
+            tonnesPerWeek: 100, ratePerTonneUsd: 5200, quarters: 6,
+            source: "Pharma corridor",
+          })}>
+            Pharma · 6Q
+          </Button>
+        </div>
+        {s.cargoContracts.filter((c) => c.teamId === player.id).length > 0 && (
+          <div className="space-y-1 text-[0.75rem]">
+            {s.cargoContracts.filter((c) => c.teamId === player.id).map((c) => (
+              <div key={c.id} className="flex items-center justify-between py-1 border-b border-line last:border-0">
+                <span className="text-ink font-mono">{c.originCode} ↔ {c.destCode}</span>
+                <span className="text-ink-muted">
+                  {c.guaranteedTonnesPerWeek}T/wk · ${c.ratePerTonneUsd}/T · {c.quartersRemaining}Q left
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Ground-stop slot refund (PRD G6) */}
+      {player.routes.filter((r) => r.status === "active" || r.status === "suspended").length > 0 && (
+        <section>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Ground-stop · slot fee refund (PRD G6)
+          </div>
+          <div className="space-y-1 max-h-28 overflow-auto">
+            {player.routes
+              .filter((r) => r.status === "active" || r.status === "suspended")
+              .map((r) => (
+                <div key={r.id} className="flex items-center justify-between gap-2 text-[0.75rem]">
+                  <span className="font-mono text-ink-2 truncate">
+                    {r.originCode} → {r.destCode}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => s.adminGroundStopRefund(r.id)}
+                  >
+                    50% refund
+                  </Button>
+                </div>
+              ))}
           </div>
         </section>
       )}

@@ -89,6 +89,8 @@ export interface Route {
 
   /** Quarters the route has been operating (for Legacy Bonus E8.1). */
   consecutiveQuartersActive: number;
+  /** Quarters in a row this route has been loss-making (for PRD G2 badge). */
+  consecutiveLosingQuarters: number;
 }
 
 // ─── Sliders ──────────────────────────────────────────────
@@ -183,6 +185,15 @@ export interface Team {
   isPlayer: boolean;             // player (single-team demo) vs mocked rival
   members: TeamMember[];         // CEO/CFO/CMO/CHRO with MVP tally
 
+  // Q1 Brand Building profile (PRD §13.2) — saved for reference + flavour
+  tagline: string;
+  marketFocus: "passenger" | "cargo" | "balanced";
+  geographicPriority: "north-america" | "europe" | "asia-pacific" | "middle-east" | "global";
+  pricingPhilosophy: "budget" | "standard" | "premium" | "ultra";
+  salaryPhilosophy: "below" | "at" | "above";
+  marketingLevel: "low" | "medium" | "high" | "aggressive";
+  csrTheme: "environment" | "community" | "employees" | "none";
+
   // Finances
   cashUsd: number;
   totalDebtUsd: number;
@@ -264,6 +275,18 @@ export interface Team {
   }>;
 }
 
+// ─── Cargo contracts (PRD E8.6) ──────────────────────────
+export interface CargoContract {
+  id: string;
+  teamId: string;                // team that holds this contract
+  originCode: string;
+  destCode: string;
+  guaranteedTonnesPerWeek: number;
+  ratePerTonneUsd: number;
+  quartersRemaining: number;     // decremented each quarter close
+  source: string;                // free text, e.g. "Dubai Expo 2040"
+}
+
 // ─── Second-hand aircraft market (A13) ───────────────────
 export interface SecondHandListing {
   id: string;
@@ -299,4 +322,7 @@ export interface GameState {
 
   // Second-hand aircraft listings (A13)
   secondHandListings: SecondHandListing[];
+
+  // Active cargo contracts (PRD E8.6)
+  cargoContracts: CargoContract[];
 }

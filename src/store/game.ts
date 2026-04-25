@@ -17,6 +17,7 @@ import { toast } from "./toasts";
 import { fmtQuarter } from "@/lib/format";
 import type {
   CabinConfig,
+  CargoContract,
   DeferredEvent,
   DoctrineId,
   FleetAircraft,
@@ -55,6 +56,18 @@ export interface GameStore extends GameState {
     doctrine: DoctrineId;
     hubCode: string;
     teamCount?: number;        // 2..10, default 5
+
+    // Optional Q1 Brand Building profile (defaults applied if omitted)
+    tagline?: string;
+    marketFocus?: "passenger" | "cargo" | "balanced";
+    geographicPriority?: "north-america" | "europe" | "asia-pacific" | "middle-east" | "global";
+    pricingPhilosophy?: "budget" | "standard" | "premium" | "ultra";
+    salaryPhilosophy?: "below" | "at" | "above";
+    marketingLevel?: "low" | "medium" | "high" | "aggressive";
+    csrTheme?: "environment" | "community" | "employees" | "none";
+
+    /** Simulated L0 rank (1-5) → cash injection + brand multiplier. */
+    l0Rank?: 1 | 2 | 3 | 4 | 5;
   }): void;
 
   setSliders(sliders: Partial<Sliders>): void;
@@ -155,6 +168,19 @@ export interface GameStore extends GameState {
   /** Admin: inject a new listing from the system. */
   adminInjectSecondHand(specId: string, askingPriceUsd: number): void;
 
+  /** Admin: award a cargo contract to the current player team (PRD E8.6). */
+  adminGrantCargoContract(args: {
+    originCode: string;
+    destCode: string;
+    tonnesPerWeek: number;
+    ratePerTonneUsd: number;
+    quarters: number;
+    source: string;
+  }): void;
+
+  /** Admin: refund 50% of slot fees on a grounded route for the current quarter (PRD G6). */
+  adminGroundStopRefund(routeId: string): void;
+
   /** Start the simulation with pre-seeded demo data (PRD §24). */
   startDemo(): void;
 
@@ -199,6 +225,13 @@ function makeStartingTeam(args: {
   hubCode: string;
   isPlayer: boolean;
   color: string;
+  tagline?: string;
+  marketFocus?: Team["marketFocus"];
+  geographicPriority?: Team["geographicPriority"];
+  pricingPhilosophy?: Team["pricingPhilosophy"];
+  salaryPhilosophy?: Team["salaryPhilosophy"];
+  marketingLevel?: Team["marketingLevel"];
+  csrTheme?: Team["csrTheme"];
 }): Team {
   return {
     id: mkId("team"),
@@ -215,6 +248,13 @@ function makeStartingTeam(args: {
       { role: "CMO",  name: args.isPlayer ? "Your CMO"  : `${args.code} CMO`,  mvpPts: 0, cards: [] },
       { role: "CHRO", name: args.isPlayer ? "Your CHRO" : `${args.code} CHRO`, mvpPts: 0, cards: [] },
     ],
+    tagline: args.tagline ?? "",
+    marketFocus: args.marketFocus ?? "balanced",
+    geographicPriority: args.geographicPriority ?? "global",
+    pricingPhilosophy: args.pricingPhilosophy ?? "standard",
+    salaryPhilosophy: args.salaryPhilosophy ?? "at",
+    marketingLevel: args.marketingLevel ?? "medium",
+    csrTheme: args.csrTheme ?? "none",
     cashUsd: 150_000_000,
     totalDebtUsd: 0,
     loans: [],
@@ -280,12 +320,49 @@ export const useGame = create<GameStore>()(
       quarterTimerSecondsRemaining: null,
       quarterTimerPaused: false,
       secondHandListings: [],
+      cargoContracts: [],
 
-      startNewGame: ({ airlineName, code, doctrine, hubCode, teamCount = 5 }) => {
+      startNewGame: (args) => {
+        const {
+          airlineName, code, doctrine, hubCode, teamCount = 5,
+          tagline, marketFocus, geographicPriority, pricingPhilosophy,
+          salaryPhilosophy, marketingLevel, csrTheme, l0Rank,
+        } = args;
+
         const player = makeStartingTeam({
           airlineName, code, doctrine, hubCode,
           isPlayer: true, color: "#14355E",
+          tagline, marketFocus, geographicPriority, pricingPhilosophy,
+          salaryPhilosophy, marketingLevel, csrTheme,
         });
+
+        // Apply pricing philosophy to initial sliders as a nudge
+        if (marketingLevel) {
+          const lvl: Record<typeof marketingLevel, SliderLevel> = {
+            low: 1, medium: 2, high: 3, aggressive: 4,
+          };
+          player.sliders.marketing = lvl[marketingLevel];
+        }
+        if (salaryPhilosophy) {
+          player.sliders.staff = salaryPhilosophy === "below" ? 1
+            : salaryPhilosophy === "above" ? 3 : 2;
+        }
+
+        // PRD §13.2 L0 cash injection based on presentation rank (1-5)
+        // 1st = +$80M, 2nd = +$60M, 3rd = +$40M, 4th = +$20M, 5th = +$0
+        const cashInjection = l0Rank === 1 ? 80_000_000
+          : l0Rank === 2 ? 60_000_000
+          : l0Rank === 3 ? 40_000_000
+          : l0Rank === 4 ? 20_000_000
+          : 0;
+        player.cashUsd = 150_000_000 + cashInjection;
+        // Brand pts multiplier: 10× / 7× / 5× / 3× / 2× baseline 50 (scaled down)
+        const brandBonus = l0Rank === 1 ? 20
+          : l0Rank === 2 ? 14
+          : l0Rank === 3 ? 10
+          : l0Rank === 4 ? 6
+          : 4;
+        player.brandPts = 50 + brandBonus;
 
         // Seed: give player 2× A320 to start (PRD says seed planes post-Q1, but
         // single-team demo launches directly into ops — gives them something to fly).
@@ -331,6 +408,20 @@ export const useGame = create<GameStore>()(
           playerTeamId: player.id,
           lastCloseResult: null,
         });
+
+        if (l0Rank && l0Rank <= 3) {
+          toast.accent(
+            `L0 Brand Building · Rank ${l0Rank}`,
+            `Cash injection +${fmtMoneyPlain(cashInjection)} · Brand +${brandBonus}`,
+          );
+        } else if (l0Rank) {
+          toast.info(
+            `L0 Brand Building · Rank ${l0Rank}`,
+            cashInjection > 0
+              ? `Cash injection +${fmtMoneyPlain(cashInjection)}`
+              : "No cash injection — make your Q2 decisions count.",
+          );
+        }
       },
 
       setSliders: (sliders) => {
@@ -509,6 +600,7 @@ export const useGame = create<GameStore>()(
           quarterlySlotCost: 0,
           isCargo: isCargo ?? false,
           consecutiveQuartersActive: 0,
+          consecutiveLosingQuarters: 0,
         };
 
         // Activation cost for cargo routes (PRD C9)
@@ -693,15 +785,32 @@ export const useGame = create<GameStore>()(
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return;
 
+        // Insurance coverage (PRD E5) — paid out on mandatory retirement at end of lifespan
+        const coverageByPolicy = { none: 0, low: 0.3, medium: 0.5, high: 0.8 } as const;
+        const coveragePct = coverageByPolicy[player.insurancePolicy];
+        let insuranceProceeds = 0;
+
         // Transition ordered → active planes, and retire aircraft whose
         // retirementQuarter has been reached (A13).
         const updatedFleet = player.fleet.map((f) => {
           const retiring = f.retirementQuarter !== undefined && s.currentQuarter >= f.retirementQuarter;
-          if (retiring) return { ...f, status: "retired" as const, routeId: null };
+          if (retiring) {
+            // PRD D6 / E5: 75% of book value baseline, reduced to configured coverage
+            const payoutBase = f.bookValue * 0.75;
+            const payout = payoutBase * coveragePct;
+            insuranceProceeds += payout;
+            return { ...f, status: "retired" as const, routeId: null };
+          }
           if (f.status === "ordered") return { ...f, status: "active" as const };
           if (f.status === "grounded") return { ...f, status: "active" as const };
           return f;
         });
+
+        if (insuranceProceeds > 0 && coveragePct > 0) {
+          const retiredCount = updatedFleet.filter((f) => f.status === "retired" && !player.fleet.find((p) => p.id === f.id && p.status === "retired")).length;
+          toast.info(`Aircraft insurance proceeds`,
+            `${retiredCount} retirement${retiredCount === 1 ? "" : "s"} · +${fmtMoneyPlain(insuranceProceeds)} at ${(coveragePct * 100).toFixed(0)}% coverage`);
+        }
         // Fleet flag detection (PRD §7.2)
         const activeModern = updatedFleet.filter(
           (f) => f.status === "active" && AIRCRAFT_BY_ID[f.specId]?.unlockQuarter >= 8,
@@ -737,12 +846,20 @@ export const useGame = create<GameStore>()(
           baseInterestRatePct: s.baseInterestRatePct,
           fuelIndex: s.fuelIndex,
           quarter: s.currentQuarter,
+          cargoContracts: s.cargoContracts ?? [],
         });
 
-        // Commit result back to team
+        // Decrement remaining quarters on each contract; drop expired
+        const updatedCargoContracts = (s.cargoContracts ?? [])
+          .map((cc) => cc.teamId === player.id
+            ? { ...cc, quartersRemaining: cc.quartersRemaining - 1 }
+            : cc)
+          .filter((cc) => cc.quartersRemaining > 0);
+
+        // Commit result back to team + add any insurance proceeds on top
         const closed: Team = {
           ...teamReady,
-          cashUsd: result.newCashUsd,
+          cashUsd: result.newCashUsd + insuranceProceeds,
           rcfBalanceUsd: result.newRcfBalance,
           brandPts: result.newBrandPts,
           opsPts: result.newOpsPts,
@@ -777,6 +894,7 @@ export const useGame = create<GameStore>()(
 
         set({
           teams: [closed, ...rivals],
+          cargoContracts: updatedCargoContracts,
           lastCloseResult: result,
           phase: "quarter-closing",
           // Fuel index drifts
@@ -792,7 +910,34 @@ export const useGame = create<GameStore>()(
           return;
         }
         const nextQ = s.currentQuarter + 1;
+
+        // PRD G4 — 787 Dreamliner delivery delay triggered at Q9 open
+        // Any B787-9 ordered at Q8 gets pushed back 2 quarters (Q9 → Q11).
+        let delayedTeams = s.teams;
+        if (nextQ === 9) {
+          let delayedCount = 0;
+          delayedTeams = s.teams.map((t) => ({
+            ...t,
+            fleet: t.fleet.map((f) => {
+              if (f.specId === "B787-9" && f.status === "ordered" && f.purchaseQuarter === 8) {
+                delayedCount += 1;
+                // Keep status as "ordered" and bump purchaseQuarter forward so it
+                // only activates at Q11 quarter-close
+                return { ...f, purchaseQuarter: 10 };
+              }
+              return f;
+            }),
+          }));
+          if (delayedCount > 0) {
+            toast.warning(
+              `Boeing 787 Dreamliner delivery delay`,
+              `${delayedCount} aircraft pushed from Q9 → Q11 due to manufacturing issues`,
+            );
+          }
+        }
+
         set({
+          teams: delayedTeams,
           currentQuarter: nextQ,
           phase: "playing",
           lastCloseResult: null,
@@ -818,6 +963,7 @@ export const useGame = create<GameStore>()(
           quarterTimerSecondsRemaining: null,
           quarterTimerPaused: false,
           secondHandListings: [],
+          cargoContracts: [],
         });
       },
 
@@ -1201,6 +1347,49 @@ export const useGame = create<GameStore>()(
         toast.accent(`Admin listed ${spec.name}`, `Asking ${fmtMoneyPlain(askingPriceUsd)}`);
       },
 
+      // ── Cargo contract (PRD E8.6) ──────────────────────────
+      adminGrantCargoContract: ({
+        originCode, destCode, tonnesPerWeek, ratePerTonneUsd, quarters, source,
+      }) => {
+        const s = get();
+        if (!s.playerTeamId) return;
+        const contract: CargoContract = {
+          id: mkId("cc"),
+          teamId: s.playerTeamId,
+          originCode,
+          destCode,
+          guaranteedTonnesPerWeek: tonnesPerWeek,
+          ratePerTonneUsd,
+          quartersRemaining: quarters,
+          source,
+        };
+        set({ cargoContracts: [...s.cargoContracts, contract] });
+        toast.accent(
+          `Cargo contract · ${originCode} → ${destCode}`,
+          `${tonnesPerWeek}T/wk @ $${(ratePerTonneUsd).toLocaleString()}/T for ${quarters}Q · ${source}`,
+        );
+      },
+
+      // ── Ground-stop slot refund (PRD G6) ───────────────────
+      adminGroundStopRefund: (routeId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return;
+        const route = player.routes.find((r) => r.id === routeId);
+        if (!route) return;
+        const refund = route.quarterlySlotCost * 0.5;
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd + refund,
+          }),
+        });
+        toast.info(
+          `Slot fee refund · ${route.originCode} → ${route.destCode}`,
+          `+${fmtMoneyPlain(refund)} (50% ground-stop refund)`,
+        );
+      },
+
       // ── Demo mode (PRD §24) ────────────────────────────────
       startDemo: () => {
         // Start a standard new game and advance a few quarters with realistic state
@@ -1465,9 +1654,11 @@ export const useGame = create<GameStore>()(
         quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining,
         quarterTimerPaused: s.quarterTimerPaused,
         secondHandListings: s.secondHandListings,
+        cargoContracts: s.cargoContracts,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
+        if (!state.cargoContracts) state.cargoContracts = [];
         state.teams = state.teams.map((t) => ({
           ...t,
           flags: new Set(Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? [])),
@@ -1491,6 +1682,13 @@ export const useGame = create<GameStore>()(
             maintenanceDeficit: f.maintenanceDeficit ?? 0,
           })),
           insurancePolicy: t.insurancePolicy ?? "none",
+          tagline: t.tagline ?? "",
+          marketFocus: t.marketFocus ?? "balanced",
+          geographicPriority: t.geographicPriority ?? "global",
+          pricingPhilosophy: t.pricingPhilosophy ?? "standard",
+          salaryPhilosophy: t.salaryPhilosophy ?? "at",
+          marketingLevel: t.marketingLevel ?? "medium",
+          csrTheme: t.csrTheme ?? "none",
           fuelTanks: t.fuelTanks ?? { small: 0, medium: 0, large: 0 },
           fuelStorageLevelL: t.fuelStorageLevelL ?? 0,
           fuelStorageAvgCostPerL: t.fuelStorageAvgCostPerL ?? 0,
@@ -1512,6 +1710,7 @@ export const useGame = create<GameStore>()(
             firstFare: r.firstFare ?? null,
             isCargo: r.isCargo ?? false,
             consecutiveQuartersActive: r.consecutiveQuartersActive ?? 0,
+            consecutiveLosingQuarters: r.consecutiveLosingQuarters ?? 0,
           })),
         }));
       },

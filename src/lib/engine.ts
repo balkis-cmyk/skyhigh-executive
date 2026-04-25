@@ -777,6 +777,16 @@ export interface QuarterCloseContext {
   baseInterestRatePct: number;
   fuelIndex: number;
   quarter: number;
+  /** Global cargo contracts active this quarter for this team (PRD E8.6). */
+  cargoContracts?: Array<{
+    id: string;
+    teamId: string;
+    originCode: string;
+    destCode: string;
+    guaranteedTonnesPerWeek: number;
+    ratePerTonneUsd: number;
+    quartersRemaining: number;
+  }>;
 }
 
 export function runQuarterClose(
@@ -824,12 +834,38 @@ export function runQuarterClose(
       r.quarterlySlotCost = econ.quarterlySlotCost;
       // Increment Legacy counter
       r.consecutiveQuartersActive = (r.consecutiveQuartersActive ?? 0) + 1;
+      // Route profitability streak (PRD G2 / F11.3)
+      const routeProfit = boostedRevenue - econ.quarterlyFuelCost - econ.quarterlySlotCost;
+      if (routeProfit < 0) {
+        r.consecutiveLosingQuarters = (r.consecutiveLosingQuarters ?? 0) + 1;
+      } else {
+        r.consecutiveLosingQuarters = 0;
+      }
     } else if (r.status === "suspended") {
       // PRD E8.5/G11 — 20% of normal slot fee as holding cost
       const dest = CITIES_BY_CODE[r.destCode];
       if (dest) {
         const holdingCost = slotFeeUsd(dest.tier) * r.dailyFrequency * QUARTER_DAYS * 0.2;
         slotCost += holdingCost;
+      }
+    }
+  }
+
+  // ─ Cargo contracts (PRD E8.6) — guaranteed revenue on matching routes
+  if (ctx.cargoContracts && ctx.cargoContracts.length > 0) {
+    for (const cc of ctx.cargoContracts) {
+      if (cc.teamId !== next.id) continue;
+      if (cc.quartersRemaining <= 0) continue;
+      const hasRoute = next.routes.some((r) =>
+        r.isCargo && r.status === "active" &&
+        ((r.originCode === cc.originCode && r.destCode === cc.destCode) ||
+         (r.originCode === cc.destCode && r.destCode === cc.originCode)),
+      );
+      if (hasRoute) {
+        // 13 weeks × tonnes/week × rate
+        const qRevenue = cc.guaranteedTonnesPerWeek * 13 * cc.ratePerTonneUsd;
+        revenue += qRevenue;
+        notes.push(`Cargo contract ${cc.originCode}↔${cc.destCode}: +$${(qRevenue / 1e6).toFixed(1)}M (guaranteed ${cc.guaranteedTonnesPerWeek}T/wk, ${cc.quartersRemaining}Q left)`);
       }
     }
   }

@@ -19,7 +19,7 @@ import { AdminPanel } from "@/components/panels/AdminPanel";
 import { RouteSetupModal } from "@/components/game/RouteSetupModal";
 import { QuarterTimerDriver } from "@/components/game/QuarterTimer";
 import { Toaster } from "@/components/game/Toaster";
-import { useGame, selectPlayer } from "@/store/game";
+import { useGame, selectPlayer, selectRivals } from "@/store/game";
 import type { City } from "@/types/game";
 import { Button } from "@/components/ui";
 
@@ -43,6 +43,7 @@ function CanvasInner() {
   const params = useSearchParams();
   const s = useGame();
   const player = selectPlayer(s);
+  const rivals = selectRivals(s);
 
   // Hydration-aware
   const [hydrated, setHydrated] = useState(false);
@@ -81,14 +82,45 @@ function CanvasInner() {
   }
 
   if (s.phase === "idle" || !s.playerTeamId || !player) {
-    // Pre-redirect render: welcome prompt
+    // PRD §13.1 pre-game lobby
     return (
-      <main className="flex-1 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-ink-muted mb-3">Loading simulation…</p>
-          <Button variant="primary" onClick={() => router.push("/onboarding")}>
-            Begin new simulation →
-          </Button>
+      <main className="flex-1 flex items-center justify-center px-6 py-12">
+        <div className="max-w-xl text-center">
+          <div className="text-[0.6875rem] uppercase tracking-[0.2em] text-accent mb-4">
+            SkyForce · Executive Simulation
+          </div>
+          <h1 className="font-display text-4xl md:text-5xl text-ink leading-tight mb-4">
+            Your simulation begins shortly.
+          </h1>
+          <p className="text-ink-2 text-[0.9375rem] leading-relaxed mb-2">
+            You&apos;ll run an airline for 20 quarters: open routes across 100 cities,
+            command a fleet of up to 21 aircraft types, and steer through 18
+            board-level scenarios and the global Travel Index.
+          </p>
+          <p className="text-ink-muted text-[0.8125rem] mb-8">
+            You begin with $150M seed capital. Q1 Brand Building determines your
+            L0 cash injection (up to +$80M) and brand foundation before Q2
+            operations open.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Button variant="primary" size="lg" onClick={() => router.push("/onboarding")}>
+              Begin Q1 Brand Building →
+            </Button>
+          </div>
+          <div className="mt-10 grid grid-cols-3 gap-4 text-left max-w-md mx-auto">
+            <div className="border-t border-line pt-3">
+              <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">Quarters</div>
+              <div className="font-display text-[1.5rem] text-ink tabular leading-tight">20</div>
+            </div>
+            <div className="border-t border-line pt-3">
+              <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">Cities</div>
+              <div className="font-display text-[1.5rem] text-ink tabular leading-tight">100</div>
+            </div>
+            <div className="border-t border-line pt-3">
+              <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">Scenarios</div>
+              <div className="font-display text-[1.5rem] text-ink tabular leading-tight">18</div>
+            </div>
+          </div>
         </div>
       </main>
     );
@@ -102,6 +134,7 @@ function CanvasInner() {
       <div className="absolute inset-0 top-14 left-14">
         <WorldMap
           team={player}
+          rivals={rivals}
           selectedOriginCode={origin}
           onCityClick={handleCityClick}
           onClearSelection={() => { setOrigin(null); setDest(null); }}

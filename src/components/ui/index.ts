@@ -4,3 +4,4 @@ export { Card, CardHeader, CardTitle, CardBody, CardFooter } from "./Card";
 export { Badge } from "./Badge";
 export { Metric } from "./Metric";
 export { Modal, ModalHeader, ModalBody, ModalFooter } from "./Modal";
+export { Sparkline } from "./Sparkline";

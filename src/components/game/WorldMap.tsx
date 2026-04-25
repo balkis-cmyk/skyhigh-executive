@@ -21,11 +21,26 @@ import type { Topology } from "topojson-specification";
 import { CITIES, CITIES_BY_CODE } from "@/data/cities";
 import type { City, Team } from "@/types/game";
 import { cn } from "@/lib/cn";
+
+/** Hand-picked plausible route pattern per mocked rival hub. */
+const RIVAL_ROUTES: Record<string, string[]> = {
+  SIN: ["HKG", "BKK", "KUL", "BOM", "SYD", "NRT"],
+  LHR: ["JFK", "DXB", "CDG", "FRA", "HKG", "LAX"],
+  DXB: ["LHR", "JFK", "NRT", "BOM", "CDG", "JNB"],
+  NRT: ["HKG", "SIN", "LAX", "SFO", "ICN", "PVG"],
+  CPH: ["ARN", "OSL", "LHR", "JFK", "FRA"],
+  JNB: ["LHR", "DXB", "NBO", "CDG"],
+  GRU: ["EZE", "MIA", "LIM", "JFK", "CDG"],
+  HKG: ["NRT", "SIN", "BKK", "PVG", "SYD", "LAX"],
+  ORD: ["JFK", "LAX", "SFO", "LHR", "CDG", "FRA"],
+};
 import { cityEventImpact } from "@/lib/city-events";
 import { useGame } from "@/store/game";
 
 export interface WorldMapProps {
   team: Team;
+  /** Rival teams (shown as muted markers + simulated routes per PRD §3.B). */
+  rivals?: Team[];
   selectedOriginCode?: string | null;
   onCityClick?: (city: City) => void;
   onCityHover?: (city: City | null) => void;
@@ -98,6 +113,7 @@ function pointAlongArc(
 
 export function WorldMap({
   team,
+  rivals,
   selectedOriginCode,
   onCityClick,
   onCityHover,
@@ -311,6 +327,56 @@ export function WorldMap({
                   strokeWidth="0.5"
                   strokeOpacity="0.8"
                 />
+              );
+            })}
+          </g>
+        )}
+
+        {/* Rival routes (muted, behind own routes per PRD §3.B) */}
+        {rivals && rivals.length > 0 && (
+          <g fill="none" strokeLinecap="round" opacity="0.5">
+            {rivals.flatMap((rv) => {
+              const destinations = RIVAL_ROUTES[rv.hubCode] ?? [];
+              const hub = CITIES_BY_CODE[rv.hubCode];
+              if (!hub) return [];
+              return destinations.flatMap((destCode) => {
+                const d = CITIES_BY_CODE[destCode];
+                if (!d) return [];
+                const path = arcPathGreatCircle(
+                  [hub.lon, hub.lat],
+                  [d.lon, d.lat],
+                  project,
+                );
+                if (!path) return [];
+                return (
+                  <path
+                    key={`${rv.id}-${destCode}`}
+                    d={path}
+                    stroke={rv.color}
+                    strokeWidth={0.9 * Math.sqrt(scale / DEFAULT_SCALE)}
+                    strokeOpacity="0.35"
+                    strokeDasharray="2 4"
+                  />
+                );
+              });
+            })}
+          </g>
+        )}
+
+        {/* Rival hub markers */}
+        {rivals && rivals.length > 0 && (
+          <g>
+            {rivals.map((rv) => {
+              const hub = CITIES_BY_CODE[rv.hubCode];
+              if (!hub || !isVisible(hub.lon, hub.lat)) return null;
+              const xy = project([hub.lon, hub.lat]);
+              if (!xy) return null;
+              const r = 4 * Math.sqrt(scale / DEFAULT_SCALE);
+              return (
+                <g key={`rival-hub-${rv.id}`} transform={`translate(${xy[0]},${xy[1]})`}>
+                  <circle r={r * 2.5} fill="none" stroke={rv.color} strokeWidth="1" strokeOpacity="0.3" strokeDasharray="2 2" />
+                  <circle r={r} fill={rv.color} stroke="var(--surface)" strokeWidth="1.2" opacity="0.7" />
+                </g>
               );
             })}
           </g>

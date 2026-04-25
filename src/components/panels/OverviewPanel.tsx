@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge, Button, Metric } from "@/components/ui";
+import { Badge, Button, Metric, Sparkline } from "@/components/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
@@ -23,6 +23,13 @@ export function OverviewPanel() {
   const prevRevenue = player.financialsByQuarter.at(-2)?.revenue ?? 0;
   const revenueDelta =
     prevRevenue > 0 ? ((totalRevenueLast - prevRevenue) / prevRevenue) * 100 : 0;
+
+  // Sparkline history (PRD §19.4) — last 8 quarters
+  const history = player.financialsByQuarter.slice(-8);
+  const bvSeries = history.map((q) => q.brandValue);
+  const cashSeries = history.map((q) => q.cash);
+  const revenueSeries = history.map((q) => q.revenue);
+  const loyaltySeries = history.map((q) => q.loyalty);
 
   const pendingDecisions = (SCENARIOS_BY_QUARTER[s.currentQuarter] ?? []).filter(
     (sc) =>
@@ -67,18 +74,18 @@ export function OverviewPanel() {
           Financial health
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Metric label="Cash" value={fmtMoney(player.cashUsd)} />
+          <MetricWithSpark label="Cash" value={fmtMoney(player.cashUsd)} series={cashSeries} />
           <Metric label="Debt" value={fmtMoney(player.totalDebtUsd)} />
           <Metric label="Airline value" value={fmtMoney(airlineValue)} />
-          <Metric
+          <MetricWithSpark
             label="Revenue last Q"
             value={fmtMoney(totalRevenueLast)}
+            series={revenueSeries}
             delta={
               revenueDelta !== 0
                 ? {
                     value: revenueDelta,
-                    format: (n) =>
-                      `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`,
+                    format: (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`,
                   }
                 : undefined
             }
@@ -91,9 +98,19 @@ export function OverviewPanel() {
           Brand health
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <Metric label="Brand value" value={player.brandValue.toFixed(1)} />
+          <MetricWithSpark
+            label="Brand value"
+            value={player.brandValue.toFixed(1)}
+            series={bvSeries}
+            color="var(--accent)"
+          />
           <Metric label="Brand pts" value={player.brandPts.toFixed(0)} />
-          <Metric label="Loyalty" value={fmtPct(player.customerLoyaltyPct, 0)} />
+          <MetricWithSpark
+            label="Loyalty"
+            value={fmtPct(player.customerLoyaltyPct, 0)}
+            series={loyaltySeries}
+            color="var(--info)"
+          />
           <Metric label="Ops pts" value={player.opsPts.toFixed(0)} />
         </div>
       </div>
@@ -185,6 +202,29 @@ export function OverviewPanel() {
         </div>
       </div>
 
+      {/* Cargo contracts */}
+      {s.cargoContracts.filter((c) => c.teamId === player.id).length > 0 && (
+        <div className="rounded-md border border-[var(--positive-soft)] bg-[var(--positive-soft)]/30 p-3">
+          <div className="text-[0.6875rem] uppercase tracking-wider text-positive mb-1">
+            Active cargo contracts
+          </div>
+          <div className="space-y-1 text-[0.75rem]">
+            {s.cargoContracts
+              .filter((c) => c.teamId === player.id)
+              .map((c) => (
+                <div key={c.id} className="flex items-center justify-between text-ink-2">
+                  <span className="font-mono text-ink">
+                    {c.originCode} ↔ {c.destCode}
+                  </span>
+                  <span className="tabular">
+                    {c.guaranteedTonnesPerWeek}T/wk · {c.quartersRemaining}Q · {c.source}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
       {/* Milestones */}
       {player.milestones && player.milestones.length > 0 && (
         <div>
@@ -269,6 +309,45 @@ export function OverviewPanel() {
       >
         Open Ops form →
       </Button>
+    </div>
+  );
+}
+
+function MetricWithSpark({
+  label,
+  value,
+  series,
+  color,
+  delta,
+}: {
+  label: string;
+  value: React.ReactNode;
+  series: number[];
+  color?: string;
+  delta?: { value: number; format?: (n: number) => string };
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-[0.6875rem] font-medium uppercase tracking-wider text-ink-muted">
+        {label}
+      </div>
+      <div className="flex items-end justify-between gap-2">
+        <span className="tabular font-display text-[1.5rem] leading-none text-ink">
+          {value}
+        </span>
+        {series.length >= 2 && (
+          <Sparkline values={series} color={color ?? "var(--accent)"} width={64} height={24} />
+        )}
+      </div>
+      {delta && (
+        <span
+          className={`tabular text-[0.75rem] font-medium ${
+            delta.value > 0 ? "text-positive" : delta.value < 0 ? "text-negative" : "text-ink-muted"
+          }`}
+        >
+          {(delta.format ?? ((n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}`))(delta.value)}
+        </span>
+      )}
     </div>
   );
 }

@@ -58,6 +58,9 @@ export function RoutesPanel() {
                       <div className="font-mono text-ink font-medium">
                         {r.originCode} → {r.destCode}
                         {r.isCargo && <Badge tone="warning" className="ml-2">Cargo</Badge>}
+                        {(r.consecutiveLosingQuarters ?? 0) >= 2 && (
+                          <Badge tone="negative" className="ml-2">Route Review · {r.consecutiveLosingQuarters}Q losses</Badge>
+                        )}
                       </div>
                       <div className="text-[0.75rem] text-ink-muted tabular mt-0.5">
                         {origin?.name} · {dest?.name} · {Math.round(r.distanceKm).toLocaleString()} km
