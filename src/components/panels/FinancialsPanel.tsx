@@ -60,15 +60,53 @@ export function FinancialsPanel() {
           <Row k="Your effective rate" v={`${rate.toFixed(2)}%`} bold />
           <Row k="Max borrowing" v={fmtMoney(maxBorrow)} />
           {player.loans.length > 0 && (
-            <div className="mt-3 pt-2 border-t border-line space-y-1">
-              {player.loans.map((loan) => (
-                <div key={loan.id} className="flex items-center justify-between text-[0.75rem]">
-                  <span className="text-ink-muted">Loan Q{loan.originQuarter}</span>
-                  <span className="tabular font-mono text-ink">
-                    {fmtMoney(loan.remainingPrincipal)} @ {loan.ratePct.toFixed(1)}%
-                  </span>
-                </div>
-              ))}
+            <div className="mt-3 pt-2 border-t border-line space-y-1.5">
+              {player.loans.map((loan) => {
+                const canRepay = player.cashUsd >= loan.remainingPrincipal;
+                const newRateAvailable = s.baseInterestRatePct;
+                const refiSavings = loan.ratePct - newRateAvailable;
+                const canRefi = refiSavings >= 0.25 && player.cashUsd >= loan.remainingPrincipal * 0.01;
+                return (
+                  <div key={loan.id} className="rounded-md border border-line bg-surface px-2.5 py-2">
+                    <div className="flex items-baseline justify-between text-[0.75rem] mb-1">
+                      <span className="text-ink-muted">Loan · Q{loan.originQuarter}</span>
+                      <span className="tabular font-mono text-ink">
+                        {fmtMoney(loan.remainingPrincipal)} @ {loan.ratePct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={!canRepay}
+                        title={canRepay ? "Pay off in full" : `Need ${fmtMoney(loan.remainingPrincipal - player.cashUsd)} more cash`}
+                        onClick={() => {
+                          const r = s.repayLoan(loan.id);
+                          if (!r.ok) setError(r.error ?? "Repay failed");
+                        }}
+                      >
+                        Repay {fmtMoney(loan.remainingPrincipal)}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={!canRefi}
+                        title={canRefi
+                          ? `Refi to ${newRateAvailable.toFixed(1)}% (1% fee)`
+                          : refiSavings < 0.25
+                            ? "Base rate not low enough yet"
+                            : "Need cash for 1% fee"}
+                        onClick={() => {
+                          const r = s.refinanceLoan(loan.id);
+                          if (!r.ok) setError(r.error ?? "Refi failed");
+                        }}
+                      >
+                        Refi → {newRateAvailable.toFixed(1)}%
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

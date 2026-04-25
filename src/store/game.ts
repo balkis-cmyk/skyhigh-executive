@@ -114,6 +114,8 @@ export interface GameStore extends GameState {
   }): void;
 
   borrowCapital(amount: number): { ok: boolean; error?: string };
+  repayLoan(loanId: string): { ok: boolean; error?: string };
+  refinanceLoan(loanId: string): { ok: boolean; error?: string };
 
   closeQuarter(): void;
   advanceToNext(): void;
@@ -844,6 +846,59 @@ export const useGame = create<GameStore>()(
             loans: [...t.loans, loan],
           }),
         });
+        return { ok: true };
+      },
+
+      repayLoan: (loanId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        const loan = player.loans.find((l) => l.id === loanId);
+        if (!loan) return { ok: false, error: "Loan not found" };
+        if (player.cashUsd < loan.remainingPrincipal)
+          return { ok: false, error: `Need ${fmtMoneyPlain(loan.remainingPrincipal)} cash` };
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd - loan.remainingPrincipal,
+            totalDebtUsd: Math.max(0, t.totalDebtUsd - loan.remainingPrincipal),
+            loans: t.loans.filter((l) => l.id !== loanId),
+          }),
+        });
+        toast.success(
+          `Loan repaid · ${fmtMoneyPlain(loan.remainingPrincipal)}`,
+          `Saved ${loan.ratePct.toFixed(1)}% interest going forward.`,
+        );
+        return { ok: true };
+      },
+
+      refinanceLoan: (loanId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        const loan = player.loans.find((l) => l.id === loanId);
+        if (!loan) return { ok: false, error: "Loan not found" };
+        const newRate = s.baseInterestRatePct;
+        if (newRate >= loan.ratePct - 0.25)
+          return { ok: false, error: "New rate isn't enough lower (need ≥0.25% saving)" };
+        const fee = loan.remainingPrincipal * 0.01;  // 1% refi fee
+        if (player.cashUsd < fee)
+          return { ok: false, error: `Need ${fmtMoneyPlain(fee)} for 1% refi fee` };
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd - fee,
+            loans: t.loans.map((l) => l.id !== loanId ? l : {
+              ...l,
+              ratePct: newRate,
+              originQuarter: s.currentQuarter,
+            }),
+          }),
+        });
+        toast.info(
+          `Loan refinanced · ${loan.ratePct.toFixed(1)}% → ${newRate.toFixed(1)}%`,
+          `1% origination fee applied (${fmtMoneyPlain(fee)}).`,
+        );
         return { ok: true };
       },
 
