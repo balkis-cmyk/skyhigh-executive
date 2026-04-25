@@ -1085,6 +1085,21 @@ export const useGame = create<GameStore>()(
           }
         }
 
+        // Persist the bid prices on a pending route so the auction can
+        // auto re-submit them every quarter close until the route either
+        // activates OR the player cancels. Without this, a single
+        // outbid+0-slot result leaves the route stuck pending forever.
+        const pendingBidPrices: Record<string, number> = {};
+        const pendingBidSlots: Record<string, number> = {};
+        if (willBePending) {
+          for (const bid of slotBids ?? []) {
+            const need = bid.airportCode === originCode ? shortAtOrigin :
+              bid.airportCode === destCode ? shortAtDest : 0;
+            if (need <= 0) continue;
+            pendingBidPrices[bid.airportCode] = bid.pricePerSlot;
+            pendingBidSlots[bid.airportCode] = Math.max(need, bid.slots ?? need);
+          }
+        }
         const route = {
           id: mkId("route"),
           originCode,
@@ -1107,6 +1122,8 @@ export const useGame = create<GameStore>()(
           quarterlySlotCost: 0,
           isCargo: isCargo ?? false,
           consecutiveQuartersActive: 0,
+          pendingBidPrices: willBePending ? pendingBidPrices : undefined,
+          pendingBidSlots: willBePending ? pendingBidSlots : undefined,
           consecutiveLosingQuarters: 0,
         };
 
@@ -1689,6 +1706,52 @@ export const useGame = create<GameStore>()(
         // award winners, charge cash, add to slotsByAirport.
         const bidsByAirport: Record<string, BidEntry[]> = {};
         for (const t of [closed, ...rivals]) {
+          // CRITICAL: auto re-bid for pending routes whose stored
+          // pendingBidPrices indicate the player committed to a price.
+          // Without this, a pending route gets ONE auction attempt and
+          // then the bid is gone — the route sits forever pending. Now
+          // every quarter close re-issues those bids until the route
+          // either activates OR the player cancels manually.
+          const autoRebidsByAirport: Record<string, { slots: number; price: number }> = {};
+          for (const r of t.routes) {
+            if (r.status !== "pending") continue;
+            if (!r.pendingBidPrices) continue;
+            for (const code of Object.keys(r.pendingBidPrices)) {
+              const slotsHeld = t.airportLeases?.[code]?.slots ?? 0;
+              const usedAtCode = t.routes
+                .filter((rt) =>
+                  rt.id !== r.id &&
+                  (rt.status === "active" || rt.status === "suspended") &&
+                  (rt.originCode === code || rt.destCode === code),
+                )
+                .reduce((sum, rt) => sum + rt.dailyFrequency * 7, 0);
+              const intendedWeekly = r.dailyFrequency * 7;
+              const stillNeeded = Math.max(0, intendedWeekly + usedAtCode - slotsHeld);
+              if (stillNeeded <= 0) continue;
+              const price = r.pendingBidPrices[code];
+              const cur = autoRebidsByAirport[code];
+              autoRebidsByAirport[code] = {
+                slots: (cur?.slots ?? 0) + stillNeeded,
+                price: Math.max(cur?.price ?? 0, price),
+              };
+            }
+          }
+          // Merge auto-rebids into the team's pendingSlotBids before
+          // the auction so they participate.
+          for (const code of Object.keys(autoRebidsByAirport)) {
+            const existing = (t.pendingSlotBids ?? []).find((b) => b.airportCode === code);
+            if (existing) {
+              existing.slots = Math.max(existing.slots, autoRebidsByAirport[code].slots);
+              existing.pricePerSlot = Math.max(existing.pricePerSlot, autoRebidsByAirport[code].price);
+            } else {
+              (t.pendingSlotBids ??= []).push({
+                airportCode: code,
+                slots: autoRebidsByAirport[code].slots,
+                pricePerSlot: autoRebidsByAirport[code].price,
+                quarterSubmitted: s.currentQuarter,
+              });
+            }
+          }
           for (const b of (t.pendingSlotBids ?? [])) {
             (bidsByAirport[b.airportCode] ??= []).push({
               teamId: t.id,
@@ -1907,6 +1970,10 @@ export const useGame = create<GameStore>()(
               ...r,
               status: "active" as const,
               dailyFrequency: Math.max(1, Math.round(effectiveWeekly / 7)),
+              // Clear stored bid commitments — the route is now active and
+              // shouldn't auto-rebid next quarter.
+              pendingBidPrices: undefined,
+              pendingBidSlots: undefined,
             });
           }
           // No automatic fleet release — pending routes still hold their

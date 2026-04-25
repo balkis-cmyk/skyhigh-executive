@@ -125,6 +125,15 @@ export interface Route {
   consecutiveQuartersActive: number;
   /** Quarters in a row this route has been loss-making (for PRD G2 badge). */
   consecutiveLosingQuarters: number;
+
+  /** Bids the player committed to when opening this route as PENDING.
+   *  Persists across quarter closes so the route auto re-bids each
+   *  auction until it activates OR the player cancels manually. Cleared
+   *  once the route activates. Keyed by airport code. */
+  pendingBidPrices?: Record<string, number>;
+  /** Slot count to bid for at each airport (defaults to current
+   *  shortfall). Persisted alongside pendingBidPrices. */
+  pendingBidSlots?: Record<string, number>;
 }
 
 // ─── Sliders ──────────────────────────────────────────────

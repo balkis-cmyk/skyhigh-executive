@@ -34,6 +34,11 @@ export interface WorldMapProps {
   rivals?: Team[];
   selectedOriginCode?: string | null;
   onCityClick?: (city: City) => void;
+  /** Double-click on a city marker — opens an airport detail popup
+   *  showing slot ownership across teams, available slots, and the
+   *  airport's primary hub airline. Distinct from single-click which
+   *  drives route picking. */
+  onCityDoubleClick?: (city: City) => void;
   onCityHover?: (city: City | null) => void;
   onClearSelection?: () => void;
   className?: string;
@@ -132,6 +137,7 @@ export function WorldMap({
   rivals,
   selectedOriginCode,
   onCityClick,
+  onCityDoubleClick,
   onCityHover,
   onClearSelection,
   className,
@@ -353,6 +359,15 @@ export function WorldMap({
               }}
               eventHandlers={{
                 click: () => onCityClick?.(c),
+                dblclick: (e) => {
+                  // Stop the click bubbling — Leaflet otherwise triggers
+                  // the single-click handler twice before this fires.
+                  if (e.originalEvent) {
+                    e.originalEvent.stopPropagation();
+                    e.originalEvent.preventDefault();
+                  }
+                  onCityDoubleClick?.(c);
+                },
                 mouseover: () => {
                   setHoverCode(c.code);
                   onCityHover?.(c);
