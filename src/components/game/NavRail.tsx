@@ -19,6 +19,7 @@ import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
 import { NEWS_BY_QUARTER } from "@/data/world-news";
 import type { NewsItem } from "@/types/game";
 import { cn } from "@/lib/cn";
+import { fmtQuarter } from "@/lib/format";
 
 export type { PanelId };
 
@@ -278,7 +279,7 @@ export function NavRail() {
                       {outletFor(n)}
                     </span>
                     <span className="text-[0.625rem] tabular text-ink-muted font-mono">
-                      Q{n.quarter}
+                      {fmtQuarter(n.quarter)}
                     </span>
                   </div>
                   <h3 className="text-[0.75rem] font-medium text-ink leading-snug">

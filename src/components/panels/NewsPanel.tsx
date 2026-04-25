@@ -65,7 +65,7 @@ export function NewsPanel() {
         return (
           <section key={q}>
             <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2 flex items-center gap-2">
-              <span className="font-mono tabular text-ink">Q{q}</span>
+              <span className="font-mono tabular text-ink">{fmtQuarter(q)}</span>
               <span className="h-px flex-1 bg-line" />
               <span className="tabular text-ink-muted">{items.length}</span>
             </div>

@@ -21,14 +21,27 @@ const SPEC_TO_IMAGE: Record<string, string> = {
   // Q1 wide-body passenger
   "B767-300ER":   "B767-300/B767-300_3view.png",      // ER variant uses base 3-view
   "A330-200":     "A330-200/A330-200_3view.png",
+  "A330-300":     "A330-300/A330-300_3view.png",
   "B777-200ER":   "B777-200ER/B777-200ER_3view.png",
   "B747-400":     "B747-400/B747-400_3view.png",
+
+  // Q1 turboprop / regional starters
+  "Dash-8-400":   "Dash 8-400/Dash 8-400_3view.png",
 
   // Q1 cargo (cargo variants reuse the passenger silhouette where available)
   "B737-300F":    "B737-300/B737-300_3view.png",
   "B757-200F":    "B757-200/B757-200_3view.png",
   "B767-300F":    "B767-300F/B767-300F_3view.png",
   "B747-400F":    "B747-400F/B747-400F_3view.png",
+
+  // Mid-game regional + alt-brand unlocks
+  "CRJ-900":      "CRJ-900/CRJ-900_3view.png",
+  "B777-300ER":   "B777-300ER/B777-300ER_3view.png",
+  "E190":         "E190/E190_3view.png",
+  "ATR-72-600":   "ATR 72-600/ATR 72-600_3view.png",
+  "B747-8":       "B747-8/B747-8_3view.png",
+  "E195-E2":      "E195-E2/E195-E2_3view.png",
+  "C919":         "C919/C919_3view.png",
 
   // Unlocks (real EIS dates 2007-2026 mapped to game quarters)
   "A380-800":     "A380-800/A380-800_3view.png",

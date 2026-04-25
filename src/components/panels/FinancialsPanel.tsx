@@ -289,8 +289,17 @@ function ProjectedPL() {
       baseInterestRatePct: s.baseInterestRatePct,
       fuelIndex: s.fuelIndex,
       quarter: s.currentQuarter,
+      worldCupHostCode: s.worldCupHostCode,
+      olympicHostCode: s.olympicHostCode,
     });
-  }, [player, s.baseInterestRatePct, s.fuelIndex, s.currentQuarter]);
+  }, [
+    player,
+    s.baseInterestRatePct,
+    s.fuelIndex,
+    s.currentQuarter,
+    s.worldCupHostCode,
+    s.olympicHostCode,
+  ]);
 
   if (!projected || !player) return null;
   const p = projected;

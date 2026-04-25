@@ -76,10 +76,17 @@ export function RoutesPanel() {
           const rb =
             b.status === "pending" ? -2 : b.status === "active" ? 0 : 1;
           if (ra !== rb) return ra - rb;
-          return (
-            b.quarterlyRevenue - b.quarterlyFuelCost - b.quarterlySlotCost -
-            (a.quarterlyRevenue - a.quarterlyFuelCost - a.quarterlySlotCost)
-          );
+          // Sort active routes by allocated profit (revenue − fully-loaded
+          // cost) so the table matches what the player sees in financials.
+          const profitA =
+            a.quarterlyAllocatedCost !== undefined
+              ? a.quarterlyRevenue - a.quarterlyAllocatedCost
+              : a.quarterlyRevenue - a.quarterlyFuelCost - a.quarterlySlotCost;
+          const profitB =
+            b.quarterlyAllocatedCost !== undefined
+              ? b.quarterlyRevenue - b.quarterlyAllocatedCost
+              : b.quarterlyRevenue - b.quarterlyFuelCost - b.quarterlySlotCost;
+          return profitB - profitA;
         },
       );
   }, [player, query]);
@@ -90,12 +97,17 @@ export function RoutesPanel() {
     ? player.routes.find((r) => r.id === activeRouteId) ?? null
     : null;
 
-  // Network-wide KPIs across active routes
+  // Network-wide KPIs across active routes. Use allocated cost when
+  // available (route revenue minus its share of all team-level costs)
+  // so this number reconciles with the player's financials. Falls back
+  // to revenue − fuel − slot for any pre-allocation save.
   const activeRoutes = player.routes.filter((r) => r.status === "active");
+  const routeProfit = (r: typeof activeRoutes[number]) =>
+    r.quarterlyAllocatedCost !== undefined
+      ? r.quarterlyRevenue - r.quarterlyAllocatedCost
+      : r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
   const totalQRev = activeRoutes.reduce((s, r) => s + r.quarterlyRevenue, 0);
-  const totalQProfit = activeRoutes.reduce(
-    (s, r) => s + r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost, 0,
-  );
+  const totalQProfit = activeRoutes.reduce((s, r) => s + routeProfit(r), 0);
   const avgLoad = activeRoutes.length > 0
     ? activeRoutes.reduce((s, r) => s + r.avgOccupancy, 0) / activeRoutes.length
     : 0;
@@ -163,7 +175,7 @@ export function RoutesPanel() {
             </thead>
             <tbody>
               {rows.map((r) => {
-                const profit = r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
+                const profit = routeProfit(r);
                 const origin = CITIES_BY_CODE[r.originCode];
                 const dest = CITIES_BY_CODE[r.destCode];
                 const suspended = r.status === "suspended";
@@ -640,7 +652,10 @@ function RouteDetailModal({
 
   const origin = CITIES_BY_CODE[route.originCode];
   const dest = CITIES_BY_CODE[route.destCode];
-  const profit = route.quarterlyRevenue - route.quarterlyFuelCost - route.quarterlySlotCost;
+  const profit =
+    route.quarterlyAllocatedCost !== undefined
+      ? route.quarterlyRevenue - route.quarterlyAllocatedCost
+      : route.quarterlyRevenue - route.quarterlyFuelCost - route.quarterlySlotCost;
   const econRange = classFareRange(route.distanceKm, "econ");
   const busRange = classFareRange(route.distanceKm, "bus");
   const firstRange = classFareRange(route.distanceKm, "first");
@@ -974,42 +989,55 @@ function CompetitorsTable({
           </thead>
           <tbody>
             {/* Always include the player's own row at the top for comparison */}
-            <tr className="border-t border-line bg-[var(--accent-soft)]/30">
-              <td className="px-2 py-1.5">
-                <span
-                  className="inline-block w-4 h-4 rounded-sm align-middle mr-1.5"
-                  style={{ background: player.color }}
-                />
-                <span className="font-semibold text-ink">{player.name}</span>
-                <span className="ml-1 text-[0.6875rem] text-accent uppercase tracking-wider font-bold">YOU</span>
-              </td>
-              <td className="px-2 py-1.5 font-mono text-ink-2">
-                {(() => {
-                  const planeId = route.aircraftIds[0];
-                  const plane = planeId ? player.fleet.find((f) => f.id === planeId) : undefined;
-                  return plane ? plane.specId : "—";
-                })()}
-              </td>
-              <td className="px-2 py-1.5 text-right tabular font-mono text-ink">{route.dailyFrequency * 7}</td>
-              <td className="px-2 py-1.5 text-right text-[0.6875rem] capitalize">{route.pricingTier}</td>
-              <td className={cn(
-                "px-2 py-1.5 text-right tabular font-mono",
-                route.avgOccupancy > 0.7 ? "text-positive" :
-                route.avgOccupancy > 0 && route.avgOccupancy < 0.5 ? "text-negative" : "text-ink",
-              )}>
-                {fmtPct(route.avgOccupancy * 100, 0)}
-              </td>
-              <td className={cn(
-                "px-2 py-1.5 text-right tabular font-mono font-medium",
-                (route.quarterlyRevenue - route.quarterlyFuelCost - route.quarterlySlotCost) >= 0 ? "text-positive" : "text-negative",
-              )}>
-                {fmtMoney(route.quarterlyRevenue - route.quarterlyFuelCost - route.quarterlySlotCost)}
-              </td>
-            </tr>
+            {(() => {
+              const playerProfit =
+                route.quarterlyAllocatedCost !== undefined
+                  ? route.quarterlyRevenue - route.quarterlyAllocatedCost
+                  : route.quarterlyRevenue - route.quarterlyFuelCost - route.quarterlySlotCost;
+              return (
+                <tr className="border-t border-line bg-[var(--accent-soft)]/30">
+                  <td className="px-2 py-1.5">
+                    <span
+                      className="inline-block w-4 h-4 rounded-sm align-middle mr-1.5"
+                      style={{ background: player.color }}
+                    />
+                    <span className="font-semibold text-ink">{player.name}</span>
+                    <span className="ml-1 text-[0.6875rem] text-accent uppercase tracking-wider font-bold">YOU</span>
+                  </td>
+                  <td className="px-2 py-1.5 font-mono text-ink-2">
+                    {(() => {
+                      const planeId = route.aircraftIds[0];
+                      const plane = planeId ? player.fleet.find((f) => f.id === planeId) : undefined;
+                      return plane ? plane.specId : "—";
+                    })()}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular font-mono text-ink">{route.dailyFrequency * 7}</td>
+                  <td className="px-2 py-1.5 text-right text-[0.6875rem] capitalize">{route.pricingTier}</td>
+                  <td className={cn(
+                    "px-2 py-1.5 text-right tabular font-mono",
+                    route.avgOccupancy > 0.7 ? "text-positive" :
+                    route.avgOccupancy > 0 && route.avgOccupancy < 0.5 ? "text-negative" : "text-ink",
+                  )}>
+                    {fmtPct(route.avgOccupancy * 100, 0)}
+                  </td>
+                  <td className={cn(
+                    "px-2 py-1.5 text-right tabular font-mono font-medium",
+                    playerProfit >= 0 ? "text-positive" : "text-negative",
+                  )}>
+                    {fmtMoney(playerProfit)}
+                  </td>
+                </tr>
+              );
+            })()}
             {rivals.map(({ team, route: r }) => {
               const planeId = r.aircraftIds[0];
               const plane = planeId ? team.fleet.find((f) => f.id === planeId) : undefined;
-              const profit = r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
+              // Rivals don't have allocated cost yet (their close ran for
+              // their team) so fall back to revenue − direct route costs.
+              const profit =
+                r.quarterlyAllocatedCost !== undefined
+                  ? r.quarterlyRevenue - r.quarterlyAllocatedCost
+                  : r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
               return (
                 <tr key={team.id} className="border-t border-line">
                   <td className="px-2 py-1.5">

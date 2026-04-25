@@ -43,6 +43,16 @@ export const AIRCRAFT: AircraftSpec[] = [
     seats: { first: 18, business: 58, economy: 340 }, rangeKm: 13_450,
     fuelBurnPerKm: 8.5, buyPriceUsd: 120_000_000, leasePerQuarterUsd: 980_000,
     ecoUpgradeUsd: 12_000_000, note: "Slot-constrained hub workhorse. Needs high load to profit." },
+  // A330-300 EIS 1994 → R1 (pre-2000 → starter)
+  { id: "A330-300", name: "Airbus A330-300", family: "passenger", unlockQuarter: 1,
+    seats: { first: 12, business: 42, economy: 241 }, rangeKm: 11_750,
+    fuelBurnPerKm: 5.1, buyPriceUsd: 82_000_000, leasePerQuarterUsd: 670_000,
+    ecoUpgradeUsd: 8_200_000, note: "Higher-density A330 (real EIS 1994). Best mid-haul economics." },
+  // Dash 8-400 EIS 2000 → R1 (turboprop regional)
+  { id: "Dash-8-400", name: "Bombardier Dash 8 Q400", family: "passenger", unlockQuarter: 1,
+    seats: { first: 0, business: 0, economy: 78 }, rangeKm: 2040,
+    fuelBurnPerKm: 1.5, buyPriceUsd: 18_000_000, leasePerQuarterUsd: 150_000,
+    ecoUpgradeUsd: 1_800_000, note: "Turboprop regional (real EIS 2000). Best on thin short-haul routes." },
 
   // ─── Q1 cargo ───────────────────────────────────────────────
   { id: "B737-300F", name: "Boeing 737-300F", family: "cargo", unlockQuarter: 1,
@@ -131,6 +141,43 @@ export const AIRCRAFT: AircraftSpec[] = [
     seats: { first: 8, business: 68, economy: 350 }, rangeKm: 13_940,
     fuelBurnPerKm: 5.0, buyPriceUsd: 180_000_000, leasePerQuarterUsd: 1_475_000,
     ecoUpgradeUsd: 18_000_000, note: "Real EIS 2026. Late-game unlock." },
+
+  // ─── Mid-game unlocks: regional + alt brands ───────────────
+  // CRJ-900 EIS 2003 → round 5
+  { id: "CRJ-900", name: "Bombardier CRJ-900", family: "passenger", unlockQuarter: 5,
+    seats: { first: 0, business: 12, economy: 78 }, rangeKm: 2876,
+    fuelBurnPerKm: 2.6, buyPriceUsd: 22_000_000, leasePerQuarterUsd: 180_000,
+    ecoUpgradeUsd: 2_200_000, note: "Real EIS 2003. Regional jet for short feeder routes." },
+  // 777-300ER EIS 2004 → round 9
+  { id: "B777-300ER", name: "Boeing 777-300ER", family: "passenger", unlockQuarter: 9,
+    seats: { first: 8, business: 64, economy: 324 }, rangeKm: 13_650,
+    fuelBurnPerKm: 6.2, buyPriceUsd: 105_000_000, leasePerQuarterUsd: 860_000,
+    ecoUpgradeUsd: 10_500_000, note: "Real EIS 2004. Long-haul flagship of the 2000s." },
+  // E190 EIS 2005 → round 9
+  { id: "E190", name: "Embraer E190", family: "passenger", unlockQuarter: 9,
+    seats: { first: 0, business: 12, economy: 88 }, rangeKm: 4537,
+    fuelBurnPerKm: 2.7, buyPriceUsd: 24_000_000, leasePerQuarterUsd: 195_000,
+    ecoUpgradeUsd: 2_400_000, note: "Real EIS 2005. Premium regional jet, fits thin business routes." },
+  // ATR 72-600 EIS 2011 → round 21
+  { id: "ATR-72-600", name: "ATR 72-600", family: "passenger", unlockQuarter: 21,
+    seats: { first: 0, business: 0, economy: 70 }, rangeKm: 1528,
+    fuelBurnPerKm: 1.4, buyPriceUsd: 21_000_000, leasePerQuarterUsd: 170_000,
+    ecoUpgradeUsd: 2_100_000, note: "Real EIS 2011. Most fuel-efficient turboprop on short routes." },
+  // 747-8 EIS 2012 → round 25
+  { id: "B747-8", name: "Boeing 747-8 Intercontinental", family: "passenger", unlockQuarter: 25,
+    seats: { first: 12, business: 70, economy: 386 }, rangeKm: 14_320,
+    fuelBurnPerKm: 8.0, buyPriceUsd: 135_000_000, leasePerQuarterUsd: 1_100_000,
+    ecoUpgradeUsd: 13_500_000, note: "Real EIS 2012. Final 747 evolution; high-capacity hub-to-hub." },
+  // E195-E2 EIS 2019 → round 37
+  { id: "E195-E2", name: "Embraer E195-E2", family: "passenger", unlockQuarter: 37,
+    seats: { first: 0, business: 12, economy: 120 }, rangeKm: 4815,
+    fuelBurnPerKm: 2.4, buyPriceUsd: 30_000_000, leasePerQuarterUsd: 245_000,
+    ecoUpgradeUsd: 3_000_000, note: "Real EIS 2019. New-gen regional, beats narrow-body fuel burn." },
+  // C919 EIS 2022 → round 40 (clamped)
+  { id: "C919", name: "COMAC C919", family: "passenger", unlockQuarter: 40,
+    seats: { first: 0, business: 18, economy: 140 }, rangeKm: 5555,
+    fuelBurnPerKm: 3.1, buyPriceUsd: 25_000_000, leasePerQuarterUsd: 205_000,
+    ecoUpgradeUsd: 2_500_000, note: "Real EIS 2022. China's narrow-body challenger to A320/737." },
 ];
 
 export const AIRCRAFT_BY_ID: Record<string, AircraftSpec> = AIRCRAFT.reduce(

@@ -31,8 +31,17 @@ export function AdminPanel() {
       baseInterestRatePct: s.baseInterestRatePct,
       fuelIndex: s.fuelIndex,
       quarter: s.currentQuarter,
+      worldCupHostCode: s.worldCupHostCode,
+      olympicHostCode: s.olympicHostCode,
     });
-  }, [player, s.baseInterestRatePct, s.fuelIndex, s.currentQuarter]);
+  }, [
+    player,
+    s.baseInterestRatePct,
+    s.fuelIndex,
+    s.currentQuarter,
+    s.worldCupHostCode,
+    s.olympicHostCode,
+  ]);
 
   if (!player || !preview) return null;
 

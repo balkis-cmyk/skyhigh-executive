@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
-import { CITIES_BY_CODE } from "@/data/cities";
+import { CITIES, CITIES_BY_CODE } from "@/data/cities";
 import { SCENARIOS, SCENARIOS_BY_QUARTER, type OptionEffect } from "@/data/scenarios";
 import {
   applyOptionEffect,
@@ -425,6 +425,8 @@ export const useGame = create<GameStore>()(
       secondHandListings: [],
       cargoContracts: [],
       airportSlots: {},
+      worldCupHostCode: null,
+      olympicHostCode: null,
       sessionCode: null,
       sessionSlots: [],
 
@@ -651,6 +653,26 @@ export const useGame = create<GameStore>()(
           rivals.push(r);
         }
 
+        // Pick neutral tier 1-2 host cities for the tournaments — must
+        // not collide with any team's primary or secondary hub so no one
+        // gets a free home-team load factor. World Cup runs rounds
+        // 19-24, Olympics rounds 29-32. Two distinct cities.
+        const allTeamHubs = new Set<string>();
+        for (const t of [player, ...rivals]) {
+          allTeamHubs.add(t.hubCode);
+          for (const sh of t.secondaryHubCodes ?? []) allTeamHubs.add(sh);
+        }
+        const hostCandidates = CITIES
+          .filter((c) => (c.tier === 1 || c.tier === 2) && !allTeamHubs.has(c.code))
+          .map((c) => c.code);
+        const pickHost = (exclude?: string | null): string | null => {
+          const pool = hostCandidates.filter((c) => c !== exclude);
+          if (pool.length === 0) return null;
+          return pool[Math.floor(Math.random() * pool.length)];
+        };
+        const worldCupHostCode = pickHost();
+        const olympicHostCode = pickHost(worldCupHostCode);
+
         set({
           phase: "playing",
           currentQuarter: 2, // skip Q1 brand-building for single-team demo
@@ -660,6 +682,8 @@ export const useGame = create<GameStore>()(
           playerTeamId: player.id,
           lastCloseResult: null,
           airportSlots: makeInitialAirportSlots(),
+          worldCupHostCode,
+          olympicHostCode,
         });
 
         if (l0Rank && l0Rank <= 3) {
@@ -1761,7 +1785,7 @@ export const useGame = create<GameStore>()(
         if (ordersThisQuarter === 0 && averageAge >= 10) {
           newFlags.add("aging_fleet");
         }
-        const teamReady: Team = {
+        const teamReadyPre: Team = {
           ...ensureStreaks(player),
           fleet: finalFleet,
           routes: player.routes.map((r) => {
@@ -1775,12 +1799,192 @@ export const useGame = create<GameStore>()(
           sliderStreaks: { ...player.sliderStreaks },
         };
 
+        // ── Slot auctions + pending-route activation (run BEFORE revenue) ──
+        // Sequence fix: routes that win their slot bids must activate THIS
+        // quarter and contribute to revenue, otherwise aircraft sit idle for
+        // an entire quarter after the player creates a route. We resolve
+        // auctions and flip pending → active first, then `runQuarterClose`
+        // sees the routes as flying and books their revenue.
+        const earlyRivals = s.teams.filter((t) => t.id !== player.id);
+        const earlyBidsByAirport: Record<string, BidEntry[]> = {};
+        for (const t of [teamReadyPre, ...earlyRivals]) {
+          // Auto re-bid for pending routes whose stored pendingBidPrices
+          // indicate the player committed to a price.
+          const autoRebidsByAirport: Record<string, { slots: number; price: number }> = {};
+          for (const r of t.routes) {
+            if (r.status !== "pending") continue;
+            if (!r.pendingBidPrices) continue;
+            for (const code of Object.keys(r.pendingBidPrices)) {
+              const slotsHeld = t.airportLeases?.[code]?.slots ?? 0;
+              const usedAtCode = t.routes
+                .filter((rt) =>
+                  rt.id !== r.id &&
+                  (rt.status === "active" || rt.status === "suspended") &&
+                  (rt.originCode === code || rt.destCode === code),
+                )
+                .reduce((sum, rt) => sum + rt.dailyFrequency * 7, 0);
+              const intendedWeekly = r.dailyFrequency * 7;
+              const stillNeeded = Math.max(0, intendedWeekly + usedAtCode - slotsHeld);
+              if (stillNeeded <= 0) continue;
+              const price = r.pendingBidPrices[code];
+              const cur = autoRebidsByAirport[code];
+              autoRebidsByAirport[code] = {
+                slots: (cur?.slots ?? 0) + stillNeeded,
+                price: Math.max(cur?.price ?? 0, price),
+              };
+            }
+          }
+          for (const code of Object.keys(autoRebidsByAirport)) {
+            const existing = (t.pendingSlotBids ?? []).find((b) => b.airportCode === code);
+            if (existing) {
+              existing.slots = Math.max(existing.slots, autoRebidsByAirport[code].slots);
+              existing.pricePerSlot = Math.max(existing.pricePerSlot, autoRebidsByAirport[code].price);
+            } else {
+              (t.pendingSlotBids ??= []).push({
+                airportCode: code,
+                slots: autoRebidsByAirport[code].slots,
+                pricePerSlot: autoRebidsByAirport[code].price,
+                quarterSubmitted: s.currentQuarter,
+              });
+            }
+          }
+          for (const b of (t.pendingSlotBids ?? [])) {
+            (earlyBidsByAirport[b.airportCode] ??= []).push({
+              teamId: t.id,
+              airportCode: b.airportCode,
+              slots: b.slots,
+              pricePerSlot: b.pricePerSlot,
+              quarterSubmitted: b.quarterSubmitted,
+            });
+          }
+        }
+        // Backstop: seed missing airports from initial pool so bids resolve.
+        const earlySlotsForAuction = { ...(s.airportSlots ?? {}) };
+        const earlyFresh = makeInitialAirportSlots();
+        for (const code of Object.keys(earlyBidsByAirport)) {
+          if (!earlySlotsForAuction[code] && earlyFresh[code]) {
+            earlySlotsForAuction[code] = earlyFresh[code];
+          }
+        }
+        const earlyAuction = resolveSlotAuctions(earlySlotsForAuction, earlyBidsByAirport);
+        const slotsAfterEarlyAuction = earlyAuction.slots;
+        const earlyAwards = earlyAuction.awards;
+
+        // Apply awards to player + rivals (Model B — recurring fees)
+        const applyAwards = (t: Team): Team => {
+          const won = earlyAwards.filter((a) => a.teamId === t.id && a.slotsWon > 0);
+          if (won.length === 0) return { ...t, pendingSlotBids: [] };
+          const newLeases: Record<string, AirportLease> = { ...(t.airportLeases ?? {}) };
+          const newSlots: Record<string, number> = { ...t.slotsByAirport };
+          for (const w of won) {
+            const cur = newLeases[w.airportCode] ?? { slots: 0, totalWeeklyCost: 0 };
+            newLeases[w.airportCode] = {
+              slots: cur.slots + w.slotsWon,
+              totalWeeklyCost: cur.totalWeeklyCost + w.slotsWon * w.weeklyPricePerSlot,
+            };
+            newSlots[w.airportCode] = (newSlots[w.airportCode] ?? 0) + w.slotsWon;
+          }
+          return { ...t, airportLeases: newLeases, slotsByAirport: newSlots, pendingSlotBids: [] };
+        };
+
+        const playerWithAwards = applyAwards(teamReadyPre);
+        const rivalsWithAwards = earlyRivals.map(applyAwards);
+
+        // Activate pending routes that now have enough slots at both endpoints.
+        let earlyActivations = 0;
+        const earlyStillPending: string[] = [];
+        const activatePending = (t: Team, surfaceDiagnostics: boolean): Team => {
+          if (!t.routes.some((r) => r.status === "pending")) return t;
+          const newRoutes: typeof t.routes = [];
+          for (const r of t.routes) {
+            if (r.status !== "pending") {
+              newRoutes.push(r);
+              continue;
+            }
+            const slotsO = t.airportLeases?.[r.originCode]?.slots ?? 0;
+            const slotsD = t.airportLeases?.[r.destCode]?.slots ?? 0;
+            const usedO = t.routes
+              .filter((rt) =>
+                rt.id !== r.id &&
+                (rt.status === "active" || rt.status === "suspended") &&
+                (rt.originCode === r.originCode || rt.destCode === r.originCode),
+              )
+              .reduce((sum, rt) => sum + rt.dailyFrequency * 7, 0);
+            const usedD = t.routes
+              .filter((rt) =>
+                rt.id !== r.id &&
+                (rt.status === "active" || rt.status === "suspended") &&
+                (rt.originCode === r.destCode || rt.destCode === r.destCode),
+              )
+              .reduce((sum, rt) => sum + rt.dailyFrequency * 7, 0);
+            const availO = Math.max(0, slotsO - usedO);
+            const availD = Math.max(0, slotsD - usedD);
+            const intendedWeekly = r.dailyFrequency * 7;
+            const effectiveWeekly = Math.min(intendedWeekly, availO, availD);
+            if (effectiveWeekly < 1) {
+              if (surfaceDiagnostics) {
+                earlyStillPending.push(
+                  `${r.originCode}→${r.destCode}: held ${slotsO}@${r.originCode}/${slotsD}@${r.destCode}, ` +
+                  `${usedO}/${usedD} used, ${availO}/${availD} free, need ${intendedWeekly}/wk`,
+                );
+              }
+              newRoutes.push(r); // keep pending
+              continue;
+            }
+            if (surfaceDiagnostics) earlyActivations += 1;
+            newRoutes.push({
+              ...r,
+              status: "active" as const,
+              dailyFrequency: Math.max(1, Math.round(effectiveWeekly / 7)),
+              pendingBidPrices: undefined,
+              pendingBidSlots: undefined,
+            });
+          }
+          return { ...t, routes: newRoutes };
+        };
+
+        const teamReady = activatePending(playerWithAwards, true);
+        const rivalsAfterActivation = rivalsWithAwards.map((t) => activatePending(t, false));
+
+        if (earlyActivations > 0) {
+          toast.success(
+            `${earlyActivations} pending route${earlyActivations > 1 ? "s" : ""} now active`,
+            "Bid won — flying this quarter and contributing to results.",
+          );
+        }
+        if (earlyStillPending.length > 0) {
+          toast.warning(
+            `${earlyStillPending.length} route${earlyStillPending.length > 1 ? "s" : ""} still pending`,
+            earlyStillPending.join(" · ") +
+            ". Re-bid in the Slot Market for the missing slots, or cancel the route manually in Routes.",
+          );
+        }
+
+        // Surface auction outcomes for the player only
+        const earlyPlayerWins = earlyAwards.filter((a) => a.teamId === player.id && a.slotsWon > 0);
+        if (earlyPlayerWins.length > 0) {
+          const total = earlyPlayerWins.reduce((sum, w) => sum + w.slotsWon, 0);
+          toast.success(
+            `Won ${total} airport slots`,
+            earlyPlayerWins.map((w) => `${w.airportCode}: ${w.slotsWon}`).join(" · "),
+          );
+        }
+        const earlyPlayerLosses = earlyAwards.filter((a) => a.teamId === player.id && a.slotsWon === 0);
+        if (earlyPlayerLosses.length > 0) {
+          toast.warning(
+            `Lost ${earlyPlayerLosses.length} slot bid${earlyPlayerLosses.length > 1 ? "s" : ""}`,
+            "Higher bidders won. Try again next quarter.",
+          );
+        }
+
         const result = runQuarterClose(teamReady, {
           baseInterestRatePct: s.baseInterestRatePct,
           fuelIndex: s.fuelIndex,
           quarter: s.currentQuarter,
-          rivals: s.teams.filter((t) => t.id !== player.id),
+          rivals: rivalsAfterActivation,
           cargoContracts: s.cargoContracts ?? [],
+          worldCupHostCode: s.worldCupHostCode,
+          olympicHostCode: s.olympicHostCode,
         });
 
         // Decrement remaining quarters on each contract; drop expired
@@ -1790,9 +1994,14 @@ export const useGame = create<GameStore>()(
             : cc)
           .filter((cc) => cc.quartersRemaining > 0);
 
-        // Commit result back to team + add any insurance proceeds on top
+        // Commit result back to team + add any insurance proceeds on top.
+        // CRITICAL: persist the post-close fleet + routes so future quarter
+        // closes see depreciated bookValues, accumulated maintenance deficit,
+        // and the newly-realised revenue/cost/occupancy numbers per route.
         const closed: Team = {
           ...teamReady,
+          fleet: result.newFleet,
+          routes: result.newRoutes,
           cashUsd: result.newCashUsd + insuranceProceeds,
           rcfBalanceUsd: result.newRcfBalance,
           brandPts: result.newBrandPts,
@@ -3306,6 +3515,8 @@ export const useGame = create<GameStore>()(
         secondHandListings: s.secondHandListings,
         cargoContracts: s.cargoContracts,
         airportSlots: s.airportSlots,
+        worldCupHostCode: s.worldCupHostCode,
+        olympicHostCode: s.olympicHostCode,
         sessionCode: s.sessionCode,
         sessionSlots: s.sessionSlots,
       }),
@@ -3319,6 +3530,27 @@ export const useGame = create<GameStore>()(
           state.lastCloseResult = null;
         }
         if (!state.cargoContracts) state.cargoContracts = [];
+        // Backfill tournament hosts on older saves so the new event logic
+        // has somewhere to fire. Picks neutral tier 1-2 cities not used
+        // as a hub by any team.
+        if (state.worldCupHostCode === undefined) state.worldCupHostCode = null;
+        if (state.olympicHostCode === undefined) state.olympicHostCode = null;
+        if (!state.worldCupHostCode || !state.olympicHostCode) {
+          const allTeamHubs = new Set<string>();
+          for (const t of state.teams ?? []) {
+            allTeamHubs.add(t.hubCode);
+            for (const sh of t.secondaryHubCodes ?? []) allTeamHubs.add(sh);
+          }
+          const candidates = CITIES
+            .filter((c) => (c.tier === 1 || c.tier === 2) && !allTeamHubs.has(c.code))
+            .map((c) => c.code);
+          const pickRandom = (excl?: string | null) => {
+            const pool = candidates.filter((c) => c !== excl);
+            return pool.length === 0 ? null : pool[Math.floor(Math.random() * pool.length)];
+          };
+          if (!state.worldCupHostCode) state.worldCupHostCode = pickRandom();
+          if (!state.olympicHostCode) state.olympicHostCode = pickRandom(state.worldCupHostCode);
+        }
         // Migration: older saves don't have airportSlots — initialize fresh
         // so existing routes continue to work (slots = unconstrained from
         // their existing in-game allocation in slotsByAirport).

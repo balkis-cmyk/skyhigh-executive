@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
-import { fmtMoney, fmtPct, TOTAL_GAME_ROUNDS } from "@/lib/format";
+import { fmtMoney, fmtPct, TOTAL_GAME_ROUNDS, fmtQuarter } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
 import { brandRating, computeAirlineValue } from "@/lib/engine";
 import { MILESTONES_BY_ID } from "@/data/milestones";
@@ -64,7 +64,7 @@ export function QuarterCloseModal() {
         <div className="flex items-center justify-between">
           <div>
             <span className="text-[0.6875rem] uppercase tracking-[0.2em] text-accent">
-              Q{result.quarter} · Quarter closed
+              {fmtQuarter(result.quarter)} · Quarter closed
             </span>
             <h2 className="font-display text-[1.75rem] text-ink leading-tight mt-1">
               {result.netProfit >= 0
@@ -198,7 +198,7 @@ export function QuarterCloseModal() {
                         {n.outlet}
                       </span>
                       <span className="text-[0.625rem] tabular text-ink-muted font-mono">
-                        Q{n.quarter}
+                        {fmtQuarter(n.quarter)}
                       </span>
                     </div>
                     <h3 className="text-[0.9375rem] font-medium text-ink leading-snug">

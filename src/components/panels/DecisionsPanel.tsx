@@ -4,9 +4,11 @@ import { useState } from "react";
 import { Badge, Button } from "@/components/ui";
 import { SCENARIOS, SCENARIOS_BY_QUARTER, type OptionEffect, type ScenarioOption } from "@/data/scenarios";
 import { useGame, selectPlayer } from "@/store/game";
+import { CITIES_BY_CODE } from "@/data/cities";
+import { MapPin } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { Team } from "@/types/game";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, fmtQuarter } from "@/lib/format";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 
@@ -86,7 +88,7 @@ export function DecisionsPanel() {
               return (
                 <div key={`${d.scenarioId}-${d.quarter}`} className="flex items-baseline justify-between text-[0.8125rem] py-1.5 border-b border-line last:border-0">
                   <div className="min-w-0">
-                    <span className="font-mono text-primary mr-1.5 text-[0.75rem]">Q{d.quarter} · {sc.id}</span>
+                    <span className="font-mono text-primary mr-1.5 text-[0.75rem]">{fmtQuarter(d.quarter)} · {sc.id}</span>
                     <span className="text-ink truncate">{sc.title}</span>
                   </div>
                   <span className="shrink-0 text-accent font-mono text-[0.75rem] ml-2">
@@ -137,7 +139,7 @@ function ScenarioCard({
         <Badge tone={severityTone}>{scenario.severity}</Badge>
         <span className="font-mono text-[0.75rem] text-primary">{scenario.id}</span>
         <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
-          Q{scenario.quarter} · {scenario.timeLimitMinutes}m
+          {fmtQuarter(scenario.quarter)} · {scenario.timeLimitMinutes}m
         </span>
         {locked
           ? <Badge tone="primary">Submitted</Badge>
@@ -148,6 +150,7 @@ function ScenarioCard({
       </h3>
       <p className="italic text-ink-2 text-[0.875rem] leading-relaxed mb-2">{scenario.teaser}</p>
       <p className="text-ink-2 text-[0.875rem] leading-relaxed mb-3">{scenario.context}</p>
+      <HostCityCallout scenarioId={scenario.id} />
 
       <div className="space-y-2">
         {scenario.options.map((opt) => {
@@ -309,7 +312,7 @@ function ConsequenceCard({ option }: { option: ScenarioOption }) {
       {deferred && (
         <div className="mt-2 rounded-md border border-warning bg-[var(--warning-soft)] px-3 py-2">
           <div className="flex items-center gap-1.5 text-[0.625rem] uppercase tracking-wider text-warning font-semibold mb-1">
-            <AlertTriangle size={11} /> Deferred consequence · Q{deferred.quarter}
+            <AlertTriangle size={11} /> Deferred consequence · {fmtQuarter(deferred.quarter)}
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem]">
             {deferred.probability !== undefined && deferred.probability < 1 && (
@@ -351,6 +354,41 @@ function DeferredEffectSummary({ effect }: { effect: OptionEffect }) {
   }
   if (parts.length === 0) parts.push(<span key="none" className="text-ink-2">No deferred effect</span>);
   return <>{parts}</>;
+}
+
+/** Surfaces the announced tournament host city directly inside the
+ *  scenario card so the player doesn't have to dig through the news
+ *  feed to know which city the demand surge will hit. */
+function HostCityCallout({ scenarioId }: { scenarioId: string }) {
+  const worldCupHostCode = useGame((s) => s.worldCupHostCode);
+  const olympicHostCode = useGame((s) => s.olympicHostCode);
+  let code: string | null = null;
+  let label = "";
+  if (scenarioId === "S10" && worldCupHostCode) {
+    code = worldCupHostCode;
+    label = "World Cup host city";
+  } else if (scenarioId === "S11" && olympicHostCode) {
+    code = olympicHostCode;
+    label = "Olympic host city";
+  }
+  if (!code) return null;
+  const city = CITIES_BY_CODE[code];
+  if (!city) return null;
+  return (
+    <div className="mb-3 rounded-md border border-accent/40 bg-[var(--accent-soft)]/30 px-3 py-2 flex items-center gap-2 text-[0.8125rem]">
+      <MapPin size={14} className="text-accent shrink-0" />
+      <div className="flex-1">
+        <span className="text-[0.6875rem] uppercase tracking-wider text-accent font-semibold">
+          {label}
+        </span>
+        <div className="text-ink">
+          <span className="font-mono mr-1">{city.code}</span>
+          <span className="font-medium">{city.name}</span>
+          <span className="text-ink-muted"> · {city.regionName}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Pill({ tone, children }: { tone: "positive" | "negative" | "info"; children: React.ReactNode }) {

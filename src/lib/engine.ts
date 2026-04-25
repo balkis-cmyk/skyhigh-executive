@@ -238,13 +238,54 @@ export const SLIDER_LABELS: Record<SliderLevel, string> = {
 };
 
 /** Slider spend as % of revenue (A2). Staff is separate (A3). */
+/** Legacy default ladder — kept for backwards compatibility (any older
+ *  call sites still referencing SLIDER_PCT_REVENUE keep working). New
+ *  code should use the per-slider maps below, which apply the
+ *  user-specified caps:
+ *    marketing       max 15%
+ *    in-flight       1.5%–8%
+ *    operations      2%–10%
+ *    office capacity 1.5%–7% (customerService key) */
 export const SLIDER_PCT_REVENUE: Record<SliderLevel, number> = {
   0: 0,
   1: 0.03,
   2: 0.06,
-  3: 0.10,
-  4: 0.15,
-  5: 0.20,
+  3: 0.09,
+  4: 0.12,
+  5: 0.15,
+};
+
+/** Marketing slider — campaigns, PR, frequent-flyer rewards.
+ *  Range 0% → 15% across levels 0-5. */
+export const MARKETING_PCT_REVENUE: Record<SliderLevel, number> = {
+  0: 0,
+  1: 0.03,
+  2: 0.06,
+  3: 0.09,
+  4: 0.12,
+  5: 0.15,
+};
+
+/** In-Flight Service slider — food, amenities, cabin.
+ *  Range 1.5% → 8% across levels 0-5 (level 0 still buys minimum service). */
+export const SERVICE_PCT_REVENUE: Record<SliderLevel, number> = {
+  0: 0.015,
+  1: 0.027,
+  2: 0.040,
+  3: 0.053,
+  4: 0.067,
+  5: 0.080,
+};
+
+/** Operations slider — maintenance, engineering.
+ *  Range 2% → 10% across levels 0-5. */
+export const OPS_PCT_REVENUE: Record<SliderLevel, number> = {
+  0: 0.02,
+  1: 0.035,
+  2: 0.050,
+  3: 0.065,
+  4: 0.082,
+  5: 0.10,
 };
 
 /** Slider effects (per quarter) per category. Pulled from PRD §3.2 + B1. */
@@ -309,9 +350,15 @@ export const SLIDER_EFFECTS: Record<
   },
 };
 
-/** Customer Service slider % of revenue (PRD E1, distinct from the core sliders). */
+/** Office Capacity slider — check-in, ground ops, contact centre
+ *  (`customerService` key). Range 1.5% → 7% across levels 0-5. */
 export const CS_PCT_REVENUE: Record<SliderLevel, number> = {
-  0: 0, 1: 0.02, 2: 0.05, 3: 0.08, 4: 0.12, 5: 0.18,
+  0: 0.015,
+  1: 0.026,
+  2: 0.037,
+  3: 0.048,
+  4: 0.059,
+  5: 0.07,
 };
 
 /** Compounding multiplier (PRD §3.2): 1.0 → 1.2× at 3Q → 1.5× at 6Q. */
@@ -443,6 +490,8 @@ export function computeRouteEconomics(
   quarter: number,
   fuelIndex: number,
   rivals?: Team[],
+  worldCupHostCode?: string | null,
+  olympicHostCode?: string | null,
 ): RouteEconomics {
   const origin = CITIES_BY_CODE[route.originCode];
   const dest = CITIES_BY_CODE[route.destCode];
@@ -604,20 +653,41 @@ export function computeRouteEconomics(
   let occupancy =
     dailyCapacity > 0 ? Math.min(0.98, dailyPax / dailyCapacity) : 0;
 
-  // World Cup load factor override (PRD §10.3 / S10 winner):
-  //   - global_brand flag set when team won S10 sealed bid + L6 pitch
-  //   - Q10 + Q11: 100% load factor on all routes
-  //   - Q12: +50% demand uplift over baseline (additive bonus capped at 0.98)
-  // Without the flag, no effect.
-  if (team.flags?.has("global_brand")) {
-    // PRD §10.3 — World Cup load factor (40-round mapping):
-    //   PRD Q10 → rounds 19-20 (scenario + breather)
-    //   PRD Q11 → rounds 21-22
-    //   PRD Q12 → rounds 23-24 (+50% uplift)
-    if (quarter >= 19 && quarter <= 22) {
-      occupancy = 0.98;
-    } else if (quarter === 23 || quarter === 24) {
-      occupancy = Math.min(0.98, occupancy * 1.5);
+  // Tournament demand boost (PRD §10.3, refined per user feedback):
+  //   The World Cup and Olympics each have a single neutral host city
+  //   chosen at game start (tier 1-2, never a player or rival hub). The
+  //   demand surge applies ONLY to routes touching that host city — no
+  //   more global 100% load factor. The S10 winner ("global_brand") gets
+  //   the strongest version (capped 98% load through tournament window
+  //   + 50% uplift in the tail rounds); other airlines flying that city
+  //   still get a smaller surge from event traffic.
+  const touchesWorldCup =
+    worldCupHostCode &&
+    (route.originCode === worldCupHostCode || route.destCode === worldCupHostCode);
+  const touchesOlympic =
+    olympicHostCode &&
+    (route.originCode === olympicHostCode || route.destCode === olympicHostCode);
+
+  // World Cup window: rounds 19-24
+  if (touchesWorldCup && quarter >= 19 && quarter <= 24) {
+    if (team.flags?.has("global_brand")) {
+      // S10 winner — sealed-in 98% load through the main event,
+      // +50% uplift in the tail two rounds.
+      if (quarter <= 22) occupancy = 0.98;
+      else occupancy = Math.min(0.98, occupancy * 1.5);
+    } else {
+      // Everyone else flying through the host city still rides the surge,
+      // just smaller and only as long as their schedule has slack.
+      occupancy = Math.min(0.98, occupancy * 1.25);
+    }
+  }
+  // Olympic window: rounds 29-32 (smaller global event than World Cup)
+  if (touchesOlympic && quarter >= 29 && quarter <= 32) {
+    if (team.flags?.has("premium_airline")) {
+      // S11 official partner — 95% sealed load on Olympic-host routes.
+      occupancy = Math.max(occupancy, 0.95);
+    } else {
+      occupancy = Math.min(0.98, occupancy * 1.18);
     }
   }
 
@@ -1052,6 +1122,14 @@ export interface QuarterCloseResult {
   netProfit: number;
   newCashUsd: number;
   newRcfBalance: number;
+  /** Updated fleet (depreciated bookValues, accumulated maintenanceDeficit)
+   *  the close ran against. Must be persisted back to the team so future
+   *  closes don't recompute depreciation from the original purchase price. */
+  newFleet: FleetAircraft[];
+  /** Updated routes (with quarterlyRevenue, quarterlyFuelCost,
+   *  quarterlyAllocatedCost, avgOccupancy, etc) so the player UI shows
+   *  the realised numbers from this close. */
+  newRoutes: Route[];
   newBrandPts: number;
   newOpsPts: number;
   newLoyalty: number;
@@ -1106,6 +1184,11 @@ export interface QuarterCloseContext {
     ratePerTonneUsd: number;
     quartersRemaining: number;
   }>;
+  /** Tier 1-2 city hosting the World Cup (rounds 19-24 demand surge).
+   *  Demand boost only applies to routes touching this city. */
+  worldCupHostCode?: string | null;
+  /** Tier 1-2 city hosting the Olympics (rounds 29-32 demand surge). */
+  olympicHostCode?: string | null;
 }
 
 export function runQuarterClose(
@@ -1143,7 +1226,10 @@ export function runQuarterClose(
       // First-Mover Bonus (PRD E8.8) — +20% for first 2 quarters (simplified: opening quarter + 1)
       const firstMoverBonus = ctx.quarter - r.openQuarter < 2 ? 1.20 : 1.0;
 
-      const econ = computeRouteEconomics(next, r, ctx.quarter, ctx.fuelIndex, ctx.rivals);
+      const econ = computeRouteEconomics(
+        next, r, ctx.quarter, ctx.fuelIndex, ctx.rivals,
+        ctx.worldCupHostCode, ctx.olympicHostCode,
+      );
       const boostedRevenue = econ.quarterlyRevenue * legacyBonus * firstMoverBonus;
       revenue += boostedRevenue;
       if (r.isCargo) cargoRevenue += boostedRevenue;
@@ -1255,14 +1341,16 @@ export function runQuarterClose(
   const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff];
 
   // ─ Other sliders as % of revenue (A2) ──────────────────
-  // Rewards merged into marketing per PRD update — 4 sliders contribute cost.
-  const sliderPctKeys: (keyof Sliders)[] = [
-    "marketing", "service", "operations",
-  ];
-  const otherSliderCost = sliderPctKeys.reduce(
-    (sum, k) => sum + revenue * SLIDER_PCT_REVENUE[next.sliders[k]], 0)
-    // PRD E1 Customer Service slider (distinct % of revenue ladder)
-    + revenue * CS_PCT_REVENUE[next.sliders.customerService];
+  // Per-slider caps (user spec):
+  //   Marketing       0-15% (was 0-20%)
+  //   In-flight       1.5-8%
+  //   Operations      2-10%
+  //   Office Capacity 1.5-7% (customerService key)
+  const otherSliderCost =
+    revenue * MARKETING_PCT_REVENUE[next.sliders.marketing] +
+    revenue * SERVICE_PCT_REVENUE[next.sliders.service] +
+    revenue * OPS_PCT_REVENUE[next.sliders.operations] +
+    revenue * CS_PCT_REVENUE[next.sliders.customerService];
 
   // ─ Maintenance (PRD §5.3 age bands, scaled to 20-round lifespan) ──
   // PRD bands assume an 80Q lifespan with bands at 0-5/5-10/10-15/15-20
@@ -1354,15 +1442,21 @@ export function runQuarterClose(
   // (maintenanceCost no longer absorbs insurance.)
 
   // ─ Depreciation ─────────────────────────────────────────
+  // Period-only formula: purchasePrice × (0.9875^q − 0.9875^(q+1)).
+  // This avoids relying on f.bookValue being persisted across quarters
+  // (it isn't — runQuarterClose returns a result but the engine doesn't
+  // mutate the player's team), which previously caused depreciation to
+  // re-deduct the cumulative book-value loss every quarter and balloon
+  // the line item to ~10× its real value.
   let depreciation = 0;
   next.fleet = next.fleet.map((f) => {
     if (f.acquisitionType !== "buy") return f;
     const qSince = Math.max(0, ctx.quarter - f.purchaseQuarter);
-    const newBook = depreciateBookValue(f.purchasePrice, qSince + 1);
-    const prev = f.bookValue ?? f.purchasePrice;
-    const delta = Math.max(0, prev - newBook);
-    depreciation += delta;
-    return { ...f, bookValue: newBook };
+    const bookBefore = depreciateBookValue(f.purchasePrice, qSince);
+    const bookAfter = depreciateBookValue(f.purchasePrice, qSince + 1);
+    const periodDelta = Math.max(0, bookBefore - bookAfter);
+    depreciation += periodDelta;
+    return { ...f, bookValue: bookAfter };
   });
 
   // ─ Interest on debt + RCF interest (A8) ────────────────
@@ -1439,6 +1533,32 @@ export function runQuarterClose(
   }
   next.taxLossCarryForward = carryFwd.filter((e) => e.amount > 0);
   let netProfit = pretax - tax;
+
+  // ─ Per-route cost allocation for display (PRD §A14 update) ─
+  // The Routes panel previously showed Q profit = revenue − fuel only,
+  // which produced misleading 99% margins because it ignored slot lease
+  // totals, staff, maintenance, marketing, depreciation, interest and
+  // taxes — costs that all hit the team-level financials. Here we
+  // allocate every non-fuel team cost back to each active route in
+  // proportion to its revenue share. Direct route fuel stays exact.
+  // The sum of all route-level allocated profits ≈ team netProfit.
+  const totalCostsAfterTax = Math.max(0, revenue - netProfit);
+  const allocPool = Math.max(0, totalCostsAfterTax - fuelCost);
+  const totalRevenueForAlloc = revenue;
+  for (const r of next.routes) {
+    if (r.status !== "active") continue;
+    const routeRev = r.quarterlyRevenue ?? 0;
+    const revShare = totalRevenueForAlloc > 0 ? routeRev / totalRevenueForAlloc : 0;
+    const allocatedNonFuel = allocPool * revShare;
+    r.quarterlyAllocatedCost = (r.quarterlyFuelCost ?? 0) + allocatedNonFuel;
+  }
+  // Update routeBreakdown so anyone consuming it (digest, AI bots) sees
+  // the allocated profit instead of revenue − fuel.
+  for (const rb of routeBreakdown) {
+    const r = next.routes.find((x) => x.id === rb.routeId);
+    if (!r || r.quarterlyAllocatedCost === undefined) continue;
+    rb.profit = rb.revenue - r.quarterlyAllocatedCost;
+  }
 
   // ─ Cash flow + RCF auto-draw (A8) ──────────────────────
   let newCashUsd = next.cashUsd + netProfit;
@@ -1841,6 +1961,8 @@ export function runQuarterClose(
     netProfit,
     newCashUsd,
     newRcfBalance,
+    newFleet: next.fleet,
+    newRoutes: next.routes,
     newBrandPts,
     newOpsPts,
     newLoyalty,
