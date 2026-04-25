@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 export type PanelId =
   | "overview"
+  | "dashboard"
   | "fleet"
   | "routes"
   | "financials"

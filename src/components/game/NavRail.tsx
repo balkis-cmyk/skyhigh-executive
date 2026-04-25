@@ -10,6 +10,7 @@ import {
   Hexagon,
   Trophy,
   Gavel,
+  BarChart3,
   Settings2,
   ChevronLeft,
   ChevronRight,
@@ -27,6 +28,7 @@ export type { PanelId };
 
 const NAV: Array<{ id: PanelId; label: string; Icon: LucideIcon }> = [
   { id: "overview",    label: "Overview",    Icon: LayoutDashboard },
+  { id: "dashboard",   label: "Mgmt report", Icon: BarChart3 },
   { id: "fleet",       label: "Fleet",       Icon: Plane },
   { id: "routes",      label: "Routes",      Icon: RouteIcon },
   { id: "financials",  label: "Financials",  Icon: DollarSign },

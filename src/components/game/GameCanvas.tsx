@@ -14,6 +14,7 @@ import { Panel } from "@/components/game/Panel";
 import { TopBar } from "@/components/layout/TopBar";
 import { QuarterCloseModal } from "@/components/game/QuarterCloseModal";
 import { OverviewPanel } from "@/components/panels/OverviewPanel";
+import { DashboardPanel } from "@/components/panels/DashboardPanel";
 import { FleetPanel } from "@/components/panels/FleetPanel";
 import { RoutesPanel } from "@/components/panels/RoutesPanel";
 import { FinancialsPanel } from "@/components/panels/FinancialsPanel";
@@ -38,6 +39,7 @@ const PANEL_META: Record<
   { title: string; subtitle?: string; width?: "narrow" | "wide"; render: () => React.ReactNode }
 > = {
   overview:    { title: "Overview",    width: "narrow", render: () => <OverviewPanel /> },
+  dashboard:   { title: "Management report", subtitle: "Snapshot, trajectory, P&L by period, ops breakdown", width: "wide", render: () => <DashboardPanel /> },
   fleet:       { title: "Fleet",       subtitle: "Aircraft owned, leased, and on order", width: "narrow", render: () => <FleetPanel /> },
   routes:      { title: "Routes",      subtitle: "Active network and profitability", width: "narrow", render: () => <RoutesPanel /> },
   financials:  { title: "Financials",  subtitle: "Balance sheet, debt, quarterly history", width: "wide", render: () => <FinancialsPanel /> },
