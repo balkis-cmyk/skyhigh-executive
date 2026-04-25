@@ -98,18 +98,19 @@ export function NavRail() {
   return (
     <aside
       className={cn(
-        "fixed left-0 top-14 bottom-0 z-30 flex flex-col",
+        "fixed left-0 top-14 bottom-0 z-30 flex flex-col overflow-visible",
         "border-r border-line bg-surface/90 backdrop-blur-md",
         "transition-[width] duration-[var(--dur-fast)]",
         railWidth,
       )}
     >
-      {/* Expand/collapse handle */}
+      {/* Expand/collapse handle — sits at the right edge inside the rail
+          so it can't be clipped by any ancestor overflow. */}
       <button
         onClick={toggleRail}
         aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
         className={cn(
-          "absolute -right-3 top-2.5 z-10 w-6 h-6 rounded-full",
+          "absolute right-1 top-2 z-20 w-6 h-6 rounded-full",
           "bg-surface border border-line shadow-[var(--shadow-1)]",
           "flex items-center justify-center text-ink-2 hover:bg-surface-hover hover:text-ink",
         )}
