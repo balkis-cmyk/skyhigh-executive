@@ -50,11 +50,20 @@ export function seasonalMultiplier(
 }
 
 // ─── Physics-based flight frequency (PRD D1/F2) ────────────
-/** Aircraft cruise speed in km/h by id prefix. */
-export function cruiseSpeedKmh(specId: string): number {
-  if (/^A319|^A320|^A321|^B737/.test(specId)) return 840;
-  if (/^B757|^B767|^A330/.test(specId)) return 870;
-  return 900; // wide-body large: 777, 747, A380, 787, A350
+/** Aircraft cruise speed in km/h by id prefix. Engine retrofit "power"
+ *  / "super" boosts cruise speed by 10%. */
+export function cruiseSpeedKmh(
+  specId: string,
+  engineUpgrade?: "fuel" | "power" | "super" | null,
+): number {
+  let base: number;
+  if (/^A319|^A320|^A321|^B737/.test(specId)) base = 840;
+  else if (/^B757|^B767|^A330/.test(specId)) base = 870;
+  else base = 900; // wide-body large: 777, 747, A380, 787, A350
+  if (engineUpgrade === "power" || engineUpgrade === "super") {
+    base = Math.round(base * 1.1);
+  }
+  return base;
 }
 
 /** Max weekly schedules for a single aircraft on a given route (D1 formula). */
@@ -151,10 +160,11 @@ export function routeDemandPerDay(
 
 // ─── Pricing multipliers (PRD §5.5 + §17) ──────────────────
 export const PRICE_TIER: Record<PricingTier, number> = {
-  budget: 0.8,
+  // PRD-correct tier multipliers per user spec.
+  budget: 0.5,
   standard: 1.0,
-  premium: 1.25,
-  ultra: 1.6,
+  premium: 1.5,
+  ultra: 2.0,
 };
 
 /** Base fare per pax by distance band (PRD A11 economy base, blended). */
@@ -438,7 +448,13 @@ export function computeRouteEconomics(
     const totalFuelBurnPerFlight = planes.reduce((sum, p) => {
       const spec = AIRCRAFT_BY_ID[p.specId];
       if (!spec) return sum;
-      return sum + spec.fuelBurnPerKm * (p.ecoUpgrade ? 0.9 : 1.0) * distanceKm;
+      // Stack engine retrofit + eco + fuselage coating multiplicatively.
+      // fuel/super engine = -10%, eco engine = -10%, fuselage coating = -10%
+      const fuelMult =
+        (p.ecoUpgrade ? 0.9 : 1.0) *
+        (p.engineUpgrade === "fuel" || p.engineUpgrade === "super" ? 0.9 : 1.0) *
+        (p.fuselageUpgrade ? 0.9 : 1.0);
+      return sum + spec.fuelBurnPerKm * fuelMult * distanceKm;
     }, 0);
     const quarterlyFuelCost =
       totalFuelBurnPerFlight * fuelPricePerL * route.dailyFrequency * QUARTER_DAYS;
@@ -464,9 +480,12 @@ export function computeRouteEconomics(
   for (const p of planes) {
     const spec = AIRCRAFT_BY_ID[p.specId];
     if (!spec) continue;
-    seatsPerFlight.first += spec.seats.first;
-    seatsPerFlight.bus += spec.seats.business;
-    seatsPerFlight.econ += spec.seats.economy;
+    // Honor per-instance custom seat allocation (set at purchase order).
+    // Falls back to spec defaults when no override.
+    const seats = p.customSeats ?? spec.seats;
+    seatsPerFlight.first += seats.first;
+    seatsPerFlight.bus += seats.business;
+    seatsPerFlight.econ += seats.economy;
   }
   const totalSeatsPerFlight =
     seatsPerFlight.first + seatsPerFlight.bus + seatsPerFlight.econ;
@@ -552,8 +571,12 @@ export function computeRouteEconomics(
   const totalFuelBurnPerFlight = planes.reduce((sum, p) => {
     const spec = AIRCRAFT_BY_ID[p.specId];
     if (!spec) return sum;
-    const burn =
-      spec.fuelBurnPerKm * (p.ecoUpgrade ? 0.9 : 1.0) * distanceKm;
+    // Stack engine retrofit + eco + fuselage coating multiplicatively.
+    const fuelMult =
+      (p.ecoUpgrade ? 0.9 : 1.0) *
+      (p.engineUpgrade === "fuel" || p.engineUpgrade === "super" ? 0.9 : 1.0) *
+      (p.fuselageUpgrade ? 0.9 : 1.0);
+    const burn = spec.fuelBurnPerKm * fuelMult * distanceKm;
     return sum + burn;
   }, 0);
   // Apply S4 hedge if flag set
@@ -907,11 +930,17 @@ export function clamp(lo: number, hi: number, n: number): number {
 export interface QuarterCloseResult {
   quarter: number;
   revenue: number;
+  /** Passenger ticket revenue (sub-component of `revenue`). */
+  passengerRevenue: number;
+  /** Cargo freight revenue (sub-component of `revenue`). */
+  cargoRevenue: number;
   fuelCost: number;
   slotCost: number;
   staffCost: number;
   otherSliderCost: number;
   maintenanceCost: number;
+  /** Aircraft insurance premium for the quarter (PRD §E5). */
+  insuranceCost: number;
   depreciation: number;
   interest: number;
   tax: number;
@@ -1001,6 +1030,8 @@ export function runQuarterClose(
   // ─ Route economics ──────────────────────────────────────
   const routeBreakdown: QuarterCloseResult["routeBreakdown"] = [];
   let revenue = 0;
+  let passengerRevenue = 0;
+  let cargoRevenue = 0;
   let fuelCost = 0;
   let slotCost = 0;
   let totalPassengers = 0;
@@ -1014,6 +1045,8 @@ export function runQuarterClose(
       const econ = computeRouteEconomics(next, r, ctx.quarter, ctx.fuelIndex, ctx.rivals);
       const boostedRevenue = econ.quarterlyRevenue * legacyBonus * firstMoverBonus;
       revenue += boostedRevenue;
+      if (r.isCargo) cargoRevenue += boostedRevenue;
+      else passengerRevenue += boostedRevenue;
       fuelCost += econ.quarterlyFuelCost;
       slotCost += econ.quarterlySlotCost;
       totalPassengers += econ.dailyPax * QUARTER_DAYS;
@@ -1207,7 +1240,10 @@ export function runQuarterClose(
   };
   const fleetMarketValue = next.fleet.reduce((sum, f) => sum + f.purchasePrice, 0);
   const insurancePremium = fleetMarketValue * (insurancePremiumPct[next.insurancePolicy] ?? 0);
-  maintenanceCost += insurancePremium;
+  // Insurance is now its own line item in the result (player-visible),
+  // NOT bundled into maintenance. Engine still adds it to total operating
+  // cost via the route-level totals below; UI breaks it out.
+  // (maintenanceCost no longer absorbs insurance.)
 
   // ─ Depreciation ─────────────────────────────────────────
   let depreciation = 0;
@@ -1663,11 +1699,14 @@ export function runQuarterClose(
   return {
     quarter: ctx.quarter,
     revenue,
+    passengerRevenue,
+    cargoRevenue,
     fuelCost,
     slotCost,
     staffCost,
     otherSliderCost,
     maintenanceCost,
+    insuranceCost: insurancePremium,
     depreciation,
     interest,
     tax,
@@ -1707,7 +1746,8 @@ export function fleetSeatTotal(fleet: FleetAircraft[]): number {
     .reduce((sum, f) => {
       const spec = AIRCRAFT_BY_ID[f.specId];
       if (!spec) return sum;
-      return sum + spec.seats.first + spec.seats.business + spec.seats.economy;
+      const seats = f.customSeats ?? spec.seats;
+      return sum + seats.first + seats.business + seats.economy;
     }, 0);
 }
 

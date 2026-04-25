@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Badge, Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { AIRCRAFT, AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { AircraftMarketModal } from "@/components/game/AircraftMarketModal";
+import { PurchaseOrderModal } from "@/components/game/PurchaseOrderModal";
 import { useGame, selectPlayer } from "@/store/game";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -91,11 +92,19 @@ export function FleetPanel() {
     : [];
   const listings = s.secondHandListings;
 
-  function confirmOrder() {
-    if (!ordering) return;
-    const r = s.orderAircraft({ specId: ordering.specId, acquisitionType: ordering.type });
+  function handlePurchaseConfirm(args: {
+    specId: string;
+    acquisitionType: "buy" | "lease";
+    quantity: number;
+    customSeats?: { first: number; business: number; economy: number };
+    engineUpgrade: "fuel" | "power" | "super" | null;
+    fuselageUpgrade: boolean;
+  }) {
+    const r = s.orderAircraft(args);
     if (!r.ok) {
-      setError(r.error ?? "Unknown error");
+      // Surface the error inline AND keep the order modal open so the
+      // player can adjust quantity/upgrades and retry.
+      alert(r.error ?? "Order failed");
       return;
     }
     setOrdering(null);
@@ -336,9 +345,24 @@ export function FleetPanel() {
                       <tr key={f.id} className="border-b border-line last:border-0">
                         <td className="py-2 px-3 font-mono text-ink">
                           {f.id.slice(-6).toUpperCase()}
-                          {f.ecoUpgrade && (
-                            <Badge tone="positive" className="ml-1.5">Eco</Badge>
-                          )}
+                          <span className="inline-flex items-center gap-1 ml-1.5">
+                            {f.ecoUpgrade && (
+                              <Badge tone="positive">Eco</Badge>
+                            )}
+                            {f.engineUpgrade && (
+                              <Badge tone="info" title={`Engine: ${f.engineUpgrade}`}>
+                                {f.engineUpgrade === "fuel" ? "F" :
+                                 f.engineUpgrade === "power" ? "P" :
+                                 f.engineUpgrade === "super" ? "S" : ""}
+                              </Badge>
+                            )}
+                            {f.fuselageUpgrade && (
+                              <Badge tone="accent" title="Fuselage coating">FX</Badge>
+                            )}
+                            {f.customSeats && (
+                              <Badge tone="warning" title="Custom cabin layout">CC</Badge>
+                            )}
+                          </span>
                         </td>
                         <td className="py-2 px-3">
                           <Badge
@@ -384,12 +408,78 @@ export function FleetPanel() {
                             {!f.ecoUpgrade && f.status === "active" && (
                               <button
                                 className="text-ink-2 hover:text-accent underline"
+                                title={
+                                  `Eco engine retrofit: ${fmtMoney(expanded.ecoUpgradeUsd ?? 0)} ` +
+                                  `one-time. Cuts fuel burn 10–15%, boosts brand. ` +
+                                  `Recommended for long-haul heavies.`
+                                }
                                 onClick={() => {
-                                  const r = s.addEcoUpgrade(f.id);
-                                  if (!r.ok) alert(r.error ?? "Upgrade failed");
+                                  try {
+                                    const cost = expanded.ecoUpgradeUsd ?? 0;
+                                    if (cost <= 0) {
+                                      alert("This aircraft cannot be eco-retrofitted (no upgrade cost configured).");
+                                      return;
+                                    }
+                                    const ok = confirm(
+                                      `Eco retrofit ${expanded.name} (${f.id.slice(-6).toUpperCase()})?\n\n` +
+                                      `Cost: ${fmtMoney(cost)}\n` +
+                                      `Effect: -10% fuel burn, +brand bump.\n\n` +
+                                      `OK to proceed.`,
+                                    );
+                                    if (!ok) return;
+                                    const r = s.addEcoUpgrade(f.id);
+                                    if (!r.ok) alert(r.error ?? "Upgrade failed");
+                                  } catch (err) {
+                                    console.error("Eco upgrade failed:", err);
+                                    alert("Eco upgrade failed: " + (err instanceof Error ? err.message : String(err)));
+                                  }
                                 }}
                               >
                                 Eco
+                              </button>
+                            )}
+                            {!f.engineUpgrade && (f.status === "active" || f.status === "grounded") && (
+                              <button
+                                className="text-ink-2 hover:text-info underline"
+                                title="Engine retrofit: pick fuel-efficient (-10% burn), power-up (+10% speed), or super (both)."
+                                onClick={() => {
+                                  const choice = prompt(
+                                    `Engine retrofit ${expanded.name} (${f.id.slice(-6).toUpperCase()})\n\n` +
+                                    `Type "fuel" for Fuel-efficient ($24.9M, -10% fuel burn)\n` +
+                                    `Type "power" for Power-up ($24.9M, +10% speed)\n` +
+                                    `Type "super" for Super ($49.8M, both)\n\n` +
+                                    `Or cancel to keep stock.`,
+                                    "fuel",
+                                  );
+                                  if (!choice) return;
+                                  const k = choice.trim().toLowerCase();
+                                  if (k !== "fuel" && k !== "power" && k !== "super") {
+                                    alert(`Unknown engine type "${k}". Use fuel, power, or super.`);
+                                    return;
+                                  }
+                                  const r = s.retrofitEngine(f.id, k);
+                                  if (!r.ok) alert(r.error ?? "Retrofit failed");
+                                }}
+                              >
+                                Engine
+                              </button>
+                            )}
+                            {!f.fuselageUpgrade && (f.status === "active" || f.status === "grounded") && (
+                              <button
+                                className="text-ink-2 hover:text-accent underline"
+                                title="Fuselage anti-drag coating: -10% fuel burn (stacks). $24.9M."
+                                onClick={() => {
+                                  const ok = confirm(
+                                    `Apply fuselage coating to ${expanded.name} (${f.id.slice(-6).toUpperCase()})?\n\n` +
+                                    `Cost: $24.9M\n` +
+                                    `Effect: -10% fuel burn (stacks with engine).`,
+                                  );
+                                  if (!ok) return;
+                                  const r = s.retrofitFuselage(f.id);
+                                  if (!r.ok) alert(r.error ?? "Retrofit failed");
+                                }}
+                              >
+                                Fuselage
                               </button>
                             )}
                             {f.acquisitionType === "buy" && f.status === "active" && (
@@ -460,31 +550,14 @@ export function FleetPanel() {
         }}
       />
 
-      <Modal open={!!ordering} onClose={() => { setOrdering(null); setError(null); }}>
-        <ModalHeader>
-          <h2 className="font-display text-[1.25rem] text-ink">Confirm order</h2>
-        </ModalHeader>
-        <ModalBody>
-          {ordering && (() => {
-            const spec = AIRCRAFT_BY_ID[ordering.specId];
-            if (!spec) return null;
-            const cost = ordering.type === "buy" ? spec.buyPriceUsd : spec.leasePerQuarterUsd;
-            return (
-              <div className="space-y-2">
-                <Row k="Aircraft" v={spec.name} />
-                <Row k="Acquisition" v={ordering.type === "buy" ? "Outright purchase" : "Lease (quarterly)"} />
-                <Row k="Cost" v={fmtMoney(cost)} />
-                <Row k="Arrives" v={`Q${s.currentQuarter + 1}`} />
-                {error && <div className="text-negative text-[0.875rem] mt-2">{error}</div>}
-              </div>
-            );
-          })()}
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="ghost" onClick={() => { setOrdering(null); setError(null); }}>Cancel</Button>
-          <Button variant="primary" onClick={confirmOrder}>Confirm order</Button>
-        </ModalFooter>
-      </Modal>
+      {/* Purchase order modal — quantity, engine retrofit, fuselage,
+          and seat configuration. Replaces the old single-button confirm. */}
+      <PurchaseOrderModal
+        spec={ordering ? AIRCRAFT_BY_ID[ordering.specId] ?? null : null}
+        acquisitionType={ordering?.type ?? "buy"}
+        onClose={() => { setOrdering(null); setError(null); }}
+        onConfirm={handlePurchaseConfirm}
+      />
     </div>
   );
 }
@@ -504,15 +577,6 @@ function Th({
     >
       {children}
     </th>
-  );
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between py-1.5 border-b border-line last:border-0">
-      <span className="text-[0.8125rem] uppercase tracking-wider text-ink-muted">{k}</span>
-      <span className="text-ink tabular">{v}</span>
-    </div>
   );
 }
 

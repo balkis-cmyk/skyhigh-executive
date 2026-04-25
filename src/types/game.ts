@@ -37,6 +37,24 @@ export interface AircraftSpec {
   note?: string;
 }
 
+/** Engine retrofits selected at purchase time. Inspired by Air Tycoon's
+ *  Upgrade Center. Multiplicative effects on fuel burn / range / speed.
+ *  - "fuel"  : +10% range, -10% fuel burn
+ *  - "power" : +10% speed
+ *  - "super" : combines fuel + power (cost = sum)
+ *  - null    : stock engine */
+export type EngineUpgrade = null | "fuel" | "power" | "super";
+
+/** Custom per-instance cabin seat allocation. The total "seat-equivalents"
+ *  for an aircraft is fixed: 1 First seat = 3 Economy units, 1 Business = 2.
+ *  An A380 default of 14F + 76C + 460Y has 654 equivalents — flipping all to
+ *  Economy gives 654 economy seats; all-business gives ~327 business seats. */
+export interface CustomCabin {
+  first: number;
+  business: number;
+  economy: number;
+}
+
 export interface FleetAircraft {
   id: string;                    // instance id
   specId: string;
@@ -50,6 +68,13 @@ export interface FleetAircraft {
   ecoUpgradeQuarter: number | null;
   ecoUpgradeCost: number;
   cabinConfig: CabinConfig;
+  /** Optional override of the spec.seats default. When set, replaces the
+   *  spec default for capacity calculations. */
+  customSeats?: CustomCabin;
+  /** Engine retrofit selected at purchase time. */
+  engineUpgrade?: EngineUpgrade;
+  /** Optional fuselage coating retrofit at purchase: -10% fuel burn (stacks). */
+  fuselageUpgrade?: boolean;
   routeId: string | null;        // assigned route or null
   /** Quarter at which the aircraft retires (purchaseQuarter + 16 for passenger). */
   retirementQuarter: number;
@@ -284,7 +309,11 @@ export interface Team {
     cash: number;
     debt: number;
     revenue: number;
+    /** Optional split — older saves may not have these. */
+    passengerRevenue?: number;
+    cargoRevenue?: number;
     costs: number;
+    insuranceCost?: number;
     netProfit: number;
     brandPts: number;
     opsPts: number;

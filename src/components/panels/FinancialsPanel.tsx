@@ -155,10 +155,17 @@ export function FinancialsPanel() {
       {last && (
         <section>
           <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">Last quarter P&amp;L</div>
-          <div className="space-y-1.5 text-[0.8125rem]">
-            <Row k="Revenue" v={fmtMoney(last.revenue)} tone="pos" />
-            <Row k="Costs" v={fmtMoney(last.costs)} tone="neg" />
-            <Row k="Net profit" v={fmtMoney(last.netProfit)} tone={last.netProfit >= 0 ? "pos" : "neg"} bold />
+          <div className="space-y-1 text-[0.8125rem]">
+            <Row k="Passenger revenue" v={fmtMoney(last.passengerRevenue ?? 0)} tone="pos" />
+            <Row k="Cargo revenue" v={fmtMoney(last.cargoRevenue ?? 0)} tone="pos" />
+            <div className="pt-1 border-t border-line/60">
+              <Row k="Total revenue" v={fmtMoney(last.revenue)} tone="pos" />
+            </div>
+            <Row k="Aircraft insurance" v={fmtMoney(last.insuranceCost ?? 0)} tone="neg" />
+            <Row k="All other costs" v={fmtMoney(last.costs - (last.insuranceCost ?? 0))} tone="neg" />
+            <div className="pt-1 border-t border-line">
+              <Row k="Net profit" v={fmtMoney(last.netProfit)} tone={last.netProfit >= 0 ? "pos" : "neg"} bold />
+            </div>
           </div>
         </section>
       )}
@@ -295,7 +302,11 @@ function ProjectedPL() {
       </div>
       <div className="rounded-md border border-line bg-surface p-4 text-[0.8125rem] space-y-1">
         <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1.5">Revenue</div>
-        <Row k="Passenger + cargo revenue" v={fmtMoney(p.revenue)} tone="pos" />
+        <Row k="Passenger revenue" v={fmtMoney(p.passengerRevenue ?? 0)} tone="pos" />
+        <Row k="Cargo revenue" v={fmtMoney(p.cargoRevenue ?? 0)} tone="pos" />
+        <div className="pt-1 border-t border-line/60">
+          <Row k="Total revenue" v={fmtMoney(p.revenue)} tone="pos" bold />
+        </div>
 
         <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mt-3 mb-1.5">Operating costs</div>
         <Row k="Fuel" v={fmtMoney(p.fuelCost)} tone="neg" />
@@ -303,6 +314,7 @@ function ProjectedPL() {
         <Row k="Staff" v={fmtMoney(p.staffCost)} tone="neg" />
         <Row k="Other slider spend" v={fmtMoney(p.otherSliderCost)} tone="neg" />
         <Row k="Maintenance + hub fees" v={fmtMoney(p.maintenanceCost)} tone="neg" />
+        <Row k="Aircraft insurance" v={fmtMoney(p.insuranceCost ?? 0)} tone="neg" />
 
         <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mt-3 mb-1.5">Non-operating</div>
         <Row k="Depreciation" v={fmtMoney(p.depreciation)} tone="neg" />

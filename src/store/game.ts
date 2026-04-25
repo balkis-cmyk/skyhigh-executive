@@ -83,9 +83,29 @@ export interface GameStore extends GameState {
     specId: string;
     acquisitionType: "buy" | "lease";
     cabinConfig?: CabinConfig;
+    /** Number of identical aircraft to order in this transaction (default 1). */
+    quantity?: number;
+    /** Custom seat allocation. Must satisfy seat-equivalence:
+     *  first × 3 + business × 2 + economy ≤ spec.totalEquivalents. */
+    customSeats?: { first: number; business: number; economy: number };
+    /** Engine retrofit at purchase: "fuel" / "power" / "super" / null. */
+    engineUpgrade?: "fuel" | "power" | "super" | null;
+    /** Fuselage coating retrofit at purchase. */
+    fuselageUpgrade?: boolean;
   }): { ok: boolean; error?: string };
 
   addEcoUpgrade(aircraftId: string): { ok: boolean; error?: string };
+
+  /** Retrofit an existing aircraft's engine. Costs same as at-purchase
+   *  upgrade. Aircraft must be active or grounded; can't retrofit while
+   *  ordered or retired. */
+  retrofitEngine(
+    aircraftId: string,
+    kind: "fuel" | "power" | "super",
+  ): { ok: boolean; error?: string };
+
+  /** Retrofit fuselage coating on an existing aircraft. */
+  retrofitFuselage(aircraftId: string): { ok: boolean; error?: string };
 
   decommissionAircraft(aircraftId: string): void;
 
@@ -102,6 +122,12 @@ export interface GameStore extends GameState {
     busFare?: number | null;
     firstFare?: number | null;
     isCargo?: boolean;
+    /** Optional auto-bids for slot shortfalls. Each entry submits a slot
+     *  bid AT route-open time so the player doesn't have to leave the
+     *  modal. The route is created in "pending" status and activates at
+     *  next quarter-close with effective frequency = min(intended,
+     *  slots_won_at_each_endpoint). */
+    slotBids?: Array<{ airportCode: string; pricePerSlot: number }>;
   }): { ok: boolean; error?: string };
 
   closeRoute(routeId: string): void;
@@ -609,7 +635,10 @@ export const useGame = create<GameStore>()(
         });
       },
 
-      orderAircraft: ({ specId, acquisitionType, cabinConfig = "default" }) => {
+      orderAircraft: ({
+        specId, acquisitionType, cabinConfig = "default",
+        quantity = 1, customSeats, engineUpgrade = null, fuselageUpgrade = false,
+      }) => {
         const s = get();
         const spec = AIRCRAFT_BY_ID[specId];
         if (!spec) return { ok: false, error: "Unknown aircraft" };
@@ -618,31 +647,76 @@ export const useGame = create<GameStore>()(
         }
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player team" };
-        const price = acquisitionType === "buy" ? spec.buyPriceUsd : spec.leasePerQuarterUsd;
-        if (player.cashUsd < price) return { ok: false, error: "Insufficient cash" };
+        const qty = Math.max(1, Math.floor(quantity));
 
-        const plane: FleetAircraft = {
-          id: mkId("ac"), specId, status: "ordered",
+        // Engine + fuselage upgrade pricing (Air-Tycoon-style retrofit fees).
+        // These are per-aircraft costs added on top of the base buy/lease price.
+        const ENGINE_FUEL_COST = 24_900_000;
+        const ENGINE_POWER_COST = 24_900_000;
+        const ENGINE_SUPER_COST = 49_800_000;
+        const FUSELAGE_COST = 24_900_000;
+        const upgradeCostPerPlane =
+          (engineUpgrade === "fuel" ? ENGINE_FUEL_COST :
+           engineUpgrade === "power" ? ENGINE_POWER_COST :
+           engineUpgrade === "super" ? ENGINE_SUPER_COST : 0) +
+          (fuselageUpgrade ? FUSELAGE_COST : 0);
+
+        // Validate custom seat allocation against the seat-equivalence cap:
+        //   first × 3 + business × 2 + economy ≤ defaultEquivalents.
+        // (Cargo aircraft skip — they have no seats.)
+        const defaultEquivalents =
+          spec.seats.first * 3 + spec.seats.business * 2 + spec.seats.economy;
+        if (customSeats && spec.family === "passenger") {
+          const customEquivalents =
+            customSeats.first * 3 + customSeats.business * 2 + customSeats.economy;
+          if (customEquivalents > defaultEquivalents + 1) {
+            return {
+              ok: false,
+              error: `Custom cabin exceeds airframe capacity ` +
+                `(${customEquivalents} > ${defaultEquivalents} seat-equivalents)`,
+            };
+          }
+        }
+
+        const basePrice = acquisitionType === "buy" ? spec.buyPriceUsd : spec.leasePerQuarterUsd;
+        const totalPerPlane = basePrice + upgradeCostPerPlane;
+        const totalCost = totalPerPlane * qty;
+        if (player.cashUsd < totalCost) {
+          return {
+            ok: false,
+            error: `Insufficient cash — need ${fmtMoneyPlain(totalCost)} for ` +
+              `${qty} × ${spec.name}${upgradeCostPerPlane > 0 ? " w/ upgrades" : ""}`,
+          };
+        }
+
+        const planes: FleetAircraft[] = Array.from({ length: qty }, () => ({
+          id: mkId("ac"), specId, status: "ordered" as const,
           acquisitionType, purchaseQuarter: s.currentQuarter,
-          purchasePrice: acquisitionType === "buy" ? spec.buyPriceUsd : 0,
-          bookValue: acquisitionType === "buy" ? spec.buyPriceUsd : 0,
+          purchasePrice: acquisitionType === "buy" ? totalPerPlane : 0,
+          bookValue: acquisitionType === "buy" ? totalPerPlane : 0,
           leaseQuarterly: acquisitionType === "lease" ? spec.leasePerQuarterUsd : null,
           ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
           cabinConfig, routeId: null,
+          customSeats: customSeats && spec.family === "passenger" ? customSeats : undefined,
+          engineUpgrade: engineUpgrade ?? null,
+          fuselageUpgrade: !!fuselageUpgrade,
           retirementQuarter: s.currentQuarter + 16,
           maintenanceDeficit: 0, satisfactionPct: 75,
-        };
+        }));
 
         set({
           teams: s.teams.map((t) =>
             t.id === s.playerTeamId
-              ? { ...t, cashUsd: t.cashUsd - price, fleet: [...t.fleet, plane] }
+              ? { ...t, cashUsd: t.cashUsd - totalCost, fleet: [...t.fleet, ...planes] }
               : t,
           ),
         });
         toast.success(
-          `${spec.name} ${acquisitionType === "buy" ? "purchased" : "leased"}`,
-          `Arrives Q${s.currentQuarter + 1}`,
+          `${qty}× ${spec.name} ${acquisitionType === "buy" ? "purchased" : "leased"}`,
+          `${fmtMoneyPlain(totalCost)} total · arrives Q${s.currentQuarter + 1}` +
+            (upgradeCostPerPlane > 0
+              ? ` · upgrades: ${[engineUpgrade, fuselageUpgrade && "fuselage"].filter(Boolean).join(", ")}`
+              : ""),
         );
         return { ok: true };
       },
@@ -670,6 +744,80 @@ export const useGame = create<GameStore>()(
             },
           ),
         });
+        return { ok: true };
+      },
+
+      retrofitEngine: (aircraftId, kind) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        const plane = player.fleet.find((f) => f.id === aircraftId);
+        if (!plane) return { ok: false, error: "Aircraft not found" };
+        if (plane.status !== "active" && plane.status !== "grounded") {
+          return { ok: false, error: `Cannot retrofit ${plane.status} aircraft` };
+        }
+        if (plane.engineUpgrade && plane.engineUpgrade !== null) {
+          return {
+            ok: false,
+            error: `Engine already retrofitted (${plane.engineUpgrade}). Decommission and re-order to change.`,
+          };
+        }
+        const cost =
+          kind === "fuel" ? 24_900_000 :
+          kind === "power" ? 24_900_000 :
+          49_800_000;
+        if (player.cashUsd < cost)
+          return { ok: false, error: `Need ${fmtMoneyPlain(cost)} cash` };
+
+        set({
+          teams: s.teams.map((t) =>
+            t.id !== s.playerTeamId ? t : {
+              ...t,
+              cashUsd: t.cashUsd - cost,
+              fleet: t.fleet.map((f) =>
+                f.id === aircraftId ? { ...f, engineUpgrade: kind } : f,
+              ),
+            },
+          ),
+        });
+        toast.success(
+          `Engine retrofit installed`,
+          `${AIRCRAFT_BY_ID[plane.specId]?.name} · ${kind} · −${fmtMoneyPlain(cost)}`,
+        );
+        return { ok: true };
+      },
+
+      retrofitFuselage: (aircraftId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        const plane = player.fleet.find((f) => f.id === aircraftId);
+        if (!plane) return { ok: false, error: "Aircraft not found" };
+        if (plane.status !== "active" && plane.status !== "grounded") {
+          return { ok: false, error: `Cannot retrofit ${plane.status} aircraft` };
+        }
+        if (plane.fuselageUpgrade) {
+          return { ok: false, error: "Fuselage coating already applied" };
+        }
+        const cost = 24_900_000;
+        if (player.cashUsd < cost)
+          return { ok: false, error: `Need ${fmtMoneyPlain(cost)} cash` };
+
+        set({
+          teams: s.teams.map((t) =>
+            t.id !== s.playerTeamId ? t : {
+              ...t,
+              cashUsd: t.cashUsd - cost,
+              fleet: t.fleet.map((f) =>
+                f.id === aircraftId ? { ...f, fuselageUpgrade: true } : f,
+              ),
+            },
+          ),
+        });
+        toast.success(
+          `Fuselage coating applied`,
+          `${AIRCRAFT_BY_ID[plane.specId]?.name} · −10% fuel burn · −${fmtMoneyPlain(cost)}`,
+        );
         return { ok: true };
       },
 
@@ -762,7 +910,7 @@ export const useGame = create<GameStore>()(
         else toast.info(toastTitle, toastDetail);
       },
 
-      openRoute: ({ originCode, destCode, aircraftIds, dailyFrequency, pricingTier, econFare, busFare, firstFare, isCargo }) => {
+      openRoute: ({ originCode, destCode, aircraftIds, dailyFrequency, pricingTier, econFare, busFare, firstFare, isCargo, slotBids }) => {
         // Cargo routes require cargo-storage activation at both endpoints (PRD C9)
         const cargoStorageCost = (code: string): number => {
           const c = CITIES_BY_CODE[code];
@@ -829,19 +977,44 @@ export const useGame = create<GameStore>()(
           .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
         const slotsAtOrigin = player.airportLeases?.[originCode]?.slots ?? 0;
         const slotsAtDest = player.airportLeases?.[destCode]?.slots ?? 0;
-        if (weeklyAtOriginExisting + weeklyFreqNew > slotsAtOrigin) {
+        // Capacity shortfalls per endpoint. If the player attached
+        // slotBids[], we auto-submit bids here AND let the route be
+        // created in "pending" status (it'll activate next quarter at
+        // min(intended freq, slots actually won)). Without bids, hard error.
+        const shortAtOrigin = Math.max(0, weeklyAtOriginExisting + weeklyFreqNew - slotsAtOrigin);
+        const shortAtDest = Math.max(0, weeklyAtDestExisting + weeklyFreqNew - slotsAtDest);
+        const hasShortfall = shortAtOrigin > 0 || shortAtDest > 0;
+        const wantsAutoBid = (slotBids ?? []).length > 0;
+
+        if (hasShortfall && !wantsAutoBid) {
+          if (shortAtOrigin > 0) {
+            return {
+              ok: false,
+              error: `Need ${shortAtOrigin} more slots at ${originCode}. ` +
+                `Hold ${slotsAtOrigin}, ${weeklyAtOriginExisting} already used. Bid inline or via Slot Market.`,
+            };
+          }
           return {
             ok: false,
-            error: `Need ${weeklyFreqNew} more slots at ${originCode}. ` +
-              `Hold ${slotsAtOrigin}, ${weeklyAtOriginExisting} already used. Bid for slots first.`,
+            error: `Need ${shortAtDest} more slots at ${destCode}. ` +
+              `Hold ${slotsAtDest}, ${weeklyAtDestExisting} already used. Bid inline or via Slot Market.`,
           };
         }
-        if (weeklyAtDestExisting + weeklyFreqNew > slotsAtDest) {
-          return {
-            ok: false,
-            error: `Need ${weeklyFreqNew} more slots at ${destCode}. ` +
-              `Hold ${slotsAtDest}, ${weeklyAtDestExisting} already used. Bid for slots first.`,
-          };
+
+        // Submit any inline bids the player attached (one per shortfall airport).
+        // The route is created as PENDING so it doesn't fly until the auction
+        // resolves at next quarter close.
+        const willBePending = hasShortfall && wantsAutoBid;
+        if (wantsAutoBid) {
+          for (const bid of slotBids ?? []) {
+            const need = bid.airportCode === originCode ? shortAtOrigin :
+              bid.airportCode === destCode ? shortAtDest : 0;
+            if (need <= 0) continue;
+            const r = get().submitSlotBid(bid.airportCode, need, bid.pricePerSlot);
+            if (!r.ok) {
+              return { ok: false, error: `Bid at ${bid.airportCode} failed: ${r.error}` };
+            }
+          }
         }
 
         const route = {
@@ -855,7 +1028,10 @@ export const useGame = create<GameStore>()(
           econFare: econFare ?? null,
           busFare: busFare ?? null,
           firstFare: firstFare ?? null,
-          status: "active" as const,
+          // Pending if we're awaiting auction resolution for slot shortfall;
+          // active otherwise. Pending routes don't earn revenue this quarter
+          // — they activate at next quarter-close once slots resolve.
+          status: willBePending ? ("pending" as const) : ("active" as const),
           openQuarter: s.currentQuarter,
           avgOccupancy: 0,
           quarterlyRevenue: 0,
@@ -898,10 +1074,18 @@ export const useGame = create<GameStore>()(
           toast.info("Cargo storage activated",
             `${newActivations.join(" + ")} · $${(setupCost / 1_000_000).toFixed(1)}M one-time`);
         }
-        toast.success(
-          `Route opened: ${originCode} → ${destCode}`,
-          `${Math.round(dist).toLocaleString()} km · ${dailyFrequency}/day · ${pricingTier}`,
-        );
+        if (willBePending) {
+          toast.warning(
+            `Route pending: ${originCode} → ${destCode}`,
+            `Bid submitted — auction resolves at end of quarter. Route activates ` +
+            `at min(intended freq, slots won) if your bid wins.`,
+          );
+        } else {
+          toast.success(
+            `Route opened: ${originCode} → ${destCode}`,
+            `${Math.round(dist).toLocaleString()} km · ${dailyFrequency}/day · ${pricingTier}`,
+          );
+        }
         return { ok: true };
       },
 
@@ -1230,7 +1414,10 @@ export const useGame = create<GameStore>()(
             cash: result.newCashUsd,
             debt: teamReady.totalDebtUsd,
             revenue: result.revenue,
+            passengerRevenue: result.passengerRevenue,
+            cargoRevenue: result.cargoRevenue,
             costs: result.revenue - result.netProfit,
+            insuranceCost: result.insuranceCost,
             netProfit: result.netProfit,
             brandPts: result.newBrandPts,
             opsPts: result.newOpsPts,
@@ -1466,12 +1653,79 @@ export const useGame = create<GameStore>()(
         if (ticked) {
           toast.accent(
             `New airport slots open · Year ${Math.ceil(nextQ / 4)}`,
-            "Submit bids in the Ops form. Winners announced at quarter close.",
+            "Submit bids in the Slot Market. Winners announced at quarter close.",
+          );
+        }
+
+        // Activate pending routes (PRD update — explicit-bid flow). Each
+        // pending route now evaluates effective weekly freq against slots
+        // actually held at both endpoints. Three outcomes:
+        //   - Won enough slots → goes ACTIVE at min(intended, slots-available)
+        //   - Won zero / insufficient slots → CANCELLED; aircraft freed
+        //   - Pending route's outbid info shown to the player.
+        let playerActivations = 0;
+        let playerCancellations = 0;
+        const cancelledRouteIds = new Set<string>();
+        const teamsWithPendingResolved = delayedTeams.map((t) => {
+          if (!t.routes.some((r) => r.status === "pending")) return t;
+          const newRoutes: typeof t.routes = [];
+          for (const r of t.routes) {
+            if (r.status !== "pending") {
+              newRoutes.push(r);
+              continue;
+            }
+            const slotsO = t.airportLeases?.[r.originCode]?.slots ?? 0;
+            const slotsD = t.airportLeases?.[r.destCode]?.slots ?? 0;
+            const usedO = t.routes
+              .filter((rt) => rt.id !== r.id && rt.status === "active" &&
+                (rt.originCode === r.originCode || rt.destCode === r.originCode))
+              .reduce((sum, rt) => sum + rt.dailyFrequency * 7, 0);
+            const usedD = t.routes
+              .filter((rt) => rt.id !== r.id && rt.status === "active" &&
+                (rt.originCode === r.destCode || rt.destCode === r.destCode))
+              .reduce((sum, rt) => sum + rt.dailyFrequency * 7, 0);
+            const availO = Math.max(0, slotsO - usedO);
+            const availD = Math.max(0, slotsD - usedD);
+            const intendedWeekly = r.dailyFrequency * 7;
+            const effectiveWeekly = Math.min(intendedWeekly, availO, availD);
+            if (effectiveWeekly < 1) {
+              // OUTBID — cancel the pending route entirely. Aircraft go back
+              // to idle pool. The player did not pay anything (failed bids
+              // refund).
+              if (t.id === s.playerTeamId) playerCancellations += 1;
+              cancelledRouteIds.add(r.id);
+              continue; // drop the route
+            }
+            if (t.id === s.playerTeamId) playerActivations += 1;
+            newRoutes.push({
+              ...r,
+              status: "active" as const,
+              dailyFrequency: Math.max(1, Math.round(effectiveWeekly / 7)),
+            });
+          }
+          // Free aircraft assigned to cancelled pending routes
+          const newFleet = t.fleet.map((f) =>
+            f.routeId && cancelledRouteIds.has(f.routeId)
+              ? { ...f, status: "active" as const, routeId: null }
+              : f,
+          );
+          return { ...t, routes: newRoutes, fleet: newFleet };
+        });
+        if (playerActivations > 0) {
+          toast.success(
+            `${playerActivations} pending route${playerActivations > 1 ? "s" : ""} now active`,
+            "Bid won at quarter close — flying at the highest frequency the slots allow.",
+          );
+        }
+        if (playerCancellations > 0) {
+          toast.warning(
+            `${playerCancellations} pending route${playerCancellations > 1 ? "s" : ""} cancelled — outbid`,
+            "You were outbid for the slots you needed. Aircraft are back in the idle pool. Try a higher bid next quarter.",
           );
         }
 
         set({
-          teams: delayedTeams,
+          teams: teamsWithPendingResolved,
           currentQuarter: nextQ,
           phase: "playing",
           lastCloseResult: null,
@@ -2323,9 +2577,33 @@ export const useGame = create<GameStore>()(
         if (!state.airportSlots || Object.keys(state.airportSlots).length === 0) {
           state.airportSlots = makeInitialAirportSlots();
         }
-        state.teams = state.teams.map((t) => ({
+        state.teams = state.teams.map((t) => {
+          const flags = new Set(Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? []));
+          // One-time testing grant: give Meridian Air $900M cash so the
+          // owner (Hamade) can validate aircraft purchases. Guarded by a
+          // flag so it only fires once per team — re-rehydrating doesn't
+          // double-grant. Remove this block once testing is complete.
+          let cashUsd = t.cashUsd;
+          if (
+            t.isPlayer &&
+            (t.name?.toLowerCase().includes("meridian") || t.id === "team-player") &&
+            !flags.has("testing-cash-grant-900M-applied")
+          ) {
+            cashUsd += 900_000_000;
+            flags.add("testing-cash-grant-900M-applied");
+            // Defer the toast to the next tick so the store has fully
+            // rehydrated before we touch the UI layer.
+            setTimeout(() => {
+              toast.accent(
+                "Testing cash grant: +$900M",
+                "Granted to Meridian Air for aircraft-purchase validation.",
+              );
+            }, 600);
+          }
+          return ({
           ...t,
-          flags: new Set(Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? [])),
+          cashUsd,
+          flags,
           deferredEvents: t.deferredEvents ?? [],
           rcfBalanceUsd: t.rcfBalanceUsd ?? 0,
           taxLossCarryForward: t.taxLossCarryForward ?? [],
@@ -2352,6 +2630,9 @@ export const useGame = create<GameStore>()(
               retirementQuarter: f.retirementQuarter ?? f.purchaseQuarter + 16,
               maintenanceDeficit: f.maintenanceDeficit ?? 0,
               satisfactionPct: f.satisfactionPct ?? 75,
+              ecoUpgrade: f.ecoUpgrade ?? false,
+              ecoUpgradeQuarter: f.ecoUpgradeQuarter ?? null,
+              ecoUpgradeCost: f.ecoUpgradeCost ?? 0,
               routeId: stale ? null : f.routeId,
             };
           }),
@@ -2411,7 +2692,8 @@ export const useGame = create<GameStore>()(
             consecutiveQuartersActive: r.consecutiveQuartersActive ?? 0,
             consecutiveLosingQuarters: r.consecutiveLosingQuarters ?? 0,
           })),
-        }));
+        });
+        });
       },
     },
   ),

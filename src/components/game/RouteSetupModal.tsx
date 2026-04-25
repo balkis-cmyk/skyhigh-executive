@@ -54,8 +54,10 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   const [econFare, setEconFare] = useState<number | null>(null);
   const [busFare, setBusFare] = useState<number | null>(null);
   const [firstFare, setFirstFare] = useState<number | null>(null);
-  const [isCargo, setIsCargo] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Inline slot-bid prices, keyed by airport code. Player sets these
+  // when there's a shortfall; on Open route we submit them as auto-bids.
+  const [bidPrices, setBidPrices] = useState<Record<string, number>>({});
 
   const isOpen = open && !!(origin && dest);
 
@@ -82,8 +84,11 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     setEconFare(null);
     setBusFare(null);
     setFirstFare(null);
-    setIsCargo(cargo);
     setError(null);
+    // Clear stale bid prices when the route changes — bids are
+    // airport-specific, and showing them carried over from a prior
+    // route attempt is misleading.
+    setBidPrices({});
   }, [isOpen, origin, dest, forceCargo, player]);
 
   // Cap frequency to the engine-computed max as soon as aircraft selection
@@ -137,11 +142,11 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     [selectedPlaneIds, player],
   );
 
-  // Auto-flip cargo flag when aircraft selection is purely cargo
-  useEffect(() => {
-    if (allCargo && !isCargo) setIsCargo(true);
-    if (!allCargo && isCargo) setIsCargo(false);
-  }, [allCargo]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Cargo flag is purely derived: it's a cargo route iff all selected
+  // aircraft are cargo, OR the user opted-in via forceCargo from the
+  // launch bar. Computing during render avoids the cascading-render
+  // pattern of setState-in-effect.
+  const isCargo = allCargo || (forceCargo ?? false);
 
   if (!player) return null;
 
@@ -183,7 +188,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   // override individual classes after; reset clears the override).
   function applyTier(t: PricingTier) {
     setTier(t);
-    const mult = t === "budget" ? 0.7 : t === "premium" ? 1.3 : t === "ultra" ? 1.6 : 1.0;
+    const mult = t === "budget" ? 0.5 : t === "premium" ? 1.5 : t === "ultra" ? 2.0 : 1.0;
     if (econRange) setEconFare(Math.round(econRange.base * mult));
     if (hasBusiness && busRange) setBusFare(Math.round(busRange.base * mult));
     if (hasFirst && firstRange) setFirstFare(Math.round(firstRange.base * mult));
@@ -211,6 +216,44 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     } as const;
   })();
 
+  const hasAircraft = selectedPlaneIds.length > 0;
+
+  // Slot capacity check — replicates store-side validation so the modal
+  // can render the inline bid form when there's a shortfall.
+  const shortfall = (() => {
+    if (!origin || !dest || !hasAircraft || weeklyFreq < 1) {
+      return { atOrigin: 0, atDest: 0 };
+    }
+    const usedAtO = player.routes
+      .filter((r) =>
+        r.status === "active" &&
+        (r.originCode === origin || r.destCode === origin),
+      )
+      .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
+    const usedAtD = player.routes
+      .filter((r) =>
+        r.status === "active" &&
+        (r.originCode === dest || r.destCode === dest),
+      )
+      .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
+    const slotsO = player.airportLeases?.[origin]?.slots ?? 0;
+    const slotsD = player.airportLeases?.[dest]?.slots ?? 0;
+    return {
+      atOrigin: Math.max(0, usedAtO + weeklyFreq - slotsO),
+      atDest: Math.max(0, usedAtD + weeklyFreq - slotsD),
+    };
+  })();
+  const hasShortfall = shortfall.atOrigin > 0 || shortfall.atDest > 0;
+
+  // The button is enabled only when the user has explicitly set a bid for
+  // every airport with a shortfall. Without explicit confirmation we
+  // would be auto-bidding on the player's behalf, and the player could
+  // get outbid silently. Force a deliberate price entry.
+  const allBidsSet = !hasShortfall || (
+    (shortfall.atOrigin === 0 || (origin !== null && bidPrices[origin] !== undefined)) &&
+    (shortfall.atDest === 0   || (dest   !== null && bidPrices[dest]   !== undefined))
+  );
+
   function confirmRoute() {
     if (!origin || !dest) return;
     if (selectedPlaneIds.length === 0) {
@@ -220,6 +263,18 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     if (weeklyFreq < 1) {
       setError("Weekly frequency must be at least 1.");
       return;
+    }
+    // Build inline bid attachment per-airport when there's a shortfall.
+    // The Open button is disabled until allBidsSet, so each shortfall
+    // airport is guaranteed to have an explicit, user-set price here.
+    const slotBids: Array<{ airportCode: string; pricePerSlot: number }> = [];
+    if (hasShortfall) {
+      if (shortfall.atOrigin > 0 && bidPrices[origin] !== undefined) {
+        slotBids.push({ airportCode: origin, pricePerSlot: bidPrices[origin]! });
+      }
+      if (shortfall.atDest > 0 && bidPrices[dest] !== undefined) {
+        slotBids.push({ airportCode: dest, pricePerSlot: bidPrices[dest]! });
+      }
     }
     const r = openRoute({
       originCode: origin,
@@ -232,6 +287,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
       busFare,
       firstFare,
       isCargo,
+      slotBids: slotBids.length > 0 ? slotBids : undefined,
     });
     if (!r.ok) {
       setError(r.error ?? "Unknown error");
@@ -239,8 +295,6 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     }
     onClose();
   }
-
-  const hasAircraft = selectedPlaneIds.length > 0;
 
   return (
     <Modal open={isOpen} onClose={onClose} className="w-[min(640px,calc(100vw-2rem))]">
@@ -386,7 +440,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                     >
                       {t}
                       <div className="text-[0.5625rem] text-ink-muted">
-                        {t === "budget" ? "0.7×" : t === "standard" ? "1.0×" : t === "premium" ? "1.3×" : "1.6×"} base
+                        {t === "budget" ? "0.5×" : t === "standard" ? "1.0×" : t === "premium" ? "1.5×" : "2.0×"} base
                       </div>
                     </button>
                   ))}
@@ -447,6 +501,69 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
           </Section>
         )}
 
+        {/* Step 4 — Slot shortfall: inline bid form (only when needed) */}
+        {hasAircraft && hasShortfall && (
+          <Section step={4} title="Slot bidding (required)">
+            <div className="rounded-md border border-warning/50 bg-[var(--warning-soft)] px-3 py-2.5 mb-3 text-[0.8125rem] text-ink-2">
+              <div className="font-semibold text-warning mb-1 text-[0.75rem] uppercase tracking-wider">
+                You need slots — set your bid below
+              </div>
+              You don&apos;t hold enough weekly slots at{" "}
+              {shortfall.atOrigin > 0 && <strong className="font-mono">{origin}</strong>}
+              {shortfall.atOrigin > 0 && shortfall.atDest > 0 && " / "}
+              {shortfall.atDest > 0 && <strong className="font-mono">{dest}</strong>}
+              {" "}to fly this schedule. <strong>Pick your bid price per slot</strong> —
+              you&apos;ll only pay if you win, but rivals are bidding too.
+              Higher bids beat lower ones at the quarter-close auction.
+              <br />
+              <span className="text-[0.6875rem] text-ink-muted mt-1 inline-block">
+                Route will be <strong>Pending</strong> until the auction
+                resolves. If outbid, the route is cancelled and aircraft
+                return idle (no charge).
+              </span>
+            </div>
+
+            {shortfall.atOrigin > 0 && origin && (
+              <BidRow
+                airportCode={origin}
+                slotsNeeded={shortfall.atOrigin}
+                tier={(CITIES_BY_CODE[origin]?.tier ?? 1) as CityTier}
+                price={bidPrices[origin]}
+                onChange={(p) => setBidPrices((prev) => {
+                  if (Number.isNaN(p)) {
+                    const next = { ...prev };
+                    delete next[origin];
+                    return next;
+                  }
+                  return { ...prev, [origin]: p };
+                })}
+              />
+            )}
+            {shortfall.atDest > 0 && dest && (
+              <BidRow
+                airportCode={dest}
+                slotsNeeded={shortfall.atDest}
+                tier={(CITIES_BY_CODE[dest]?.tier ?? 1) as CityTier}
+                price={bidPrices[dest]}
+                onChange={(p) => setBidPrices((prev) => {
+                  if (Number.isNaN(p)) {
+                    const next = { ...prev };
+                    delete next[dest];
+                    return next;
+                  }
+                  return { ...prev, [dest]: p };
+                })}
+              />
+            )}
+
+            <div className="text-[0.6875rem] text-ink-muted mt-2 leading-relaxed">
+              <strong className="text-ink">Model B:</strong> winning bids set
+              your weekly per-slot rent for as long as you hold the slot.
+              Quarterly cost = slots × weekly price × 13 weeks.
+            </div>
+          </Section>
+        )}
+
         {/* Live projection */}
         {projection && (
           <div className={cn(
@@ -478,13 +595,118 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button
           variant="primary"
-          disabled={!hasAircraft || weeklyFreq < 1}
+          disabled={!hasAircraft || weeklyFreq < 1 || !allBidsSet}
           onClick={confirmRoute}
+          title={!allBidsSet ? "Set your bid for each shortfall airport below" : undefined}
         >
-          Open route →
+          {hasShortfall
+            ? allBidsSet
+              ? "Submit bids & open as pending →"
+              : "Set your bids below ↓"
+            : "Open route →"}
         </Button>
       </ModalFooter>
     </Modal>
+  );
+}
+
+function BidRow({
+  airportCode, slotsNeeded, tier, price, onChange,
+}: {
+  airportCode: string;
+  slotsNeeded: number;
+  tier: CityTier;
+  /** undefined when player hasn't set a bid yet — render an empty/CTA state. */
+  price: number | undefined;
+  onChange: (n: number) => void;
+}) {
+  const basePrice = BASE_SLOT_PRICE_BY_TIER[tier];
+  const minPrice = Math.round(basePrice * 0.5);
+  const maxPrice = Math.round(basePrice * 3);
+  const city = CITIES_BY_CODE[airportCode];
+  const isSet = price !== undefined;
+  // Use the BASE price as the slider's resting position before the user
+  // commits — but the price is NOT applied to bidPrices state until
+  // they actually move/click the slider.
+  const displayPrice = price ?? basePrice;
+  const weeklyCost = displayPrice * slotsNeeded;
+  const quarterlyCost = weeklyCost * 13;
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border p-3 mb-2 transition-colors",
+        isSet
+          ? "border-primary bg-[rgba(20,53,94,0.04)]"
+          : "border-warning/60 bg-[var(--warning-soft)]/40",
+      )}
+    >
+      <div className="flex items-baseline justify-between mb-2">
+        <div>
+          <span className="font-mono text-ink font-semibold">{airportCode}</span>
+          <span className="text-ink-muted text-[0.75rem] ml-1.5">
+            {city?.name} · Tier {tier}
+          </span>
+        </div>
+        <Badge tone={isSet ? "positive" : "warning"}>
+          {isSet
+            ? `Bid set · ${slotsNeeded} slot${slotsNeeded === 1 ? "" : "s"}`
+            : `${slotsNeeded} slot${slotsNeeded === 1 ? "" : "s"} needed`}
+        </Badge>
+      </div>
+
+      {!isSet && (
+        <div className="text-[0.6875rem] text-warning leading-relaxed mb-2">
+          ↓ Move the slider to set your bid. Higher bids beat rivals — but
+          you commit to that weekly rent for as long as you hold these slots.
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[0.75rem] text-ink-2 font-medium">Bid per slot / week</span>
+        <span className={cn(
+          "tabular font-mono text-[0.875rem] font-semibold",
+          isSet ? "text-ink" : "text-ink-muted",
+        )}>
+          {isSet ? `$${displayPrice.toLocaleString()}` : "— not set —"}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={minPrice}
+        max={maxPrice}
+        step={Math.max(1000, Math.round((maxPrice - minPrice) / 100))}
+        value={displayPrice}
+        onChange={(e) => onChange(parseInt(e.target.value, 10))}
+        className="w-full accent-primary"
+      />
+      <div className="flex justify-between text-[0.6875rem] text-ink-muted tabular mb-2">
+        <span>${minPrice.toLocaleString()}</span>
+        <span>base ${basePrice.toLocaleString()}</span>
+        <span>${maxPrice.toLocaleString()}</span>
+      </div>
+
+      {isSet && (
+        <div className="grid grid-cols-2 gap-2 text-[0.75rem] tabular border-t border-line pt-2">
+          <div>
+            <div className="text-ink-muted text-[0.625rem] uppercase tracking-wider">Weekly cost</div>
+            <div className="font-mono text-ink">${weeklyCost.toLocaleString()}</div>
+          </div>
+          <div>
+            <div className="text-ink-muted text-[0.625rem] uppercase tracking-wider">Quarterly (× 13)</div>
+            <div className="font-mono text-ink font-semibold">${quarterlyCost.toLocaleString()}</div>
+          </div>
+        </div>
+      )}
+      {isSet && (
+        <button
+          onClick={() => onChange(NaN)}
+          className="mt-2 text-[0.6875rem] text-ink-muted hover:text-ink underline"
+        >
+          clear bid
+        </button>
+      )}
+    </div>
   );
 }
 

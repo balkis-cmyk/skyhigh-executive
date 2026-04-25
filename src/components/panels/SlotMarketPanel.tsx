@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
 import { CITIES } from "@/data/cities";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, fmtQuarter } from "@/lib/format";
 import { BASE_SLOT_PRICE_BY_TIER } from "@/lib/slots";
 import { toast } from "@/store/toasts";
 import { cn } from "@/lib/cn";
@@ -85,6 +85,30 @@ export function SlotMarketPanel() {
             <span className="tabular font-mono font-semibold text-ink">
               {fmtMoney(totalQuarterlySlotFees)} / quarter
             </span>
+          </div>
+        )}
+        {(player.pendingSlotBids ?? []).length > 0 && (
+          <div className="mt-2 rounded-md border border-warning/40 bg-[var(--warning-soft)]/40 px-3 py-2 text-[0.8125rem]">
+            <div className="flex items-baseline justify-between mb-1">
+              <span className="font-semibold text-warning text-[0.6875rem] uppercase tracking-wider">
+                {(player.pendingSlotBids ?? []).length} pending bid{(player.pendingSlotBids ?? []).length === 1 ? "" : "s"}
+              </span>
+              <span className="text-ink-muted text-[0.6875rem]">
+                Resolves at quarter close
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              {(player.pendingSlotBids ?? []).map((b, i) => (
+                <div key={i} className="flex items-baseline justify-between text-[0.75rem] tabular font-mono">
+                  <span className="text-ink-2">
+                    {b.airportCode} · {b.slots} slot{b.slots === 1 ? "" : "s"}
+                  </span>
+                  <span className="text-ink">
+                    ${b.pricePerSlot.toLocaleString()}/wk · ${(b.slots * b.pricePerSlot * 13).toLocaleString()}/Q if won
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -195,9 +219,14 @@ export function SlotMarketPanel() {
                   </span>
                 </div>
 
-                {/* Next Q */}
+                {/* Next Q — calendar quarter when next batch opens */}
                 <div className="col-span-2 text-right tabular font-mono text-[0.6875rem] text-ink-muted">
-                  {state ? `+${state.nextOpening.toLocaleString("en-US")}` : "—"}
+                  {state ? (
+                    <>
+                      +{state.nextOpening.toLocaleString("en-US")}
+                      <span className="ml-1">{fmtQuarter(state.nextTickQuarter)}</span>
+                    </>
+                  ) : "—"}
                 </div>
               </button>
 
@@ -236,7 +265,7 @@ export function SlotMarketPanel() {
         <div className="flex items-center gap-1.5 mb-1 text-ink font-semibold uppercase tracking-wider text-[0.625rem]">
           <Calendar size={11} /> Yearly slot opens
         </div>
-        Each Q5 / Q9 / Q13 / Q17 a fresh batch of slots opens at every
+        Once per simulated year, a fresh batch of slots opens at every
         airport. Tier 1 ~200/year, Tier 2 ~125/year, Tier 3 ~63/year,
         Tier 4 ~32/year (±20% jitter). The "Next Q" column shows the
         announced opening per airport so you can plan bids.
@@ -376,7 +405,8 @@ function BidPanel({
         )}
         {noSlotsAvailable && (
           <div className="mt-2 text-[0.75rem] text-warning">
-            No slots available right now. Next batch opens Q{useGame.getState().airportSlots?.[airportCode]?.nextTickQuarter ?? "?"}.
+            No slots available right now. Next batch opens{" "}
+            {fmtQuarter(useGame.getState().airportSlots?.[airportCode]?.nextTickQuarter ?? 99)}.
           </div>
         )}
       </div>

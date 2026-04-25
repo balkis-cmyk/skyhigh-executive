@@ -41,7 +41,14 @@ export function RoutesPanel() {
     if (!player) return [];
     const q = query.trim().toUpperCase();
     return player.routes
-      .filter((r) => r.status === "active" || r.status === "suspended")
+      // Include pending routes too — they're awaiting auction resolution
+      // and the player needs to see them.
+      .filter(
+        (r) =>
+          r.status === "active" ||
+          r.status === "suspended" ||
+          r.status === "pending",
+      )
       .filter((r) => {
         if (!q) return true;
         return (
@@ -52,9 +59,19 @@ export function RoutesPanel() {
         );
       })
       .sort(
-        (a, b) =>
-          b.quarterlyRevenue - b.quarterlyFuelCost - b.quarterlySlotCost -
-          (a.quarterlyRevenue - a.quarterlyFuelCost - a.quarterlySlotCost),
+        // Pending routes float to top so the player sees their bids first;
+        // active sort by profit; suspended last.
+        (a, b) => {
+          const ra =
+            a.status === "pending" ? -2 : a.status === "active" ? 0 : 1;
+          const rb =
+            b.status === "pending" ? -2 : b.status === "active" ? 0 : 1;
+          if (ra !== rb) return ra - rb;
+          return (
+            b.quarterlyRevenue - b.quarterlyFuelCost - b.quarterlySlotCost -
+            (a.quarterlyRevenue - a.quarterlyFuelCost - a.quarterlySlotCost)
+          );
+        },
       );
   }, [player, query]);
 
@@ -129,6 +146,7 @@ export function RoutesPanel() {
                 const origin = CITIES_BY_CODE[r.originCode];
                 const dest = CITIES_BY_CODE[r.destCode];
                 const suspended = r.status === "suspended";
+                const pending = r.status === "pending";
                 const losing = (r.consecutiveLosingQuarters ?? 0) >= 2;
                 return (
                   <tr
@@ -138,6 +156,7 @@ export function RoutesPanel() {
                       "border-b border-line last:border-0 cursor-pointer",
                       "hover:bg-surface-hover transition-colors",
                       suspended && "opacity-60",
+                      pending && "bg-[var(--warning-soft)]/20",
                     )}
                   >
                     <td className="py-2.5 px-3">
@@ -185,7 +204,11 @@ export function RoutesPanel() {
                       {fmtMoney(profit)}
                     </td>
                     <td className="py-2.5 px-3 text-right">
-                      {suspended ? (
+                      {pending ? (
+                        <Badge tone="warning" title="Bid pending — auction at quarter close">
+                          Pending
+                        </Badge>
+                      ) : suspended ? (
                         <Badge tone="warning">Suspended</Badge>
                       ) : (
                         <Badge tone="positive">Active</Badge>
@@ -364,8 +387,15 @@ function RouteDetailModal({
     <Modal open={open} onClose={onClose} className="w-[min(780px,calc(100vw-3rem))]">
       <ModalHeader>
         <div className="flex items-center gap-2 mb-1.5">
-          <Badge tone={route.status === "suspended" ? "warning" : "positive"}>
-            {route.status === "suspended" ? "Suspended" : "Active"}
+          <Badge
+            tone={
+              route.status === "pending" ? "warning" :
+              route.status === "suspended" ? "warning" :
+              "positive"
+            }
+          >
+            {route.status === "pending" ? "Pending bid" :
+             route.status === "suspended" ? "Suspended" : "Active"}
           </Badge>
           {route.isCargo && <Badge tone="warning">Cargo</Badge>}
         </div>
@@ -379,6 +409,14 @@ function RouteDetailModal({
             <span className="ml-2 text-positive">(Established route bonus)</span>
           )}
         </div>
+        {route.status === "pending" && (
+          <div className="mt-2 rounded-md border border-warning/40 bg-[var(--warning-soft)] px-3 py-2 text-[0.75rem] text-ink-2 leading-relaxed">
+            <strong className="text-warning">Awaiting auction.</strong> Your slot
+            bid resolves at end of quarter. The route will activate at the lower
+            of (your intended weekly frequency) and (slots actually won). If
+            you&apos;re outbid, it cancels and aircraft return idle.
+          </div>
+        )}
       </ModalHeader>
       <ModalBody className="space-y-5 max-h-[60vh] overflow-auto">
         {/* Performance snapshot */}
@@ -401,9 +439,9 @@ function RouteDetailModal({
           <Label>Pricing tier</Label>
           <div className="grid grid-cols-4 gap-2">
             {(["budget", "standard", "premium", "ultra"] as PricingTier[]).map((t) => {
-              const mult = t === "budget" ? "0.7×"
+              const mult = t === "budget" ? "0.5×"
                 : t === "standard" ? "1.0×"
-                : t === "premium" ? "1.3×" : "1.6×";
+                : t === "premium" ? "1.5×" : "2.0×";
               return (
                 <button
                   key={t}
@@ -425,10 +463,10 @@ function RouteDetailModal({
           </div>
           <div className="text-[0.6875rem] text-ink-muted leading-relaxed mt-1.5">
             Quick preset that multiplies every per-class fare against a tier
-            multiplier. Budget is 30% under base for high-volume capture;
-            Ultra is 60% above for premium positioning. Per-class sliders
-            below override individual cabin fares; the tier just sets the
-            starting point.
+            multiplier. Budget is half base for high-volume capture; Premium
+            is 1.5× base; Ultra is 2× base for top-of-market positioning.
+            Per-class sliders below override individual cabin fares; the
+            tier just sets the starting point.
           </div>
         </div>
 
