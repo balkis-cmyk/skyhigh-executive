@@ -1,23 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Button, Input } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
-import { CITIES, CITIES_BY_CODE } from "@/data/cities";
+import { CITIES } from "@/data/cities";
 import { fmtMoney } from "@/lib/format";
 import { BASE_SLOT_PRICE_BY_TIER } from "@/lib/slots";
 import { toast } from "@/store/toasts";
 import { cn } from "@/lib/cn";
 import type { CityTier } from "@/types/game";
-import { Search, Gavel, Calendar } from "lucide-react";
+import { Search, Calendar, ChevronRight, ChevronDown } from "lucide-react";
 
 /**
- * Player-facing airport slot market.
+ * Slot Market — redesigned per PRD update.
  *
- * Lists every airport with its current available slots, your holdings,
- * any bid you've placed, and the announced next-quarter opening. The
- * player can submit/cancel bids; bids are resolved at quarter close
- * (highest price/slot wins until available runs out).
+ * One row per airport with the columns the player actually cares about:
+ *   Airport | Tier | Owned | Fee/Q | Open | Next Q
+ *
+ * Clicking a row expands it into a Bid form: pick slots requested,
+ * bid weekly per-slot rent (with minimum from BASE_SLOT_PRICE_BY_TIER),
+ * see total max commitment, then Submit. Owned airports also expose a
+ * Release control so players can stop paying the recurring fee.
+ *
+ * All numbers use thousands separators so $120,000/wk is unambiguous.
  */
 export function SlotMarketPanel() {
   const player = useGame(selectPlayer);
@@ -25,17 +30,20 @@ export function SlotMarketPanel() {
   const submitSlotBid = useGame((s) => s.submitSlotBid);
   const cancelSlotBid = useGame((s) => s.cancelSlotBid);
   const releaseSlots = useGame((s) => s.releaseSlots);
-  const [query, setQuery] = useState("");
-  const [bidDraft, setBidDraft] = useState<Record<string, { slots: number; price: number }>>({});
 
-  // Total recurring slot expense across all leases (for header summary)
+  const [query, setQuery] = useState("");
+  const [expandedCode, setExpandedCode] = useState<string | null>(null);
+
+  // Total recurring slot expense (header summary)
   const totalQuarterlySlotFees = useMemo(() => {
     if (!player) return 0;
     return Object.values(player.airportLeases ?? {})
       .reduce((sum, l) => sum + l.totalWeeklyCost * 13, 0);
   }, [player]);
 
+  // Filtered airport list, hub + secondary surfaced first, then by tier
   const rows = useMemo(() => {
+    if (!player) return [];
     const q = query.trim().toLowerCase();
     return CITIES
       .filter((c) => {
@@ -46,8 +54,15 @@ export function SlotMarketPanel() {
           c.regionName.toLowerCase().includes(q)
         );
       })
-      .sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
-  }, [query]);
+      .sort((a, b) => {
+        // Player's hubs first
+        const aIsOwn = a.code === player.hubCode || player.secondaryHubCodes.includes(a.code);
+        const bIsOwn = b.code === player.hubCode || player.secondaryHubCodes.includes(b.code);
+        if (aIsOwn !== bIsOwn) return aIsOwn ? -1 : 1;
+        // Then by tier ascending, then alphabetical
+        return a.tier - b.tier || a.name.localeCompare(b.name);
+      });
+  }, [player, query]);
 
   if (!player) return null;
 
@@ -55,46 +70,27 @@ export function SlotMarketPanel() {
     (player.pendingSlotBids ?? []).map((b) => [b.airportCode, b]),
   );
 
-  function setDraft(code: string, patch: { slots?: number; price?: number }) {
-    setBidDraft((prev) => ({
-      ...prev,
-      [code]: {
-        slots: patch.slots ?? prev[code]?.slots ?? 5,
-        price: patch.price ?? prev[code]?.price ?? 0,
-      },
-    }));
-  }
-
-  function placeBid(code: string, tier: CityTier) {
-    const draft = bidDraft[code];
-    const slots = draft?.slots ?? 5;
-    const price = draft?.price ?? BASE_SLOT_PRICE_BY_TIER[tier];
-    const r = submitSlotBid(code, slots, price);
-    if (!r.ok) toast.negative(r.error ?? "Bid failed");
-    else setBidDraft((prev) => { const next = { ...prev }; delete next[code]; return next; });
-  }
-
   return (
     <div className="space-y-4">
       <div>
         <p className="text-[0.8125rem] text-ink-2 leading-relaxed">
           Each route consumes one slot per weekly schedule at both endpoints.
           Bids set the <strong>weekly per-slot rent</strong> — winners pay
-          ongoing fees as long as they hold the slot. Release a slot to
-          stop paying for it; it returns to the airport pool.
+          ongoing fees as long as they hold the slot. Release a slot to stop
+          paying for it; it returns to the airport pool.
         </p>
         {totalQuarterlySlotFees > 0 && (
           <div className="mt-2 rounded-md border border-line bg-surface-2/40 px-3 py-2 text-[0.8125rem] flex items-baseline justify-between">
             <span className="text-ink-2">Your recurring slot expense</span>
             <span className="tabular font-mono font-semibold text-ink">
-              {fmtMoney(totalQuarterlySlotFees)}/quarter
+              {fmtMoney(totalQuarterlySlotFees)} / quarter
             </span>
           </div>
         )}
       </div>
 
       <div className="relative">
-        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted" />
+        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none" />
         <input
           type="text"
           value={query}
@@ -105,170 +101,327 @@ export function SlotMarketPanel() {
       </div>
 
       <div className="rounded-md border border-line overflow-hidden">
-        <table className="w-full text-[0.8125rem]">
-          <thead>
-            <tr className="bg-surface-2 border-b border-line">
-              <th className="text-left px-2.5 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Airport</th>
-              <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Tier</th>
-              <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Mine</th>
-              <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Fee/Q</th>
-              <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Open</th>
-              <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Next</th>
-              <th className="text-left px-2.5 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Bid / Release</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.slice(0, 50).map((c) => {
-              const tier = c.tier as CityTier;
-              const state = airportSlots?.[c.code];
-              const lease = player.airportLeases?.[c.code];
-              const owned = lease?.slots ?? 0;
-              const quarterlyFee = (lease?.totalWeeklyCost ?? 0) * 13;
-              const myBid = myBids.get(c.code);
-              const draft = bidDraft[c.code];
-              const basePrice = BASE_SLOT_PRICE_BY_TIER[tier];
-              const isOwnHub = c.code === player.hubCode;
-              const isSecondary = player.secondaryHubCodes.includes(c.code);
-              return (
-                <tr key={c.code} className={cn(
-                  "border-b border-line last:border-0",
+        {/* Table header */}
+        <div className="bg-surface-2 border-b border-line grid grid-cols-12 gap-2 px-3 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">
+          <div className="col-span-4">Airport</div>
+          <div className="col-span-1 text-center">Tier</div>
+          <div className="col-span-2 text-right">Owned</div>
+          <div className="col-span-2 text-right">Fee/Q</div>
+          <div className="col-span-1 text-right">Open</div>
+          <div className="col-span-2 text-right">Next Q</div>
+        </div>
+
+        {/* Rows */}
+        {rows.slice(0, 60).map((c) => {
+          const tier = c.tier as CityTier;
+          const state = airportSlots?.[c.code];
+          const lease = player.airportLeases?.[c.code];
+          const owned = lease?.slots ?? 0;
+          const quarterlyFee = (lease?.totalWeeklyCost ?? 0) * 13;
+          const myBid = myBids.get(c.code);
+          const expanded = expandedCode === c.code;
+          const isOwnHub = c.code === player.hubCode;
+          const isSecondary = player.secondaryHubCodes.includes(c.code);
+
+          return (
+            <div key={c.code} className="border-b border-line last:border-0">
+              <button
+                onClick={() => setExpandedCode(expanded ? null : c.code)}
+                className={cn(
+                  "w-full grid grid-cols-12 gap-2 px-3 py-2.5 text-left transition-colors text-[0.8125rem]",
+                  "hover:bg-surface-hover",
                   isOwnHub && "bg-[var(--accent-soft)]/30",
-                  isSecondary && "bg-[var(--info-soft)]/30",
-                )}>
-                  <td className="px-2.5 py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-semibold text-ink">{c.code}</span>
-                      <span className="text-[0.75rem] text-ink-2 truncate max-w-[160px]">{c.name}</span>
-                      {isOwnHub && <span className="text-[0.5625rem] uppercase tracking-wider text-accent font-bold">HUB</span>}
-                      {isSecondary && <span className="text-[0.5625rem] uppercase tracking-wider text-info font-bold">2ND</span>}
-                    </div>
-                  </td>
-                  <td className="px-2 py-2 text-right tabular text-ink-muted text-[0.75rem]">
-                    T{tier}
-                  </td>
-                  <td className="px-2 py-2 text-right tabular font-mono">
-                    {owned > 0 ? <span className="text-positive font-semibold">{owned}</span> : <span className="text-ink-muted">—</span>}
-                  </td>
-                  <td className="px-2 py-2 text-right tabular font-mono text-[0.6875rem]">
-                    {quarterlyFee > 0 ? (
-                      <span className="text-warning">{fmtMoney(quarterlyFee)}</span>
-                    ) : owned > 0 ? (
-                      <span className="text-ink-muted">free</span>
-                    ) : (
-                      <span className="text-ink-muted">—</span>
-                    )}
-                  </td>
-                  <td className="px-2 py-2 text-right tabular font-mono">
-                    <span className={state?.available && state.available > 0 ? "text-ink" : "text-ink-muted"}>
-                      {state?.available ?? "—"}
+                  isSecondary && !isOwnHub && "bg-[var(--info-soft)]/30",
+                  expanded && "bg-surface-2",
+                )}
+              >
+                {/* Airport */}
+                <div className="col-span-4 flex items-center gap-2 min-w-0">
+                  {expanded ? (
+                    <ChevronDown size={13} className="text-ink-muted shrink-0" />
+                  ) : (
+                    <ChevronRight size={13} className="text-ink-muted shrink-0" />
+                  )}
+                  <span className="font-mono font-semibold text-ink shrink-0">
+                    {c.code}
+                  </span>
+                  <span className="text-ink-2 truncate">{c.name}</span>
+                  {isOwnHub && (
+                    <span className="text-[0.5625rem] uppercase tracking-wider text-accent font-bold shrink-0">
+                      HUB
                     </span>
-                  </td>
-                  <td className="px-2 py-2 text-right tabular font-mono text-[0.75rem] text-ink-muted">
-                    {state ? `+${state.nextOpening} Q${state.nextTickQuarter}` : "—"}
-                  </td>
-                  <td className="px-2.5 py-2">
-                    {myBid ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[0.6875rem] tabular font-mono text-ink">
-                          {myBid.slots} × ${(myBid.pricePerSlot / 1000).toFixed(0)}K/wk
-                        </span>
-                        <button
-                          onClick={() => cancelSlotBid(c.code)}
-                          className="text-[0.625rem] text-negative hover:underline"
-                        >
-                          cancel
-                        </button>
-                      </div>
-                    ) : owned > 0 && quarterlyFee > 0 ? (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => {
-                            const n = parseInt(prompt(`Release how many slots at ${c.code}? (1-${owned})`, "5") ?? "0", 10);
-                            if (n > 0 && n <= owned) {
-                              const r = releaseSlots(c.code, n);
-                              if (!r.ok) toast.negative(r.error ?? "Release failed");
-                            }
-                          }}
-                          className="text-[0.625rem] text-negative hover:underline"
-                          title="Stop paying the recurring fee on these slots"
-                        >
-                          release
-                        </button>
-                        <span className="text-[0.625rem] text-ink-muted">|</span>
-                        {/* Player can ALSO bid for more on top of held */}
-                        <Input
-                          type="number"
-                          min={1}
-                          max={50}
-                          value={draft?.slots ?? 5}
-                          onChange={(e) => setDraft(c.code, { slots: parseInt(e.target.value, 10) || 1 })}
-                          className="w-12 h-6 text-[0.6875rem]"
-                        />
-                        <Input
-                          type="number"
-                          min={basePrice}
-                          step={5_000}
-                          value={draft?.price ?? basePrice}
-                          onChange={(e) => setDraft(c.code, { price: parseInt(e.target.value, 10) || basePrice })}
-                          className="w-20 h-6 text-[0.6875rem]"
-                        />
-                        <Button size="sm" variant="secondary" onClick={() => placeBid(c.code, tier)}>
-                          <Gavel size={11} />
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-1.5">
-                        <Input
-                          type="number"
-                          min={1}
-                          max={50}
-                          value={draft?.slots ?? 5}
-                          onChange={(e) => setDraft(c.code, { slots: parseInt(e.target.value, 10) || 1 })}
-                          className="w-12 h-6 text-[0.6875rem]"
-                          title="Slots wanted"
-                        />
-                        <span className="text-[0.625rem] text-ink-muted">×</span>
-                        <Input
-                          type="number"
-                          min={basePrice}
-                          step={5_000}
-                          value={draft?.price ?? basePrice}
-                          onChange={(e) => setDraft(c.code, { price: parseInt(e.target.value, 10) || basePrice })}
-                          className="w-20 h-6 text-[0.6875rem]"
-                          title={`Min $${(basePrice / 1000).toFixed(0)}K/slot`}
-                        />
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => placeBid(c.code, tier)}
-                          title={`Bid for slots at ${c.name}`}
-                        >
-                          <Gavel size={11} />
-                        </Button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  )}
+                  {isSecondary && (
+                    <span className="text-[0.5625rem] uppercase tracking-wider text-info font-bold shrink-0">
+                      2ND
+                    </span>
+                  )}
+                  {myBid && (
+                    <span className="text-[0.5625rem] uppercase tracking-wider text-warning font-bold shrink-0">
+                      BID PENDING
+                    </span>
+                  )}
+                </div>
+
+                {/* Tier */}
+                <div className="col-span-1 text-center text-ink-muted tabular text-[0.75rem]">
+                  T{tier}
+                </div>
+
+                {/* Owned */}
+                <div className="col-span-2 text-right tabular font-mono">
+                  {owned > 0 ? (
+                    <span className="text-positive font-semibold">{owned}</span>
+                  ) : (
+                    <span className="text-ink-muted">—</span>
+                  )}
+                </div>
+
+                {/* Fee/Q — only shown when there's a recurring fee */}
+                <div className="col-span-2 text-right tabular font-mono text-[0.75rem]">
+                  {quarterlyFee > 0 ? (
+                    <span className="text-warning">{fmtMoney(quarterlyFee)}</span>
+                  ) : owned > 0 ? (
+                    <span className="text-positive">free</span>
+                  ) : (
+                    <span className="text-ink-muted">—</span>
+                  )}
+                </div>
+
+                {/* Open */}
+                <div className="col-span-1 text-right tabular font-mono">
+                  <span className={state?.available && state.available > 0 ? "text-ink" : "text-ink-muted"}>
+                    {state?.available ?? "—"}
+                  </span>
+                </div>
+
+                {/* Next Q */}
+                <div className="col-span-2 text-right tabular font-mono text-[0.6875rem] text-ink-muted">
+                  {state ? `+${state.nextOpening.toLocaleString("en-US")}` : "—"}
+                </div>
+              </button>
+
+              {/* Expanded: bid + release controls */}
+              {expanded && (
+                <BidPanel
+                  airportCode={c.code}
+                  tier={tier}
+                  owned={owned}
+                  available={state?.available ?? 0}
+                  myBid={myBid}
+                  onPlaceBid={(slots, price) => {
+                    const r = submitSlotBid(c.code, slots, price);
+                    if (!r.ok) toast.negative(r.error ?? "Bid failed");
+                    else setExpandedCode(null);
+                  }}
+                  onCancelBid={() => cancelSlotBid(c.code)}
+                  onRelease={(n) => {
+                    const r = releaseSlots(c.code, n);
+                    if (!r.ok) toast.negative(r.error ?? "Release failed");
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
-      {rows.length > 50 && (
+
+      {rows.length > 60 && (
         <div className="text-[0.6875rem] text-ink-muted text-center">
-          Showing first 50 of {rows.length}. Refine search to see more.
+          Showing first 60 of {rows.length}. Refine search to see more.
         </div>
       )}
 
       <div className="rounded-md border border-line bg-surface-2/40 p-3 text-[0.75rem] text-ink-2">
         <div className="flex items-center gap-1.5 mb-1 text-ink font-semibold uppercase tracking-wider text-[0.625rem]">
-          <Calendar size={11} /> How slot opens work
+          <Calendar size={11} /> Yearly slot opens
         </div>
-        Each Q5 / Q9 / Q13 / Q17 a fresh batch of slots opens at every airport.
-        Tier 1 ~200/year, Tier 2 ~125/year, Tier 3 ~63/year, Tier 4 ~32/year
-        (±20% jitter). The "Next" column above shows next quarter's opening
-        per airport so you can plan bids accordingly.
+        Each Q5 / Q9 / Q13 / Q17 a fresh batch of slots opens at every
+        airport. Tier 1 ~200/year, Tier 2 ~125/year, Tier 3 ~63/year,
+        Tier 4 ~32/year (±20% jitter). The "Next Q" column shows the
+        announced opening per airport so you can plan bids.
       </div>
+    </div>
+  );
+}
+
+/**
+ * Inline expand-on-click panel for one airport: bid form + release control.
+ * Visible only when the player taps a row, so the table itself stays calm.
+ */
+function BidPanel({
+  airportCode, tier, owned, available, myBid, onPlaceBid, onCancelBid, onRelease,
+}: {
+  airportCode: string;
+  tier: CityTier;
+  owned: number;
+  available: number;
+  myBid?: { slots: number; pricePerSlot: number };
+  onPlaceBid: (slots: number, price: number) => void;
+  onCancelBid: () => void;
+  onRelease: (n: number) => void;
+}) {
+  const minPrice = BASE_SLOT_PRICE_BY_TIER[tier];
+  const [slotsRequested, setSlotsRequested] = useState<number>(myBid?.slots ?? 5);
+  const [pricePerSlot, setPricePerSlot] = useState<number>(myBid?.pricePerSlot ?? minPrice);
+  const [releaseCount, setReleaseCount] = useState<number>(Math.min(5, owned));
+
+  const maxCommitWeekly = slotsRequested * pricePerSlot;
+  const maxCommitQuarterly = maxCommitWeekly * 13;
+  const priceTooLow = pricePerSlot < minPrice;
+  const noSlotsAvailable = available <= 0;
+
+  return (
+    <div className="bg-surface px-4 py-3 border-t border-line space-y-4">
+      {/* Pending bid summary + cancel */}
+      {myBid && (
+        <div className="rounded-md border border-warning bg-[var(--warning-soft)] px-3 py-2 flex items-baseline justify-between text-[0.75rem]">
+          <span className="text-ink-2">
+            Pending bid: <strong className="text-ink">{myBid.slots.toLocaleString("en-US")}</strong> slots at <strong className="text-ink">${myBid.pricePerSlot.toLocaleString("en-US")}/wk</strong>
+          </span>
+          <button
+            onClick={onCancelBid}
+            className="text-negative hover:underline text-[0.6875rem]"
+          >
+            Cancel bid
+          </button>
+        </div>
+      )}
+
+      {/* Bid form */}
+      <div>
+        <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted font-semibold mb-2">
+          Place a bid {myBid ? "(replaces pending)" : ""}
+        </div>
+        <div className="grid grid-cols-12 gap-3 items-end">
+          <div className="col-span-4">
+            <label className="text-[0.6875rem] text-ink-muted block mb-1">
+              Slots requested
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={Math.max(1, available)}
+              value={slotsRequested}
+              onChange={(e) => setSlotsRequested(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className="w-full h-9 px-2 rounded-md border border-line bg-surface text-[0.875rem] text-ink text-right tabular font-mono focus:outline-none focus:border-primary"
+            />
+            <div className="text-[0.625rem] text-ink-muted mt-0.5 tabular">
+              {available.toLocaleString("en-US")} open at this airport
+            </div>
+          </div>
+          <div className="col-span-5">
+            <label className="text-[0.6875rem] text-ink-muted block mb-1">
+              Bid per slot ($/week)
+            </label>
+            <input
+              type="number"
+              min={minPrice}
+              step={5_000}
+              value={pricePerSlot}
+              onChange={(e) => setPricePerSlot(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              className={cn(
+                "w-full h-9 px-2 rounded-md border bg-surface text-[0.875rem] text-ink text-right tabular font-mono focus:outline-none",
+                priceTooLow ? "border-negative focus:border-negative" : "border-line focus:border-primary",
+              )}
+            />
+            <div className="text-[0.625rem] text-ink-muted mt-0.5 tabular">
+              Min ${minPrice.toLocaleString("en-US")}/wk · Tier {tier} base
+            </div>
+          </div>
+          <div className="col-span-3">
+            <Button
+              variant="primary"
+              disabled={priceTooLow || slotsRequested < 1 || noSlotsAvailable}
+              onClick={() => onPlaceBid(slotsRequested, pricePerSlot)}
+              className="w-full"
+            >
+              Submit bid
+            </Button>
+          </div>
+        </div>
+
+        {/* Cost preview */}
+        <div className="mt-3 rounded-md border border-line bg-surface-2/40 px-3 py-2 grid grid-cols-3 gap-3 text-[0.75rem]">
+          <div>
+            <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">
+              Weekly commit
+            </div>
+            <div className="tabular font-mono text-ink mt-0.5">
+              ${maxCommitWeekly.toLocaleString("en-US")}
+            </div>
+          </div>
+          <div>
+            <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">
+              Quarterly commit
+            </div>
+            <div className="tabular font-mono text-ink mt-0.5">
+              {fmtMoney(maxCommitQuarterly)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">
+              Resolves
+            </div>
+            <div className="text-[0.75rem] text-ink-2 mt-0.5">
+              At quarter close
+            </div>
+          </div>
+        </div>
+
+        {priceTooLow && (
+          <div className="mt-2 text-[0.75rem] text-negative">
+            Below the Tier {tier} minimum (${minPrice.toLocaleString("en-US")}/wk).
+          </div>
+        )}
+        {noSlotsAvailable && (
+          <div className="mt-2 text-[0.75rem] text-warning">
+            No slots available right now. Next batch opens Q{useGame.getState().airportSlots?.[airportCode]?.nextTickQuarter ?? "?"}.
+          </div>
+        )}
+      </div>
+
+      {/* Release control — only when player owns AND pays a fee */}
+      {owned > 0 && (
+        <div className="pt-3 border-t border-line">
+          <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted font-semibold mb-2">
+            Release slots
+          </div>
+          <div className="grid grid-cols-12 gap-3 items-end">
+            <div className="col-span-4">
+              <label className="text-[0.6875rem] text-ink-muted block mb-1">
+                Slots to release
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={owned}
+                value={releaseCount}
+                onChange={(e) => setReleaseCount(Math.max(1, Math.min(owned, parseInt(e.target.value, 10) || 1)))}
+                className="w-full h-9 px-2 rounded-md border border-line bg-surface text-[0.875rem] text-ink text-right tabular font-mono focus:outline-none focus:border-primary"
+              />
+              <div className="text-[0.625rem] text-ink-muted mt-0.5 tabular">
+                You own {owned.toLocaleString("en-US")}
+              </div>
+            </div>
+            <div className="col-span-5 text-[0.75rem] text-ink-2 leading-relaxed">
+              Stops the recurring fee on the released slots and returns
+              them to the airport's open pool. Routes touching this
+              airport must still fit within remaining slots.
+            </div>
+            <div className="col-span-3">
+              <Button
+                variant="secondary"
+                onClick={() => onRelease(releaseCount)}
+                disabled={releaseCount < 1}
+                className="w-full"
+              >
+                Release
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
