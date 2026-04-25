@@ -9,7 +9,8 @@ import { computeAirlineValue, fleetCount, brandRating } from "@/lib/engine";
 import { DOCTRINE_BY_ID } from "@/data/doctrines";
 import { useUi, type PanelId } from "@/store/ui";
 import { SecondaryHubModal } from "@/components/game/SecondaryHubModal";
-import { Plus, MapPin, Award, Lock } from "lucide-react";
+import { HubInvestmentsModal } from "@/components/game/HubInvestmentsModal";
+import { Plus, MapPin, Award, Lock, Layers } from "lucide-react";
 import { MILESTONES, MILESTONES_BY_ID } from "@/data/milestones";
 import { cn } from "@/lib/cn";
 
@@ -18,6 +19,7 @@ export function OverviewPanel() {
   const player = selectPlayer(s);
   const openPanel = useUi((u) => u.openPanel);
   const [hubModalOpen, setHubModalOpen] = useState(false);
+  const [hubInvestmentsOpen, setHubInvestmentsOpen] = useState(false);
 
   if (!player) return null;
 
@@ -120,14 +122,22 @@ export function OverviewPanel() {
           <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
             Network
           </div>
-          <button
-            onClick={() => setHubModalOpen(true)}
-            disabled={s.currentQuarter < 3}
-            title={s.currentQuarter < 3 ? "Secondary hubs unlock Q3" : undefined}
-            className="text-[0.6875rem] uppercase tracking-wider text-accent font-semibold hover:underline disabled:text-ink-muted disabled:no-underline disabled:cursor-not-allowed flex items-center gap-1"
-          >
-            <Plus size={11} /> Add secondary
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setHubInvestmentsOpen(true)}
+              className="text-[0.6875rem] uppercase tracking-wider text-accent font-semibold hover:underline flex items-center gap-1"
+            >
+              <Layers size={11} /> Invest
+            </button>
+            <button
+              onClick={() => setHubModalOpen(true)}
+              disabled={s.currentQuarter < 3}
+              title={s.currentQuarter < 3 ? "Secondary hubs unlock Q3" : undefined}
+              className="text-[0.6875rem] uppercase tracking-wider text-accent font-semibold hover:underline disabled:text-ink-muted disabled:no-underline disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              <Plus size={11} /> Add secondary
+            </button>
+          </div>
         </div>
         <div className="rounded-md border border-line bg-surface p-3">
           <div className="flex flex-wrap gap-1.5 items-center">
@@ -154,6 +164,25 @@ export function OverviewPanel() {
               </span>
             )}
           </div>
+          {/* Hub investments summary */}
+          {(() => {
+            const inv = player.hubInvestments;
+            const lines: string[] = [];
+            if (inv.fuelReserveTankHubs.length > 0)
+              lines.push(`⛽ ${inv.fuelReserveTankHubs.length} fuel tank${inv.fuelReserveTankHubs.length > 1 ? "s" : ""}`);
+            if (inv.maintenanceDepotHubs.length > 0)
+              lines.push(`🔧 ${inv.maintenanceDepotHubs.length} depot${inv.maintenanceDepotHubs.length > 1 ? "s" : ""}`);
+            if (inv.premiumLoungeHubs.length > 0)
+              lines.push(`🛋 ${inv.premiumLoungeHubs.length} lounge${inv.premiumLoungeHubs.length > 1 ? "s" : ""}`);
+            if (inv.opsExpansionSlots > 0)
+              lines.push(`+${inv.opsExpansionSlots} ops slots`);
+            if (lines.length === 0) return null;
+            return (
+              <div className="mt-2 pt-2 border-t border-line text-[0.6875rem] text-ink-muted leading-relaxed">
+                {lines.join(" · ")}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -431,6 +460,10 @@ export function OverviewPanel() {
       <SecondaryHubModal
         open={hubModalOpen}
         onClose={() => setHubModalOpen(false)}
+      />
+      <HubInvestmentsModal
+        open={hubInvestmentsOpen}
+        onClose={() => setHubInvestmentsOpen(false)}
       />
     </div>
   );
