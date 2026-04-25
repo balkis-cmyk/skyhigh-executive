@@ -13,6 +13,12 @@ import {
   serializeEffect,
   type QuarterCloseResult,
 } from "@/lib/engine";
+import {
+  applyYearlyTickIfDue,
+  makeInitialAirportSlots,
+  resolveSlotAuctions,
+  type BidEntry,
+} from "@/lib/slots";
 import { toast } from "./toasts";
 import { fmtQuarter } from "@/lib/format";
 import type {
@@ -332,6 +338,7 @@ export const useGame = create<GameStore>()(
       quarterTimerPaused: false,
       secondHandListings: [],
       cargoContracts: [],
+      airportSlots: {},
 
       startNewGame: (args) => {
         const {
@@ -457,6 +464,7 @@ export const useGame = create<GameStore>()(
           teams: [player, ...rivals],
           playerTeamId: player.id,
           lastCloseResult: null,
+          airportSlots: makeInitialAirportSlots(),
         });
 
         if (l0Rank && l0Rank <= 3) {
@@ -1118,11 +1126,66 @@ export const useGame = create<GameStore>()(
           return updated;
         });
 
+        // Resolve slot auctions across all airports (PRD slot bidding).
+        // Group every team's pendingSlotBids by airport, sort by price desc,
+        // award winners, charge cash, add to slotsByAirport.
+        const bidsByAirport: Record<string, BidEntry[]> = {};
+        for (const t of [closed, ...rivals]) {
+          for (const b of (t.pendingSlotBids ?? [])) {
+            (bidsByAirport[b.airportCode] ??= []).push({
+              teamId: t.id,
+              airportCode: b.airportCode,
+              slots: b.slots,
+              pricePerSlot: b.pricePerSlot,
+              quarterSubmitted: b.quarterSubmitted,
+            });
+          }
+        }
+        const { slots: slotsAfterAuction, awards } = resolveSlotAuctions(
+          s.airportSlots ?? {},
+          bidsByAirport,
+        );
+        // Apply awards to teams (cash + slotsByAirport) and clear their bids.
+        const teamsWithAwards = [closed, ...rivals].map((t) => {
+          const won = awards.filter((a) => a.teamId === t.id);
+          let cashDelta = 0;
+          const slotsByAirport = { ...t.slotsByAirport };
+          for (const w of won) {
+            cashDelta -= w.cashSpent;
+            slotsByAirport[w.airportCode] =
+              (slotsByAirport[w.airportCode] ?? 0) + w.slotsWon;
+          }
+          return {
+            ...t,
+            cashUsd: t.cashUsd + cashDelta,
+            slotsByAirport,
+            pendingSlotBids: [],  // bids resolved
+          };
+        });
+
+        // Surface auction outcomes to the player only (not rivals).
+        const playerWins = awards.filter((a) => a.teamId === closed.id && a.slotsWon > 0);
+        if (playerWins.length > 0) {
+          const total = playerWins.reduce((sum, w) => sum + w.slotsWon, 0);
+          toast.success(
+            `Won ${total} airport slots`,
+            playerWins.map((w) => `${w.airportCode}: ${w.slotsWon}`).join(" · "),
+          );
+        }
+        const playerLosses = awards.filter((a) => a.teamId === closed.id && a.slotsWon === 0);
+        if (playerLosses.length > 0) {
+          toast.warning(
+            `Lost ${playerLosses.length} slot bid${playerLosses.length > 1 ? "s" : ""}`,
+            "Higher bidders won. Try again next quarter.",
+          );
+        }
+
         set({
-          teams: [closed, ...rivals],
+          teams: teamsWithAwards,
           cargoContracts: updatedCargoContracts,
           lastCloseResult: result,
           phase: "quarter-closing",
+          airportSlots: slotsAfterAuction,
           // Fuel index drifts
           fuelIndex: Math.max(70, Math.min(160, s.fuelIndex + (Math.random() - 0.5) * 10)),
         });
@@ -1190,11 +1253,26 @@ export const useGame = create<GameStore>()(
           );
         }
 
+        // Apply yearly slot opens at Q5 / Q9 / Q13 / Q17 (PRD slot bidding).
+        // Each airport adds its previously-announced nextOpening to available
+        // and rolls the next year's batch.
+        const { slots: tickedSlots, ticked } = applyYearlyTickIfDue(
+          s.airportSlots ?? {},
+          nextQ,
+        );
+        if (ticked) {
+          toast.accent(
+            `New airport slots open · Year ${Math.ceil(nextQ / 4)}`,
+            "Submit bids in the Ops form. Winners announced at quarter close.",
+          );
+        }
+
         set({
           teams: delayedTeams,
           currentQuarter: nextQ,
           phase: "playing",
           lastCloseResult: null,
+          airportSlots: tickedSlots,
           // Reset quarter timer for next cycle
           quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining !== null ? 1800 : null,
           quarterTimerPaused: false,
@@ -1218,6 +1296,7 @@ export const useGame = create<GameStore>()(
           quarterTimerPaused: false,
           secondHandListings: [],
           cargoContracts: [],
+          airportSlots: {},
         });
       },
 
@@ -1959,6 +2038,7 @@ export const useGame = create<GameStore>()(
         quarterTimerPaused: s.quarterTimerPaused,
         secondHandListings: s.secondHandListings,
         cargoContracts: s.cargoContracts,
+        airportSlots: s.airportSlots,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
@@ -1970,6 +2050,12 @@ export const useGame = create<GameStore>()(
           state.lastCloseResult = null;
         }
         if (!state.cargoContracts) state.cargoContracts = [];
+        // Migration: older saves don't have airportSlots — initialize fresh
+        // so existing routes continue to work (slots = unconstrained from
+        // their existing in-game allocation in slotsByAirport).
+        if (!state.airportSlots || Object.keys(state.airportSlots).length === 0) {
+          state.airportSlots = makeInitialAirportSlots();
+        }
         state.teams = state.teams.map((t) => ({
           ...t,
           flags: new Set(Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? [])),

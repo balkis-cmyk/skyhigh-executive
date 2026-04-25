@@ -331,4 +331,22 @@ export interface GameState {
 
   // Active cargo contracts (PRD E8.6)
   cargoContracts: CargoContract[];
+
+  /** Per-airport slot capacity (PRD slot bidding system).
+   *  Each airport accumulates slots over the 20-quarter game; slots are
+   *  awarded to the highest bidder via end-of-quarter resolution. */
+  airportSlots: Record<string, AirportSlotState>;
+}
+
+/** Slot bidding state for a single airport. Players bid in pendingSlotBids
+ *  and the engine resolves at quarter-close: highest pricePerSlot wins,
+ *  unsold slots roll forward. Yearly random opens add to `available`. */
+export interface AirportSlotState {
+  /** Slots currently available for bidding next quarter. */
+  available: number;
+  /** Slots scheduled to open at the next yearly tick (visible to all
+   *  airlines so they can plan bids). */
+  nextOpening: number;
+  /** Quarter at which the next yearly tick fires (Q5/Q9/Q13/Q17/Q21). */
+  nextTickQuarter: number;
 }
