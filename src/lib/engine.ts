@@ -1313,6 +1313,24 @@ export function runQuarterClose(
     next.opsPts = Math.max(0, next.opsPts + 3);
   }
 
+  // Labour Relations Score accumulation (PRD E8.3)
+  const lrsDeltaByStaff: Record<number, number> = {
+    0: -3, 1: -1, 2: 0, 3: 1, 4: 2, 5: 3,
+  };
+  const lrsDelta = lrsDeltaByStaff[next.sliders.staff] ?? 0;
+  // Flags that affect LRS directly
+  if (next.flags.has("people_first")) next.labourRelationsScore += 2;
+  if (next.flags.has("trusted_employer")) next.labourRelationsScore += 2;
+  if (next.flags.has("talent_shortage")) next.labourRelationsScore -= 3;
+  next.labourRelationsScore = clamp(0, 100, next.labourRelationsScore + lrsDelta);
+  // High LRS → +3 Loyalty/Q bonus (E8.3)
+  if (next.labourRelationsScore >= 75) {
+    next.customerLoyaltyPct = clamp(0, 100, next.customerLoyaltyPct + 3);
+    notes.push(`High Labour Relations (${next.labourRelationsScore.toFixed(0)}): +3% Loyalty this quarter`);
+  } else if (next.labourRelationsScore <= 30) {
+    notes.push(`Low Labour Relations (${next.labourRelationsScore.toFixed(0)}): labour scenarios will hit harder`);
+  }
+
   const newBrandValue = computeBrandValue(next);
 
   notes.push(`Revenue: $${(revenue / 1e6).toFixed(1)}M across ${routeBreakdown.length} routes`);

@@ -84,6 +84,23 @@ export function FleetPanel() {
                   <span className="col-span-2 text-right tabular font-mono text-ink">{spec.rangeKm.toLocaleString()} km</span>
                   <span className="text-ink-muted">Seats</span>
                   <span className="col-span-2 text-right tabular font-mono text-ink">{spec.seats.first + spec.seats.business + spec.seats.economy}</span>
+                  {/* Lifespan display (PRD C8) */}
+                  {!retired && (
+                    <>
+                      <span className="text-ink-muted">Lifespan</span>
+                      <span className={`col-span-2 text-right tabular font-mono ${aging ? "text-warning" : "text-ink"}`}>
+                        {Math.max(0, quartersToRetirement * 15)} months · {quartersToRetirement}Q left
+                      </span>
+                    </>
+                  )}
+                  {(f.maintenanceDeficit ?? 0) > 5 && (
+                    <>
+                      <span className="text-ink-muted">Maintenance</span>
+                      <span className={`col-span-2 text-right tabular font-mono ${(f.maintenanceDeficit ?? 0) > 15 ? "text-negative" : "text-warning"}`}>
+                        Deficit {(f.maintenanceDeficit ?? 0).toFixed(1)}
+                      </span>
+                    </>
+                  )}
                   <span className="text-ink-muted">Route</span>
                   <span className="col-span-2 text-right font-mono text-ink">
                     {route ? `${route.originCode}→${route.destCode}` : <span className="text-ink-muted">Idle</span>}

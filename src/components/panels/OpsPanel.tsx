@@ -30,6 +30,14 @@ export function OpsPanel() {
     (sc) => !player.decisions.some((d) => d.scenarioId === sc.id && d.quarter === s.currentQuarter),
   );
 
+  // PRD B6 — live dissonance warning
+  const gap = Math.abs(player.sliders.staff - player.sliders.service);
+  const dissonance = gap >= 3
+    ? (player.sliders.staff < player.sliders.service
+      ? "Great food, dreadful crew — passengers notice."
+      : "Wonderful crew, nothing to offer — service underwhelms.")
+    : null;
+
   function commit() {
     if (pendingDecisions.length > 0) {
       if (!confirm(`${pendingDecisions.length} board decision${pendingDecisions.length > 1 ? "s" : ""} still open. Close anyway?`)) return;
@@ -95,6 +103,13 @@ export function OpsPanel() {
           </div>
         );
       })}
+
+      {dissonance && (
+        <div className="rounded-md border border-warning bg-[var(--warning-soft)] p-3 text-[0.8125rem]">
+          <div className="font-medium text-warning mb-0.5">⚠ Service dissonance detected</div>
+          <div className="text-ink-2">{dissonance} Gap of {gap} slider levels between Staff & In-Flight Service costs −2 to −3 Brand Pts and loyalty this quarter.</div>
+        </div>
+      )}
 
       {pendingDecisions.length > 0 && (
         <div className="rounded-md border border-accent bg-[var(--accent-soft)] p-3">

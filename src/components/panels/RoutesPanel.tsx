@@ -79,6 +79,24 @@ export function RoutesPanel() {
                     <span className="text-right tabular font-mono text-ink">{r.dailyFrequency}/day</span>
                     <span className="text-ink-muted">Pricing</span>
                     <span className="text-right text-ink capitalize">{r.pricingTier}</span>
+                    {r.isCargo && (() => {
+                      // Cargo capacity display (PRD F11.4 empty-payload visibility)
+                      const capacity = r.aircraftIds.reduce((sum, id) => {
+                        const p = player.fleet.find((f) => f.id === id);
+                        const spec = p && AIRCRAFT_BY_ID[p.specId];
+                        return sum + (spec?.cargoTonnes ?? 0);
+                      }, 0);
+                      const util = r.avgOccupancy;
+                      const carried = Math.round(capacity * util);
+                      return (
+                        <>
+                          <span className="text-ink-muted">Cargo</span>
+                          <span className="text-right tabular font-mono text-ink">
+                            {carried}T / {capacity}T per flight
+                          </span>
+                        </>
+                      );
+                    })()}
                     <span className="text-ink-muted">Q revenue</span>
                     <span className="text-right tabular font-mono text-ink">{fmtMoney(r.quarterlyRevenue)}</span>
                     <span className="text-ink-muted">Q profit</span>

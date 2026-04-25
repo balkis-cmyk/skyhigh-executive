@@ -95,7 +95,9 @@ function ScenarioCard({
         <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
           Q{scenario.quarter} · {scenario.timeLimitMinutes}m
         </span>
-        {locked && <Badge tone="primary">Submitted</Badge>}
+        {locked
+          ? <Badge tone="primary">Submitted</Badge>
+          : <Badge tone="accent">Awaiting decision</Badge>}
       </div>
       <h3 className="font-display text-[1.375rem] text-ink leading-tight mb-2">
         {scenario.title}

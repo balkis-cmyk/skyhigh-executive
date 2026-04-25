@@ -239,6 +239,38 @@ export function OverviewPanel() {
         </div>
       )}
 
+      {/* Labour Relations Score (PRD E8.3) */}
+      <div className="rounded-md border border-line bg-surface-2/60 p-3">
+        <div className="flex items-baseline justify-between mb-1">
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+            Labour relations
+          </div>
+          <span className={`tabular font-mono text-[0.75rem] ${
+            player.labourRelationsScore >= 75 ? "text-positive" :
+            player.labourRelationsScore <= 30 ? "text-negative" : "text-ink-muted"
+          }`}>
+            {player.labourRelationsScore.toFixed(0)} / 100
+          </span>
+        </div>
+        <div className="h-1.5 bg-line rounded-full overflow-hidden">
+          <div
+            className="h-full transition-all"
+            style={{
+              width: `${player.labourRelationsScore}%`,
+              background: player.labourRelationsScore >= 75 ? "var(--positive)" :
+                player.labourRelationsScore <= 30 ? "var(--negative)" : "var(--primary)",
+            }}
+          />
+        </div>
+        <div className="text-[0.6875rem] text-ink-muted mt-1.5 leading-relaxed">
+          {player.labourRelationsScore >= 75
+            ? "Strong rapport: +3% loyalty/Q, labour scenarios soften."
+            : player.labourRelationsScore <= 30
+              ? "Strained: strike risk higher on labour scenarios."
+              : "Building over time via salary slider and people-first decisions."}
+        </div>
+      </div>
+
       {/* Fleet efficiency (PRD E8.7) */}
       {player.fleet.filter((f) => f.status === "active").length > 0 && (
         <div className="rounded-md border border-line bg-surface-2/60 p-3">
@@ -247,23 +279,40 @@ export function OverviewPanel() {
           </div>
           {(() => {
             const active = player.fleet.filter((f) => f.status === "active");
+            const burns: Record<string, number> = {
+              A319: 3.2, A320: 3.4, A321: 3.8, "B737-700": 3.1, "B737-800": 3.3,
+              "B757-200": 3.9, "B767-300ER": 4.8, "A330-200": 4.6,
+              "B777-200ER": 5.2, "B747-400": 8.5, "A380-800": 11.0,
+              "B787-9": 4.2, "A350-900": 4.0, A320neo: 2.8, "A220-300": 2.5,
+              "B737-MAX-8": 2.9, "B777X-9": 5.0, A321XLR: 3.4,
+              "B737-300F": 3.4, "B757-200F": 4.2, "B767-300F": 6.5, "B747-400F": 14.0,
+            };
             const avg = active.reduce((sum, f) => {
-              const spec = f.specId;
-              // Use PRD fuel burns from aircraft data table
-              const fuelBurn = ({
-                A319: 3.2, A320: 3.4, A321: 3.8, "B737-700": 3.1, "B737-800": 3.3,
-                "B757-200": 3.9, "B767-300ER": 4.8, "A330-200": 4.6,
-                "B777-200ER": 5.2, "B747-400": 8.5, "A380-800": 11.0,
-                "B787-9": 4.2, "A350-900": 4.0, A320neo: 2.8, "A220-300": 2.5,
-                "B737-MAX-8": 2.9, "B777X-9": 5.0, A321XLR: 3.4,
-              } as Record<string, number>)[spec] ?? 4.0;
+              const fuelBurn = burns[f.specId] ?? 4.0;
               return sum + (f.ecoUpgrade ? fuelBurn * 0.9 : fuelBurn);
             }, 0) / active.length;
+            // Market baseline = mean of all burns ~ 4.6 L/km (weighted to legacy fleet)
+            const marketAvg = 4.6;
+            const delta = avg - marketAvg;
+            const better = delta < -0.1;
+            const worse = delta > 0.1;
             return (
-              <div className="flex items-baseline justify-between">
-                <span className="tabular font-display text-[1.25rem] text-ink">{avg.toFixed(2)}</span>
-                <span className="text-[0.75rem] text-ink-muted">L/km fleet average</span>
-              </div>
+              <>
+                <div className="flex items-baseline justify-between">
+                  <span className="tabular font-display text-[1.25rem] text-ink">{avg.toFixed(2)}</span>
+                  <span className="text-[0.75rem] text-ink-muted">L/km fleet avg</span>
+                </div>
+                <div className="flex items-baseline justify-between mt-1 text-[0.75rem]">
+                  <span className="text-ink-muted">Market avg {marketAvg.toFixed(1)} L/km</span>
+                  <span
+                    className={`tabular font-mono ${
+                      better ? "text-positive" : worse ? "text-negative" : "text-ink-muted"
+                    }`}
+                  >
+                    {delta >= 0 ? "+" : ""}{delta.toFixed(2)}
+                  </span>
+                </div>
+              </>
             );
           })()}
         </div>
