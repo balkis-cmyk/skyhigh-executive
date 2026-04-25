@@ -329,7 +329,7 @@ export function FleetPanel() {
                     <Th className="text-right">Cabin sat.</Th>
                     <Th className="text-right">Book value</Th>
                     <Th className="text-right">Q profit</Th>
-                    <Th className="text-right w-[110px]">Actions</Th>
+                    <Th className="text-right w-[260px]">Actions</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -404,7 +404,7 @@ export function FleetPanel() {
                           {f.routeId ? fmtMoney(profit) : <span className="text-ink-muted">—</span>}
                         </td>
                         <td className="py-2 px-3 text-right">
-                          <div className="inline-flex items-center gap-1.5 text-[0.75rem]">
+                          <div className="flex flex-wrap justify-end items-center gap-x-2 gap-y-1 text-[0.75rem]">
                             {!f.ecoUpgrade && f.status === "active" && (
                               <button
                                 className="text-ink-2 hover:text-accent underline"
