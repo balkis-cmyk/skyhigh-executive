@@ -70,7 +70,6 @@ export function NavRail() {
 
   const expanded = useUi((s) => s.railExpanded);
   const toggleRail = useUi((s) => s.toggleRail);
-  const setRailExpanded = useUi((s) => s.setRailExpanded);
   const [newsExpanded, setNewsExpanded] = useState(false);
 
   const pendingDecisions =
@@ -206,7 +205,9 @@ export function NavRail() {
       </div>
 
       {/* World news ticker — at the BOTTOM, past + current only,
-          fake-outlet labels, headline only (no mechanics detail) */}
+          fake-outlet labels, headline only (no mechanics detail).
+          Each headline is clickable: opens the full News panel where
+          the player can read the article. */}
       {expanded ? (
         <div className="border-t border-line max-h-[40vh] flex flex-col">
           <button
@@ -221,9 +222,11 @@ export function NavRail() {
           {newsExpanded && (
             <div className="overflow-auto px-2 pb-3 space-y-1.5">
               {newsItems.map((n) => (
-                <article
+                <button
                   key={n.id}
-                  className="rounded-md border border-line bg-surface px-2.5 py-2"
+                  onClick={() => useUi.getState().openPanel("news")}
+                  className="w-full text-left rounded-md border border-line bg-surface px-2.5 py-2 hover:bg-surface-hover hover:border-primary/40 transition-colors"
+                  title="Open World news panel to read full article"
                 >
                   <div className="flex items-baseline justify-between mb-0.5">
                     <span
@@ -238,15 +241,21 @@ export function NavRail() {
                   <h3 className="text-[0.75rem] font-medium text-ink leading-snug">
                     {n.headline}
                   </h3>
-                </article>
+                </button>
               ))}
+              <button
+                onClick={() => useUi.getState().openPanel("news")}
+                className="w-full mt-1 px-2 py-1.5 rounded-md border border-line bg-surface-2/50 text-[0.6875rem] uppercase tracking-wider text-ink-muted hover:text-ink hover:bg-surface-hover transition-colors"
+              >
+                Open World News →
+              </button>
             </div>
           )}
         </div>
       ) : (
-        // Collapsed: just an icon button that opens the news panel state
+        // Collapsed: icon button that opens the News panel directly
         <button
-          onClick={() => setRailExpanded(true)}
+          onClick={() => useUi.getState().openPanel("news")}
           title="World news"
           className="border-t border-line py-3 flex flex-col items-center text-ink-2 hover:text-ink hover:bg-surface-hover"
         >

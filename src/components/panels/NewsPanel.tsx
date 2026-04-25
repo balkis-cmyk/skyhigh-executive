@@ -5,6 +5,8 @@ import { NEWS_BY_QUARTER } from "@/data/world-news";
 import { CITIES_BY_CODE } from "@/data/cities";
 import { cityEventImpact } from "@/lib/city-events";
 import { useGame, selectPlayer } from "@/store/game";
+import { getArticle } from "@/lib/news-articles";
+import { fmtQuarter } from "@/lib/format";
 import type { NewsItem } from "@/types/game";
 import { cn } from "@/lib/cn";
 import { Newspaper, ChevronDown, ChevronUp } from "lucide-react";
@@ -112,11 +114,12 @@ function NewsCard({
   const totalImpact = affectedCities.reduce((s, c) => s + c.pct, 0);
   const hasImpact = affectedCities.length > 0;
   const positive = totalImpact >= 0;
+  const article = expanded ? getArticle(item) : null;
 
   return (
     <article
       className={cn(
-        "rounded-md border bg-surface px-3 py-2.5 transition-colors",
+        "rounded-lg border bg-surface px-4 py-3 transition-colors",
         hasImpact
           ? positive
             ? "border-[var(--positive-soft)] hover:bg-surface-hover"
@@ -129,7 +132,7 @@ function NewsCard({
         className="w-full text-left"
         aria-expanded={expanded}
       >
-        <div className="flex items-baseline justify-between gap-3 mb-1">
+        <div className="flex items-baseline justify-between gap-3 mb-1.5">
           <span className="text-[0.625rem] uppercase tracking-[0.18em] font-bold text-accent shrink-0">
             {outletFor(item.id)}
           </span>
@@ -149,29 +152,54 @@ function NewsCard({
                 {positive ? "+" : ""}{totalImpact}%
               </span>
             )}
-            {hasImpact && (
-              expanded ? <ChevronUp size={12} className="text-ink-muted" /> : <ChevronDown size={12} className="text-ink-muted" />
+            {expanded ? (
+              <ChevronUp size={12} className="text-ink-muted" />
+            ) : (
+              <ChevronDown size={12} className="text-ink-muted" />
             )}
           </div>
         </div>
-        <h3 className="text-[0.875rem] font-medium text-ink leading-snug">
+        <h3 className="text-[1rem] font-display text-ink leading-snug">
           {item.headline}
         </h3>
-        {!expanded && hasImpact && (
-          <div className="text-[0.6875rem] text-ink-muted mt-1">
-            Affects {affectedCities.length} of your cit{affectedCities.length === 1 ? "y" : "ies"} · tap to see details
+        {!expanded && (
+          <div className="text-[0.75rem] text-ink-2 mt-1 leading-relaxed line-clamp-2">
+            {item.detail}
+          </div>
+        )}
+        {!expanded && (
+          <div className="text-[0.6875rem] text-ink-muted mt-1.5 italic">
+            {hasImpact
+              ? `Touches ${affectedCities.length} of your cit${affectedCities.length === 1 ? "y" : "ies"} · tap to read`
+              : "Tap to read"}
           </div>
         )}
       </button>
 
-      {expanded && (
-        <div className="mt-3 pt-3 border-t border-line space-y-2.5">
-          <p className="text-[0.8125rem] text-ink-2 leading-relaxed">{item.detail}</p>
+      {expanded && article && (
+        <div className="mt-3 pt-3 border-t border-line space-y-3">
+          {/* Dateline + byline like a real newspaper */}
+          <div className="text-[0.6875rem] text-ink-muted leading-relaxed">
+            <span className="font-mono uppercase tracking-wider text-ink">
+              {article.dateline}
+            </span>
+            <span className="text-ink-muted"> · </span>
+            <span>{fmtQuarter(item.quarter)}</span>
+            <span className="text-ink-muted"> · </span>
+            <span className="italic">By {article.byline}</span>
+          </div>
+
+          {/* Article body */}
+          <div className="space-y-2 text-[0.8125rem] text-ink-2 leading-relaxed">
+            {article.body.map((p, i) => (
+              <p key={i}>{p}</p>
+            ))}
+          </div>
 
           {hasImpact ? (
-            <div>
+            <div className="pt-2 border-t border-line/60">
               <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1.5">
-                Cities on your network affected
+                Your network · cities affected
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 {affectedCities.map((c) => (
@@ -194,8 +222,8 @@ function NewsCard({
               </div>
             </div>
           ) : (
-            <div className="text-[0.75rem] text-ink-muted italic">
-              Doesn&apos;t materially touch your network this quarter.
+            <div className="pt-2 border-t border-line/60 text-[0.75rem] text-ink-muted italic">
+              No direct impact on your current network.
             </div>
           )}
         </div>

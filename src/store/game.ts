@@ -916,7 +916,7 @@ export const useGame = create<GameStore>()(
         else toast.info(toastTitle, toastDetail);
       },
 
-      openRoute: ({ originCode, destCode, aircraftIds, dailyFrequency, pricingTier, econFare, busFare, firstFare, isCargo, slotBids }) => {
+      openRoute: ({ originCode: rawOrigin, destCode: rawDest, aircraftIds, dailyFrequency, pricingTier, econFare, busFare, firstFare, isCargo, slotBids }) => {
         // Cargo routes require cargo-storage activation at both endpoints (PRD C9)
         const cargoStorageCost = (code: string): number => {
           const c = CITIES_BY_CODE[code];
@@ -926,11 +926,42 @@ export const useGame = create<GameStore>()(
         const s = get();
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player team" };
-        if (originCode === destCode) return { ok: false, error: "Same origin and destination" };
-        if (!CITIES_BY_CODE[originCode] || !CITIES_BY_CODE[destCode])
+        if (rawOrigin === rawDest) return { ok: false, error: "Same origin and destination" };
+        if (!CITIES_BY_CODE[rawOrigin] || !CITIES_BY_CODE[rawDest])
           return { ok: false, error: "Unknown city" };
         if (aircraftIds.length === 0)
           return { ok: false, error: "Assign at least one aircraft" };
+        // Hub-first normalization: a route DXB↔LHR is the same airline
+        // operation whether the player picks DXB→LHR or LHR→DXB. Always
+        // place the player's hub (or first secondary hub) on the origin
+        // side so duplicate detection works and downstream code can rely
+        // on a canonical orientation.
+        let originCode = rawOrigin;
+        let destCode = rawDest;
+        const hubs = new Set([player.hubCode, ...player.secondaryHubCodes]);
+        if (hubs.has(rawDest) && !hubs.has(rawOrigin)) {
+          originCode = rawDest;
+          destCode = rawOrigin;
+        } else if (hubs.has(rawDest) && hubs.has(rawOrigin)) {
+          // Both endpoints are hubs — keep the primary hub on the origin.
+          if (rawOrigin !== player.hubCode && rawDest === player.hubCode) {
+            originCode = rawDest;
+            destCode = rawOrigin;
+          }
+        }
+        // Duplicate-route guard: an active or pending route between the
+        // same two endpoints (in either direction) is the same route.
+        const duplicate = player.routes.find((r) =>
+          r.status !== "closed" &&
+          ((r.originCode === originCode && r.destCode === destCode) ||
+           (r.originCode === destCode && r.destCode === originCode)),
+        );
+        if (duplicate) {
+          return {
+            ok: false,
+            error: `You already operate ${duplicate.originCode} ↔ ${duplicate.destCode}. Edit the existing route to add capacity instead of opening a duplicate.`,
+          };
+        }
         // Network rule: origin must be your hub, a secondary hub, or a city
         // already connected to your network via an active/suspended route.
         const isInNetwork = (code: string): boolean => {
