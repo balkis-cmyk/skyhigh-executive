@@ -55,6 +55,9 @@ export interface FleetAircraft {
   retirementQuarter: number;
   /** Accumulated maintenance deficit from low Ops slider (PRD B2/C4). */
   maintenanceDeficit: number;
+  /** When set and status is "grounded", the aircraft auto-reactivates at the
+   *  end of the named quarter (PRD F3: 1-quarter renovation downtime). */
+  renovationCompleteQuarter?: number;
 }
 
 // ─── Insurance (PRD E5) ──────────────────────────────────

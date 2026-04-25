@@ -525,6 +525,8 @@ export const useGame = create<GameStore>()(
                   routeId: null,
                   // +8 quarters lifespan extension
                   retirementQuarter: f.retirementQuarter + 8,
+                  // Auto-reactivates at end of next quarter (PRD F3 — 1Q downtime)
+                  renovationCompleteQuarter: s.currentQuarter + 1,
                 }
               : f),
             routes: t.routes.map((r) => ({
@@ -951,6 +953,34 @@ export const useGame = create<GameStore>()(
               `${delayedCount} aircraft pushed from Q9 → Q11 due to manufacturing issues`,
             );
           }
+        }
+
+        // PRD F3 — Renovation auto-restore: aircraft grounded for renovation
+        // come back online at the start of their renovationCompleteQuarter.
+        let renoCount = 0;
+        delayedTeams = delayedTeams.map((t) => ({
+          ...t,
+          fleet: t.fleet.map((f) => {
+            if (
+              f.status === "grounded" &&
+              f.renovationCompleteQuarter !== undefined &&
+              f.renovationCompleteQuarter <= nextQ
+            ) {
+              renoCount += 1;
+              return {
+                ...f,
+                status: "active" as const,
+                renovationCompleteQuarter: undefined,
+              };
+            }
+            return f;
+          }),
+        }));
+        if (renoCount > 0) {
+          toast.success(
+            `${renoCount} aircraft back from renovation`,
+            "Refreshed cabins, +2 yrs lifespan, available for routes.",
+          );
         }
 
         set({

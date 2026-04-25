@@ -1,74 +1,205 @@
 "use client";
 
-import { Badge } from "@/components/ui";
+import { useMemo, useState } from "react";
 import { NEWS_BY_QUARTER } from "@/data/world-news";
-import { useGame } from "@/store/game";
+import { CITIES_BY_CODE } from "@/data/cities";
+import { cityEventImpact } from "@/lib/city-events";
+import { useGame, selectPlayer } from "@/store/game";
 import type { NewsItem } from "@/types/game";
+import { cn } from "@/lib/cn";
+import { Newspaper, ChevronDown, ChevronUp } from "lucide-react";
+
+/** Same fictional outlet pool used by the sidebar ticker — kept in sync via id-hash. */
+const OUTLETS: string[] = [
+  "Sky News", "Bloomberg", "Reuters", "FT", "The Air Reporter",
+  "AP", "BBC World", "WSJ", "Al Arabiya", "Nikkei Asia",
+];
+function outletFor(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffffffff;
+  return OUTLETS[Math.abs(h) % OUTLETS.length];
+}
 
 export function NewsPanel() {
   const currentQuarter = useGame((s) => s.currentQuarter);
-  const today = NEWS_BY_QUARTER[currentQuarter] ?? [];
-  const forecast = [currentQuarter + 1, currentQuarter + 2]
-    .filter((q) => q <= 20)
-    .map((q) => ({ q, items: NEWS_BY_QUARTER[q] ?? [] }));
+  const player = useGame(selectPlayer);
+
+  // Player's current network (hub + secondary hubs + every endpoint of their routes)
+  const networkCodes = useMemo(() => {
+    if (!player) return new Set<string>();
+    const s = new Set<string>([player.hubCode, ...player.secondaryHubCodes]);
+    for (const r of player.routes) {
+      if (r.status !== "closed") {
+        s.add(r.originCode);
+        s.add(r.destCode);
+      }
+    }
+    return s;
+  }, [player]);
+
+  // Past + current quarters only, most recent first (per the no-spoilers rule).
+  const quartersToShow = useMemo(() => {
+    const out: number[] = [];
+    for (let q = currentQuarter; q >= 1; q--) out.push(q);
+    return out;
+  }, [currentQuarter]);
 
   return (
     <div className="space-y-5">
-      <section>
-        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
-          Q{currentQuarter} · 5 headlines
+      <header>
+        <div className="text-[0.6875rem] uppercase tracking-[0.18em] text-ink-muted mb-1 flex items-center gap-1.5">
+          <Newspaper size={12} /> World news · past + current quarter
         </div>
-        <div className="space-y-3">
-          {today.map((item) => <NewsRow key={item.id} item={item} />)}
-        </div>
-      </section>
+        <p className="text-[0.8125rem] text-ink-2 leading-relaxed">
+          Tap a story to see which of your cities and routes it touches.
+          Forecasts of upcoming quarters are deliberately not shown — you read
+          the world the same way the boardroom does.
+        </p>
+      </header>
 
-      {forecast.length > 0 && (
-        <section className="pt-3 border-t border-line">
-          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
-            Upcoming forecast
-          </div>
-          <div className="space-y-3 opacity-70">
-            {forecast.map((f) => (
-              <div key={f.q}>
-                <div className="text-[0.75rem] text-ink-muted font-mono mb-1">Q{f.q}</div>
-                {f.items.slice(0, 2).map((item) => <NewsRow key={item.id} item={item} compact />)}
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      {quartersToShow.map((q) => {
+        const items = NEWS_BY_QUARTER[q] ?? [];
+        if (items.length === 0) return null;
+        return (
+          <section key={q}>
+            <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2 flex items-center gap-2">
+              <span className="font-mono tabular text-ink">Q{q}</span>
+              <span className="h-px flex-1 bg-line" />
+              <span className="tabular text-ink-muted">{items.length}</span>
+            </div>
+            <div className="space-y-2">
+              {items.map((item) => (
+                <NewsCard
+                  key={item.id}
+                  item={item}
+                  networkCodes={networkCodes}
+                  isCurrent={q === currentQuarter}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-function NewsRow({ item, compact = false }: { item: NewsItem; compact?: boolean }) {
+function NewsCard({
+  item,
+  networkCodes,
+  isCurrent,
+}: {
+  item: NewsItem;
+  networkCodes: Set<string>;
+  isCurrent: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Find network cities touched by this specific headline.
+  const affectedCities = useMemo(() => {
+    const out: { code: string; name: string; pct: number }[] = [];
+    for (const code of networkCodes) {
+      const impact = cityEventImpact(code, item.quarter);
+      if (impact.pct === 0) continue;
+      if (!impact.items.some((it) => it.id === item.id)) continue;
+      const city = CITIES_BY_CODE[code];
+      if (!city) continue;
+      out.push({ code, name: city.name, pct: impact.pct });
+    }
+    return out.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+  }, [item, networkCodes]);
+
+  const totalImpact = affectedCities.reduce((s, c) => s + c.pct, 0);
+  const hasImpact = affectedCities.length > 0;
+  const positive = totalImpact >= 0;
+
   return (
-    <div className="flex gap-3 items-start">
-      <span className={`${compact ? "text-[1rem]" : "text-[1.125rem]"} text-ink-muted mt-0.5 w-5 text-center`}>
-        {item.icon}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <Badge tone={newsTone(item.impact)}>{item.impact.toUpperCase()}</Badge>
+    <article
+      className={cn(
+        "rounded-md border bg-surface px-3 py-2.5 transition-colors",
+        hasImpact
+          ? positive
+            ? "border-[var(--positive-soft)] hover:bg-surface-hover"
+            : "border-[var(--negative-soft)] hover:bg-surface-hover"
+          : "border-line hover:bg-surface-hover",
+      )}
+    >
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full text-left"
+        aria-expanded={expanded}
+      >
+        <div className="flex items-baseline justify-between gap-3 mb-1">
+          <span className="text-[0.625rem] uppercase tracking-[0.18em] font-bold text-accent shrink-0">
+            {outletFor(item.id)}
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            {isCurrent && (
+              <span className="text-[0.5625rem] uppercase tracking-wider font-semibold text-accent">
+                Today
+              </span>
+            )}
+            {hasImpact && (
+              <span className={cn(
+                "text-[0.6875rem] tabular font-mono font-semibold px-1.5 py-0.5 rounded",
+                positive
+                  ? "bg-[var(--positive-soft)] text-positive"
+                  : "bg-[var(--negative-soft)] text-negative",
+              )}>
+                {positive ? "+" : ""}{totalImpact}%
+              </span>
+            )}
+            {hasImpact && (
+              expanded ? <ChevronUp size={12} className="text-ink-muted" /> : <ChevronDown size={12} className="text-ink-muted" />
+            )}
+          </div>
         </div>
-        <div className="text-ink font-medium text-[0.875rem] leading-snug">{item.headline}</div>
-        <div className="text-[0.75rem] text-ink-muted mt-0.5 leading-relaxed">{item.detail}</div>
-      </div>
-    </div>
-  );
-}
+        <h3 className="text-[0.875rem] font-medium text-ink leading-snug">
+          {item.headline}
+        </h3>
+        {!expanded && hasImpact && (
+          <div className="text-[0.6875rem] text-ink-muted mt-1">
+            Affects {affectedCities.length} of your cit{affectedCities.length === 1 ? "y" : "ies"} · tap to see details
+          </div>
+        )}
+      </button>
 
-function newsTone(
-  impact: NewsItem["impact"],
-): "neutral" | "primary" | "accent" | "positive" | "negative" | "warning" | "info" {
-  switch (impact) {
-    case "tourism": return "accent";
-    case "business": return "primary";
-    case "cargo": return "positive";
-    case "brand": return "info";
-    case "fuel": return "warning";
-    case "ops": return "negative";
-    default: return "neutral";
-  }
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-line space-y-2.5">
+          <p className="text-[0.8125rem] text-ink-2 leading-relaxed">{item.detail}</p>
+
+          {hasImpact ? (
+            <div>
+              <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1.5">
+                Cities on your network affected
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {affectedCities.map((c) => (
+                  <div
+                    key={c.code}
+                    className="flex items-center justify-between rounded-md border border-line bg-surface-2 px-2 py-1.5"
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-mono text-[0.6875rem] text-ink-muted">{c.code}</span>
+                      <span className="text-[0.75rem] text-ink truncate">{c.name}</span>
+                    </span>
+                    <span className={cn(
+                      "tabular font-mono text-[0.6875rem] font-semibold shrink-0",
+                      c.pct >= 0 ? "text-positive" : "text-negative",
+                    )}>
+                      {c.pct >= 0 ? "+" : ""}{c.pct}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[0.75rem] text-ink-muted italic">
+              Doesn&apos;t materially touch your network this quarter.
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
 }

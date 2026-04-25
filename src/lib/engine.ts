@@ -14,6 +14,7 @@
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CITIES_BY_CODE } from "@/data/cities";
 import { SCENARIOS, type OptionEffect, type Scenario } from "@/data/scenarios";
+import { NEWS_BY_QUARTER } from "@/data/world-news";
 import { cityEventImpact } from "./city-events";
 import type {
   City,
@@ -796,6 +797,21 @@ export interface QuarterCloseResult {
   newOpsPts: number;
   newLoyalty: number;
   newBrandValue: number;
+  /** Pre-close team metrics so the digest can show deltas without bookkeeping. */
+  prevCashUsd: number;
+  prevBrandPts: number;
+  prevOpsPts: number;
+  prevLoyalty: number;
+  prevBrandValue: number;
+  /** Milestones earned during THIS quarter close (not all-time). */
+  milestonesEarnedThisQuarter: string[];
+  /** News items mentioning the player's network this quarter, with city impacts. */
+  newsImpacts: Array<{
+    headline: string;
+    outlet: string;
+    quarter: number;
+    cities: Array<{ code: string; name: string; pct: number }>;
+  }>;
   routeBreakdown: Array<{
     routeId: string;
     revenue: number;
@@ -836,6 +852,14 @@ export function runQuarterClose(
   ctx: QuarterCloseContext,
 ): QuarterCloseResult {
   const notes: string[] = [];
+  // Snapshot pre-close metrics so the digest can show clean deltas.
+  const prevCashUsd = team.cashUsd;
+  const prevBrandPts = team.brandPts;
+  const prevOpsPts = team.opsPts;
+  const prevLoyalty = team.customerLoyaltyPct;
+  const prevBrandValue = computeBrandValue(team);
+  const milestonesBefore = new Set(team.milestones ?? []);
+
   let next: Team = {
     ...team,
     flags: new Set(team.flags),
@@ -1116,7 +1140,7 @@ export function runQuarterClose(
     carryFwd.push({ quarter: ctx.quarter, amount: -pretax });
   }
   next.taxLossCarryForward = carryFwd.filter((e) => e.amount > 0);
-  const netProfit = pretax - tax;
+  let netProfit = pretax - tax;
 
   // ─ Cash flow + RCF auto-draw (A8) ──────────────────────
   let newCashUsd = next.cashUsd + netProfit;
@@ -1373,6 +1397,38 @@ export function runQuarterClose(
     notes.push(`Low Labour Relations (${next.labourRelationsScore.toFixed(0)}): labour scenarios will hit harder`);
   }
 
+  // PRD E8.3 — Crew strike risk. Probabilistic disruption when labour
+  // relations crater. Pay-below-market amplifies the chance.
+  const lrs = next.labourRelationsScore;
+  const isPaidBelow = next.sliders.staff <= 1;
+  let strikeChance = 0;
+  if (lrs <= 15) strikeChance = isPaidBelow ? 0.55 : 0.35;
+  else if (lrs <= 30) strikeChance = isPaidBelow ? 0.30 : 0.15;
+  else if (lrs <= 45 && isPaidBelow) strikeChance = 0.10;
+
+  // Deterministic-ish RNG so a given quarter+team yields a stable outcome
+  // (avoids flickering during dev hot-reload).
+  const seed = (ctx.quarter * 9301 + lrs * 49297) % 233280;
+  const roll = (seed / 233280);
+  if (strikeChance > 0 && roll < strikeChance) {
+    // Strike: 1 quarter of disrupted ops applied retroactively
+    const severity = lrs <= 15 ? "major" : "wildcat";
+    const revenuePenalty = severity === "major" ? 0.12 : 0.06;
+    const lostRevenue = revenue * revenuePenalty;
+    revenue -= lostRevenue;
+    netProfit -= lostRevenue;
+    newCashUsd -= lostRevenue * 0.7;  // already booked partly via tax
+    next.cashUsd = newCashUsd;        // re-commit after late penalty
+    next.brandPts = Math.max(0, next.brandPts - (severity === "major" ? 5 : 3));
+    next.customerLoyaltyPct = clamp(0, 100, next.customerLoyaltyPct - (severity === "major" ? 6 : 3));
+    next.labourRelationsScore = clamp(0, 100, next.labourRelationsScore - 5);
+    notes.push(
+      `⚠ Crew ${severity === "major" ? "general strike" : "wildcat action"}: ` +
+      `−${(revenuePenalty * 100).toFixed(0)}% revenue, brand and loyalty hit. ` +
+      `Raise the salary slider and address grievances.`,
+    );
+  }
+
   const newBrandValue = computeBrandValue(next);
 
   notes.push(`Revenue: $${(revenue / 1e6).toFixed(1)}M across ${routeBreakdown.length} routes`);
@@ -1380,6 +1436,47 @@ export function runQuarterClose(
   if (tax > 0) notes.push(`Corporate tax: ${(tax / 1e6).toFixed(1)}M`);
   if (carbonLevy > 0) notes.push(`Carbon levy: ${(carbonLevy / 1e6).toFixed(1)}M`);
   if (interest > 0) notes.push(`Debt interest: $${(interest / 1e6).toFixed(1)}M`);
+
+  // ─ News impact summary for the digest ──────────────────
+  // Find each news item this quarter, then for each, list the cities on the
+  // player's network that the item references with a non-zero impact %.
+  const networkCodes = new Set<string>([
+    next.hubCode,
+    ...next.secondaryHubCodes,
+    ...next.routes.flatMap((r) => [r.originCode, r.destCode]),
+  ]);
+  const newsThisQuarter = NEWS_BY_QUARTER[ctx.quarter] ?? [];
+  const OUTLETS = ["Sky News", "Bloomberg", "Reuters", "FT", "The Air Reporter", "AP", "BBC World", "WSJ", "Al Arabiya", "Nikkei Asia"];
+  const outletForId = (id: string) => {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffffffff;
+    return OUTLETS[Math.abs(h) % OUTLETS.length];
+  };
+  const newsImpacts: QuarterCloseResult["newsImpacts"] = [];
+  for (const n of newsThisQuarter) {
+    const cities: { code: string; name: string; pct: number }[] = [];
+    for (const code of networkCodes) {
+      const impact = cityEventImpact(code, ctx.quarter);
+      if (impact.pct === 0) continue;
+      if (!impact.items.some((it) => it.id === n.id)) continue;
+      const city = CITIES_BY_CODE[code];
+      if (!city) continue;
+      cities.push({ code, name: city.name, pct: impact.pct });
+    }
+    if (cities.length > 0) {
+      newsImpacts.push({
+        headline: n.headline,
+        outlet: outletForId(n.id),
+        quarter: n.quarter,
+        cities: cities.slice(0, 5),
+      });
+    }
+  }
+
+  // Milestones earned strictly during this quarter close
+  const milestonesEarnedThisQuarter = (next.milestones ?? []).filter(
+    (m) => !milestonesBefore.has(m),
+  );
 
   return {
     quarter: ctx.quarter,
@@ -1403,6 +1500,13 @@ export function runQuarterClose(
     newOpsPts,
     newLoyalty,
     newBrandValue,
+    prevCashUsd,
+    prevBrandPts,
+    prevOpsPts,
+    prevLoyalty,
+    prevBrandValue,
+    milestonesEarnedThisQuarter,
+    newsImpacts,
     routeBreakdown,
     triggeredEvents,
     notes,

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Badge, Button, Metric, Sparkline } from "@/components/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
@@ -7,11 +8,14 @@ import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
 import { computeAirlineValue, fleetCount, brandRating } from "@/lib/engine";
 import { DOCTRINE_BY_ID } from "@/data/doctrines";
 import { useUi, type PanelId } from "@/store/ui";
+import { SecondaryHubModal } from "@/components/game/SecondaryHubModal";
+import { Plus, MapPin } from "lucide-react";
 
 export function OverviewPanel() {
   const s = useGame();
   const player = selectPlayer(s);
   const openPanel = useUi((u) => u.openPanel);
+  const [hubModalOpen, setHubModalOpen] = useState(false);
 
   if (!player) return null;
 
@@ -105,6 +109,49 @@ export function OverviewPanel() {
             color="var(--info)"
           />
           <Metric label="Ops pts" value={player.opsPts.toFixed(0)} />
+        </div>
+      </div>
+
+      {/* Network — primary + secondary hubs (PRD §4.4) */}
+      <div>
+        <div className="flex items-baseline justify-between mb-2">
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+            Network
+          </div>
+          <button
+            onClick={() => setHubModalOpen(true)}
+            disabled={s.currentQuarter < 3}
+            title={s.currentQuarter < 3 ? "Secondary hubs unlock Q3" : undefined}
+            className="text-[0.6875rem] uppercase tracking-wider text-accent font-semibold hover:underline disabled:text-ink-muted disabled:no-underline disabled:cursor-not-allowed flex items-center gap-1"
+          >
+            <Plus size={11} /> Add secondary
+          </button>
+        </div>
+        <div className="rounded-md border border-line bg-surface p-3">
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-primary-fg text-[0.75rem] font-mono font-semibold"
+              style={{ background: player.color }}
+            >
+              <MapPin size={11} /> HUB · {player.hubCode}
+            </span>
+            {player.secondaryHubCodes.map((code) => (
+              <span
+                key={code}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-dashed text-[0.75rem] font-mono font-semibold"
+                style={{ borderColor: player.color, color: player.color }}
+              >
+                HUB·2 · {code}
+              </span>
+            ))}
+            {player.secondaryHubCodes.length === 0 && (
+              <span className="text-[0.75rem] text-ink-muted italic">
+                {s.currentQuarter < 3
+                  ? "Secondary hubs unlock Q3"
+                  : "No secondary hubs yet — expand to break the spoke-only constraint."}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -324,6 +371,11 @@ export function OverviewPanel() {
       >
         Open Ops form →
       </Button>
+
+      <SecondaryHubModal
+        open={hubModalOpen}
+        onClose={() => setHubModalOpen(false)}
+      />
     </div>
   );
 }
@@ -367,16 +419,3 @@ function MetricWithSpark({
   );
 }
 
-function newsTone(
-  impact: string,
-): "neutral" | "primary" | "accent" | "positive" | "negative" | "warning" | "info" {
-  switch (impact) {
-    case "tourism": return "accent";
-    case "business": return "primary";
-    case "cargo": return "positive";
-    case "brand": return "info";
-    case "fuel": return "warning";
-    case "ops": return "negative";
-    default: return "neutral";
-  }
-}
