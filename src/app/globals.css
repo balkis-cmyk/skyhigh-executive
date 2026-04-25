@@ -297,12 +297,38 @@
 }
 .sf-city-name {
   font-family: var(--font-sans);
+  font-weight: 700;
+  color: var(--ink);
+}
+/* Tier-aware sizing so all 100 cities can be labelled without crowding the
+   network markers. Network airports always get the strongest treatment. */
+.sf-city-tt-network .sf-city-name {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.sf-city-tt-tier-1 .sf-city-name {
   font-size: 11px;
   font-weight: 700;
   color: var(--ink);
 }
-.sf-city-name-hub {
-  font-size: 12px;
+.sf-city-tt-tier-2 .sf-city-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink);
+  opacity: 0.95;
+}
+.sf-city-tt-tier-3 .sf-city-name {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--ink);
+  opacity: 0.85;
+}
+.sf-city-tt-tier-4 .sf-city-name {
+  font-size: 8.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  opacity: 0.85;
 }
 .sf-flights {
   font-family: var(--font-mono);

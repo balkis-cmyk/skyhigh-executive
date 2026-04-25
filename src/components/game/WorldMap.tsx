@@ -273,9 +273,8 @@ export function WorldMap({
               : "#1a1a1a";
           const strokeWeight = isHub ? 2.5 : isSecondaryHub ? 2 : inNetwork ? 1.8 : 1.4;
 
-          // Show name labels only for hub/secondary/connected; tier-1 unconnected gets IATA only
-          const showName = isHub || isSecondaryHub || inNetwork;
-          const showCode = !showName && c.tier === 1;
+          // Every city shows its name; size + emphasis scales by tier and network status.
+          const isNetworkAirport = isHub || isSecondaryHub || inNetwork;
 
           return (
             <CircleMarker
@@ -308,40 +307,55 @@ export function WorldMap({
                 permanent
                 direction="bottom"
                 offset={[0, isHub ? 4 : 2]}
-                className="sf-city-tt"
+                className={cn(
+                  "sf-city-tt",
+                  // Tier-aware class drives font-size + weight from CSS
+                  isNetworkAirport
+                    ? "sf-city-tt-network"
+                    : `sf-city-tt-tier-${c.tier}`,
+                )}
                 opacity={1}
               >
-                {showName ? (
-                  <div className="sf-city-label">
-                    {isHub && <span className="sf-hub-pill" style={{ background: team.color }}>HUB</span>}
-                    {isSecondaryHub && !isHub && (
-                      <span className="sf-hub-pill" style={{ background: "var(--bg)", color: team.color, border: `1px dashed ${team.color}` }}>HUB·2</span>
-                    )}
+                <div className="sf-city-label">
+                  {isHub && (
                     <span
-                      className={cn(
-                        "sf-city-name",
-                        (isHub || isSecondaryHub) && "sf-city-name-hub",
-                      )}
-                      style={(isHub || isSecondaryHub) ? { color: team.color } : undefined}
+                      className="sf-hub-pill"
+                      style={{ background: team.color }}
                     >
-                      {c.name}
+                      HUB
                     </span>
-                    {flights > 0 && (
-                      <span
-                        className="sf-flights"
-                        style={{ color: team.color }}
-                      >
-                        {flights}/day
-                      </span>
-                    )}
-                    {isSelected && <span className="sf-selected-dot" />}
-                  </div>
-                ) : showCode ? (
-                  <div className="sf-city-code-only">{c.code}</div>
-                ) : (
-                  /* Hidden — keeps Leaflet happy without a label */
-                  <div style={{ display: "none" }}>{c.code}</div>
-                )}
+                  )}
+                  {isSecondaryHub && !isHub && (
+                    <span
+                      className="sf-hub-pill"
+                      style={{
+                        background: "var(--bg)",
+                        color: team.color,
+                        border: `1px dashed ${team.color}`,
+                      }}
+                    >
+                      HUB·2
+                    </span>
+                  )}
+                  <span
+                    className={cn("sf-city-name")}
+                    style={
+                      isHub || isSecondaryHub
+                        ? { color: team.color }
+                        : inNetwork
+                          ? { color: team.color }
+                          : undefined
+                    }
+                  >
+                    {c.name}
+                  </span>
+                  {flights > 0 && (
+                    <span className="sf-flights" style={{ color: team.color }}>
+                      {flights}/day
+                    </span>
+                  )}
+                  {isSelected && <span className="sf-selected-dot" />}
+                </div>
               </Tooltip>
             </CircleMarker>
           );

@@ -69,7 +69,9 @@ export function NavRail() {
   const fuelIndex = useGame((state) => state.fuelIndex);
   const baseInterestRatePct = useGame((state) => state.baseInterestRatePct);
 
-  const [expanded, setExpanded] = useState(false);
+  const expanded = useUi((s) => s.railExpanded);
+  const toggleRail = useUi((s) => s.toggleRail);
+  const setRailExpanded = useUi((s) => s.setRailExpanded);
   const [newsExpanded, setNewsExpanded] = useState(false);
 
   const pendingDecisions =
@@ -100,7 +102,7 @@ export function NavRail() {
     >
       {/* Expand/collapse handle */}
       <button
-        onClick={() => setExpanded((v) => !v)}
+        onClick={toggleRail}
         aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
         className={cn(
           "absolute -right-3 top-2.5 z-10 w-6 h-6 rounded-full",
@@ -242,7 +244,7 @@ export function NavRail() {
       ) : (
         // Collapsed: just an icon button that opens the news panel state
         <button
-          onClick={() => setExpanded(true)}
+          onClick={() => setRailExpanded(true)}
           title="World news"
           className="border-t border-line py-3 flex flex-col items-center text-ink-2 hover:text-ink hover:bg-surface-hover"
         >

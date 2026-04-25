@@ -57,6 +57,7 @@ function CanvasInner() {
   // reference every render and trip the getServerSnapshot infinite-loop guard.
   const rivals = useGame(useShallow(selectRivals));
   const currentPanel = useUi((s) => s.panel);
+  const railExpanded = useUi((s) => s.railExpanded);
 
   // Hydration-aware
   const [hydrated, setHydrated] = useState(false);
@@ -143,8 +144,13 @@ function CanvasInner() {
 
   return (
     <main className="flex-1 relative overflow-hidden">
-      {/* Full-viewport map — inset below the top bar + past the nav rail */}
-      <div className="absolute inset-0 top-14 left-14">
+      {/* Full-viewport map — inset below the top bar + past the nav rail.
+          Left inset matches the rail's current width so the rail never sits
+          on top of the map. */}
+      <div
+        className="absolute inset-0 top-14 transition-[left] duration-[var(--dur-fast)]"
+        style={{ left: railExpanded ? "14rem" : "3.5rem" }}
+      >
         <WorldMap
           team={player}
           rivals={rivals}
