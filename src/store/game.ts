@@ -1770,8 +1770,11 @@ export const useGame = create<GameStore>()(
           quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining !== null ? 1800 : null,
           quarterTimerPaused: false,
         });
+        // Player-facing label: "Round 10/20" headline with the calendar
+        // quarter as the detail line. The internal round number is Q1..Q20;
+        // calendar quarters are Q1 2026..Q4 2030 derived from that.
         toast.accent(
-          `Q${nextQ} opens`,
+          `Round ${nextQ}/20`,
           fmtQuarter(nextQ),
         );
       },
