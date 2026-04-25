@@ -24,8 +24,16 @@ export function SlotMarketPanel() {
   const airportSlots = useGame((s) => s.airportSlots);
   const submitSlotBid = useGame((s) => s.submitSlotBid);
   const cancelSlotBid = useGame((s) => s.cancelSlotBid);
+  const releaseSlots = useGame((s) => s.releaseSlots);
   const [query, setQuery] = useState("");
   const [bidDraft, setBidDraft] = useState<Record<string, { slots: number; price: number }>>({});
+
+  // Total recurring slot expense across all leases (for header summary)
+  const totalQuarterlySlotFees = useMemo(() => {
+    if (!player) return 0;
+    return Object.values(player.airportLeases ?? {})
+      .reduce((sum, l) => sum + l.totalWeeklyCost * 13, 0);
+  }, [player]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -71,9 +79,18 @@ export function SlotMarketPanel() {
       <div>
         <p className="text-[0.8125rem] text-ink-2 leading-relaxed">
           Each route consumes one slot per weekly schedule at both endpoints.
-          Bids resolve at quarter close — highest price/slot wins. Unsold
-          slots roll forward and new batches open every year.
+          Bids set the <strong>weekly per-slot rent</strong> — winners pay
+          ongoing fees as long as they hold the slot. Release a slot to
+          stop paying for it; it returns to the airport pool.
         </p>
+        {totalQuarterlySlotFees > 0 && (
+          <div className="mt-2 rounded-md border border-line bg-surface-2/40 px-3 py-2 text-[0.8125rem] flex items-baseline justify-between">
+            <span className="text-ink-2">Your recurring slot expense</span>
+            <span className="tabular font-mono font-semibold text-ink">
+              {fmtMoney(totalQuarterlySlotFees)}/quarter
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="relative">
@@ -94,16 +111,19 @@ export function SlotMarketPanel() {
               <th className="text-left px-2.5 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Airport</th>
               <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Tier</th>
               <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Mine</th>
+              <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Fee/Q</th>
               <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Open</th>
               <th className="text-right px-2 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Next</th>
-              <th className="text-left px-2.5 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Bid</th>
+              <th className="text-left px-2.5 py-2 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">Bid / Release</th>
             </tr>
           </thead>
           <tbody>
             {rows.slice(0, 50).map((c) => {
               const tier = c.tier as CityTier;
               const state = airportSlots?.[c.code];
-              const owned = player.slotsByAirport[c.code] ?? 0;
+              const lease = player.airportLeases?.[c.code];
+              const owned = lease?.slots ?? 0;
+              const quarterlyFee = (lease?.totalWeeklyCost ?? 0) * 13;
               const myBid = myBids.get(c.code);
               const draft = bidDraft[c.code];
               const basePrice = BASE_SLOT_PRICE_BY_TIER[tier];
@@ -129,6 +149,15 @@ export function SlotMarketPanel() {
                   <td className="px-2 py-2 text-right tabular font-mono">
                     {owned > 0 ? <span className="text-positive font-semibold">{owned}</span> : <span className="text-ink-muted">—</span>}
                   </td>
+                  <td className="px-2 py-2 text-right tabular font-mono text-[0.6875rem]">
+                    {quarterlyFee > 0 ? (
+                      <span className="text-warning">{fmtMoney(quarterlyFee)}</span>
+                    ) : owned > 0 ? (
+                      <span className="text-ink-muted">free</span>
+                    ) : (
+                      <span className="text-ink-muted">—</span>
+                    )}
+                  </td>
                   <td className="px-2 py-2 text-right tabular font-mono">
                     <span className={state?.available && state.available > 0 ? "text-ink" : "text-ink-muted"}>
                       {state?.available ?? "—"}
@@ -141,7 +170,7 @@ export function SlotMarketPanel() {
                     {myBid ? (
                       <div className="flex items-center gap-1.5">
                         <span className="text-[0.6875rem] tabular font-mono text-ink">
-                          {myBid.slots} × ${(myBid.pricePerSlot / 1000).toFixed(0)}K
+                          {myBid.slots} × ${(myBid.pricePerSlot / 1000).toFixed(0)}K/wk
                         </span>
                         <button
                           onClick={() => cancelSlotBid(c.code)}
@@ -149,6 +178,43 @@ export function SlotMarketPanel() {
                         >
                           cancel
                         </button>
+                      </div>
+                    ) : owned > 0 && quarterlyFee > 0 ? (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            const n = parseInt(prompt(`Release how many slots at ${c.code}? (1-${owned})`, "5") ?? "0", 10);
+                            if (n > 0 && n <= owned) {
+                              const r = releaseSlots(c.code, n);
+                              if (!r.ok) toast.negative(r.error ?? "Release failed");
+                            }
+                          }}
+                          className="text-[0.625rem] text-negative hover:underline"
+                          title="Stop paying the recurring fee on these slots"
+                        >
+                          release
+                        </button>
+                        <span className="text-[0.625rem] text-ink-muted">|</span>
+                        {/* Player can ALSO bid for more on top of held */}
+                        <Input
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={draft?.slots ?? 5}
+                          onChange={(e) => setDraft(c.code, { slots: parseInt(e.target.value, 10) || 1 })}
+                          className="w-12 h-6 text-[0.6875rem]"
+                        />
+                        <Input
+                          type="number"
+                          min={basePrice}
+                          step={5_000}
+                          value={draft?.price ?? basePrice}
+                          onChange={(e) => setDraft(c.code, { price: parseInt(e.target.value, 10) || basePrice })}
+                          className="w-20 h-6 text-[0.6875rem]"
+                        />
+                        <Button size="sm" variant="secondary" onClick={() => placeBid(c.code, tier)}>
+                          <Gavel size={11} />
+                        </Button>
                       </div>
                     ) : (
                       <div className="flex items-center gap-1.5">

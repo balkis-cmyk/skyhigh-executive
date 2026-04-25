@@ -157,6 +157,10 @@ export interface GameStore extends GameState {
   submitSlotBid(airportCode: string, slots: number, pricePerSlot: number):
     { ok: boolean; error?: string };
   cancelSlotBid(airportCode: string): void;
+  /** Release N slots back to the airport pool. Stops the recurring weekly
+   *  fee on those slots and frees airport capacity. PRD update Model B. */
+  releaseSlots(airportCode: string, slotsToRelease: number):
+    { ok: boolean; error?: string };
   /** Admin: release N slots at an airport, resolving queued bids highest-first. */
   adminReleaseSlots(airportCode: string, slots: number): void;
 
@@ -767,6 +771,41 @@ export const useGame = create<GameStore>()(
         // — that's well past anything achievable with current aircraft physics.
         if (dailyFrequency < 1 || dailyFrequency > 24)
           return { ok: false, error: "Frequency must be at least 1/week" };
+
+        // PRD slot capacity check (Model B). Total weekly schedules at each
+        // airport across all active routes (touching either origin or dest)
+        // must be ≤ team's leased slots at that airport.
+        const weeklyFreqNew = dailyFrequency * 7;
+        const weeklyAtOriginExisting = player.routes
+          .filter(
+            (r) =>
+              r.status === "active" &&
+              (r.originCode === originCode || r.destCode === originCode),
+          )
+          .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
+        const weeklyAtDestExisting = player.routes
+          .filter(
+            (r) =>
+              r.status === "active" &&
+              (r.originCode === destCode || r.destCode === destCode),
+          )
+          .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
+        const slotsAtOrigin = player.airportLeases?.[originCode]?.slots ?? 0;
+        const slotsAtDest = player.airportLeases?.[destCode]?.slots ?? 0;
+        if (weeklyAtOriginExisting + weeklyFreqNew > slotsAtOrigin) {
+          return {
+            ok: false,
+            error: `Need ${weeklyFreqNew} more slots at ${originCode}. ` +
+              `Hold ${slotsAtOrigin}, ${weeklyAtOriginExisting} already used. Bid for slots first.`,
+          };
+        }
+        if (weeklyAtDestExisting + weeklyFreqNew > slotsAtDest) {
+          return {
+            ok: false,
+            error: `Need ${weeklyFreqNew} more slots at ${destCode}. ` +
+              `Hold ${slotsAtDest}, ${weeklyAtDestExisting} already used. Bid for slots first.`,
+          };
+        }
 
         const route = {
           id: mkId("route"),
@@ -1613,6 +1652,70 @@ export const useGame = create<GameStore>()(
         return { ok: true };
       },
 
+      releaseSlots: (airportCode, slotsToRelease) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        const lease = player.airportLeases?.[airportCode];
+        if (!lease || lease.slots === 0)
+          return { ok: false, error: "No slots held at this airport" };
+        if (slotsToRelease > lease.slots)
+          return { ok: false, error: `Only ${lease.slots} slots held` };
+
+        // Capacity check: route demand at this airport must still be met
+        // after release. Total weekly schedules at this airport across all
+        // active routes ≤ remaining slots.
+        const usedAtAirport = player.routes
+          .filter(
+            (r) =>
+              r.status === "active" &&
+              (r.originCode === airportCode || r.destCode === airportCode),
+          )
+          .reduce((sum, r) => sum + r.dailyFrequency * 7, 0);
+        const remainingAfter = lease.slots - slotsToRelease;
+        if (remainingAfter < usedAtAirport) {
+          return {
+            ok: false,
+            error: `${usedAtAirport} weekly flights still touch ${airportCode}; can keep at most ${slotsToRelease - (usedAtAirport - remainingAfter)} more before disrupting routes`,
+          };
+        }
+
+        // Proportional release: weekly cost reduces by avg-price × released
+        const avgPrice = lease.totalWeeklyCost / lease.slots;
+        const releasedWeeklyCost = avgPrice * slotsToRelease;
+
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            airportLeases: {
+              ...t.airportLeases,
+              [airportCode]: {
+                slots: remainingAfter,
+                totalWeeklyCost: Math.max(0, lease.totalWeeklyCost - releasedWeeklyCost),
+              },
+            },
+            slotsByAirport: {
+              ...t.slotsByAirport,
+              [airportCode]: Math.max(0, (t.slotsByAirport[airportCode] ?? 0) - slotsToRelease),
+            },
+          }),
+          // Return slots to the airport pool so other airlines can bid
+          airportSlots: {
+            ...s.airportSlots,
+            [airportCode]: {
+              ...(s.airportSlots[airportCode] ?? { available: 0, nextOpening: 0, nextTickQuarter: 99 }),
+              available:
+                (s.airportSlots[airportCode]?.available ?? 0) + slotsToRelease,
+            },
+          },
+        });
+        toast.info(
+          `Released ${slotsToRelease} slots at ${airportCode}`,
+          `Stops ~${fmtMoneyPlain(releasedWeeklyCost * 13)}/Q in fees. Slots return to the airport pool.`,
+        );
+        return { ok: true };
+      },
+
       cancelSlotBid: (airportCode) => {
         const s = get();
         set({
@@ -2200,6 +2303,30 @@ export const useGame = create<GameStore>()(
           fuelStorageLevelL: t.fuelStorageLevelL ?? 0,
           fuelStorageAvgCostPerL: t.fuelStorageAvgCostPerL ?? 0,
           slotsByAirport: t.slotsByAirport ?? { [t.hubCode]: 30 },
+          // Migration: backfill airportLeases from any existing routes so
+          // pre-Model-B saves can still operate. Each airport that the team
+          // is flying to/from receives slots equal to its existing weekly
+          // schedule load (so capacity check doesn't immediately break).
+          // No fee charged on backfilled slots — pretend they're grandfathered.
+          airportLeases: t.airportLeases ?? (() => {
+            const leases: Record<string, AirportLease> = {};
+            const usage: Record<string, number> = {};
+            for (const r of (t.routes ?? [])) {
+              if (r.status === "closed") continue;
+              const wf = r.dailyFrequency * 7;
+              usage[r.originCode] = (usage[r.originCode] ?? 0) + wf;
+              usage[r.destCode] = (usage[r.destCode] ?? 0) + wf;
+            }
+            // Plus the legacy slotsByAirport hub seed so the team has hub capacity
+            for (const code of Object.keys(t.slotsByAirport ?? {})) {
+              const seed = t.slotsByAirport[code] ?? 0;
+              usage[code] = Math.max(usage[code] ?? 0, seed);
+            }
+            for (const code of Object.keys(usage)) {
+              leases[code] = { slots: usage[code], totalWeeklyCost: 0 };
+            }
+            return leases;
+          })(),
           pendingSlotBids: t.pendingSlotBids ?? [],
           cargoStorageActivations: t.cargoStorageActivations ?? [t.hubCode],
           hubInvestments: t.hubInvestments ?? {
