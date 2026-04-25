@@ -173,10 +173,11 @@ export function FleetPanel() {
           <table className="w-full text-[0.8125rem]">
             <thead>
               <tr className="bg-surface-2 border-b border-line">
-                <Th className="w-[36%]">Type</Th>
-                <Th className="text-right">Qty</Th>
-                <Th className="text-right">In service</Th>
-                <Th className="text-right">Book value</Th>
+                <Th className="w-[34%]">Model</Th>
+                <Th className="text-right">Total</Th>
+                <Th className="text-right">Used</Th>
+                <Th className="text-right">Unused</Th>
+                <Th className="text-right">Order</Th>
                 <Th className="text-right">Q profit</Th>
               </tr>
             </thead>
@@ -184,6 +185,9 @@ export function FleetPanel() {
               {groups.map((g) => {
                 const spec = AIRCRAFT_BY_ID[g.specId];
                 if (!spec) return null;
+                // Used = on a route. Unused = active but unassigned.
+                const used = g.onRoutes;
+                const unused = g.active - g.onRoutes;
                 return (
                   <tr
                     key={g.specId}
@@ -196,9 +200,6 @@ export function FleetPanel() {
                         <Badge tone={spec.family === "cargo" ? "warning" : "neutral"}>
                           {spec.family}
                         </Badge>
-                        {g.ordered > 0 && (
-                          <Badge tone="info">{g.ordered} ordered</Badge>
-                        )}
                         {g.grounded > 0 && (
                           <Badge tone="warning">{g.grounded} grounded</Badge>
                         )}
@@ -212,11 +213,20 @@ export function FleetPanel() {
                     <td className="py-2.5 px-3 text-right tabular font-display text-[1.25rem] text-ink leading-none">
                       {g.total}
                     </td>
-                    <td className="py-2.5 px-3 text-right tabular font-mono text-ink">
-                      {g.active}/{g.total}
+                    <td className="py-2.5 px-3 text-right tabular font-mono text-positive font-semibold">
+                      {used}
                     </td>
-                    <td className="py-2.5 px-3 text-right tabular font-mono text-ink">
-                      {fmtMoney(g.bookValue)}
+                    <td className={cn(
+                      "py-2.5 px-3 text-right tabular font-mono",
+                      unused > 0 ? "text-warning font-semibold" : "text-ink-muted",
+                    )}>
+                      {unused}
+                    </td>
+                    <td className={cn(
+                      "py-2.5 px-3 text-right tabular font-mono",
+                      g.ordered > 0 ? "text-info font-semibold" : "text-ink-muted",
+                    )}>
+                      {g.ordered}
                     </td>
                     <td
                       className={cn(
