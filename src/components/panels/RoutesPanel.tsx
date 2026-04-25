@@ -129,15 +129,15 @@ export function RoutesPanel() {
         </div>
       ) : (
         <div className="rounded-md border border-line overflow-hidden">
-          <table className="w-full text-[0.8125rem]">
+          <table className="w-full text-[0.8125rem] table-fixed">
             <thead>
               <tr className="bg-surface-2 border-b border-line">
                 <Th className="w-[30%]">Route</Th>
-                <Th className="text-right">Load</Th>
-                <Th className="text-right">Freq</Th>
-                <Th className="text-right">Q revenue</Th>
-                <Th className="text-right">Q profit</Th>
-                <Th className="text-right w-[80px]">Status</Th>
+                <Th className="text-right w-[70px]">Load</Th>
+                <Th className="text-right w-[80px]">Freq</Th>
+                <Th className="text-right w-[120px]">Q revenue</Th>
+                <Th className="text-right w-[120px]">Q profit</Th>
+                <Th className="text-right w-[100px]">Status</Th>
               </tr>
             </thead>
             <tbody>
