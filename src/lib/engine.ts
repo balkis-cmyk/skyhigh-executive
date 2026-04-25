@@ -191,12 +191,12 @@ export function classFareRange(
 
 // ─── Slider levels + impacts (PRD A2 + B1) ─────────────────
 export const SLIDER_LABELS: Record<SliderLevel, string> = {
-  0: "Very Low",
-  1: "Low",
+  0: "Bare Min",
+  1: "Lean",
   2: "Standard",
-  3: "High",
-  4: "Very High",
-  5: "Extreme",
+  3: "Premium",
+  4: "Extra High",
+  5: "Maximum",
 };
 
 /** Slider spend as % of revenue (A2). Staff is separate (A3). */
@@ -222,13 +222,16 @@ export const SLIDER_EFFECTS: Record<
     4: { brandPts: 0, loyalty: 4, opsPts: 6 },
     5: { brandPts: 5, loyalty: 7, opsPts: 10 },
   },
+  // Marketing & Rewards merged (PRD update). Drives both brand pts and
+  // loyalty. Effects represent the combined cost of campaign spend +
+  // frequent-flyer benefits.
   marketing: {
-    0: { brandPts: -4, loyalty: -2 },
+    0: { brandPts: -3, loyalty: -4 },
     1: { brandPts: -1, loyalty: -1 },
-    2: { brandPts: 0, loyalty: 0 },
-    3: { brandPts: 3, loyalty: 1 },
-    4: { brandPts: 6, loyalty: 3 },
-    5: { brandPts: 10, loyalty: 6 },
+    2: { brandPts: 0, loyalty: 1 },
+    3: { brandPts: 3, loyalty: 4 },
+    4: { brandPts: 6, loyalty: 7 },
+    5: { brandPts: 10, loyalty: 11 },
   },
   service: {
     0: { brandPts: -4, loyalty: -5 },
@@ -238,13 +241,16 @@ export const SLIDER_EFFECTS: Record<
     4: { brandPts: 6, loyalty: 7 },
     5: { brandPts: 10, loyalty: 12 },
   },
+  // Rewards retained as a no-op shape so existing saves don't crash; engine
+  // no longer reads it (sliderKeys excludes "rewards"). Will be removed in
+  // a future migration once all saves have rolled forward.
   rewards: {
-    0: { brandPts: 0, loyalty: -5 },
+    0: { brandPts: 0, loyalty: 0 },
     1: { brandPts: 0, loyalty: 0 },
-    2: { brandPts: 0, loyalty: 2 },
-    3: { brandPts: 0, loyalty: 5 },
-    4: { brandPts: 2, loyalty: 8 },
-    5: { brandPts: 4, loyalty: 12 },
+    2: { brandPts: 0, loyalty: 0 },
+    3: { brandPts: 0, loyalty: 0 },
+    4: { brandPts: 0, loyalty: 0 },
+    5: { brandPts: 0, loyalty: 0 },
   },
   operations: {
     0: { brandPts: -3, loyalty: 0, opsPts: -5 },
@@ -1093,8 +1099,9 @@ export function runQuarterClose(
   const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff];
 
   // ─ Other sliders as % of revenue (A2) ──────────────────
+  // Rewards merged into marketing per PRD update — 4 sliders contribute cost.
   const sliderPctKeys: (keyof Sliders)[] = [
-    "marketing", "service", "rewards", "operations",
+    "marketing", "service", "operations",
   ];
   const otherSliderCost = sliderPctKeys.reduce(
     (sum, k) => sum + revenue * SLIDER_PCT_REVENUE[next.sliders[k]], 0)
@@ -1394,8 +1401,9 @@ export function runQuarterClose(
   next.deferredEvents = remainingDeferred;
 
   // Slider → brand / loyalty / ops pts per-quarter
+  // Rewards merged into marketing per PRD update — 5 sliders effective.
   const sliderKeys: (keyof Sliders)[] = [
-    "staff", "marketing", "service", "rewards", "operations", "customerService",
+    "staff", "marketing", "service", "operations", "customerService",
   ];
   let brandDelta = 0;
   let loyaltyDelta = 0;
