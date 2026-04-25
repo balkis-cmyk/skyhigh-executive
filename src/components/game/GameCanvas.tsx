@@ -26,6 +26,7 @@ import { LeaderboardPanel } from "@/components/panels/LeaderboardPanel";
 import { SlotMarketPanel } from "@/components/panels/SlotMarketPanel";
 import { AdminPanel } from "@/components/panels/AdminPanel";
 import { RouteSetupModal } from "@/components/game/RouteSetupModal";
+import { AirportDetailModal } from "@/components/game/AirportDetailModal";
 import { RouteLaunchBar } from "@/components/game/RouteLaunchBar";
 import { QuarterTimerDriver } from "@/components/game/QuarterTimer";
 import { Toaster } from "@/components/game/Toaster";
@@ -76,6 +77,8 @@ function CanvasInner() {
   // Route setup state (lifted up to share between map + modal)
   const [origin, setOrigin] = useState<string | null>(null);
   const [dest, setDest] = useState<string | null>(null);
+  // Double-click on an airport opens a detail popup with slot/airline data.
+  const [airportDetail, setAirportDetail] = useState<City | null>(null);
   const [isCargo, setIsCargo] = useState(false);
   const [launchOpen, setLaunchOpen] = useState(false);
 
@@ -207,6 +210,7 @@ function CanvasInner() {
           rivals={rivals}
           selectedOriginCode={origin}
           onCityClick={handleCityClick}
+          onCityDoubleClick={(c) => setAirportDetail(c)}
           onClearSelection={() => { setOrigin(null); setDest(null); }}
         />
       </div>
@@ -245,6 +249,12 @@ function CanvasInner() {
           setDest(null);
           setIsCargo(false);
         }}
+      />
+
+      {/* Airport detail popup — opened by double-clicking a city on the map */}
+      <AirportDetailModal
+        city={airportDetail}
+        onClose={() => setAirportDetail(null)}
       />
 
       {/* Quarter close modal */}
