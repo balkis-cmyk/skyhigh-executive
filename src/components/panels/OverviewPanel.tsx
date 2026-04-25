@@ -4,7 +4,6 @@ import { Badge, Button, Metric, Sparkline } from "@/components/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
-import { NEWS_BY_QUARTER } from "@/data/world-news";
 import { computeAirlineValue, fleetCount, brandRating } from "@/lib/engine";
 import { DOCTRINE_BY_ID } from "@/data/doctrines";
 import { useUi, type PanelId } from "@/store/ui";
@@ -36,7 +35,6 @@ export function OverviewPanel() {
         (d) => d.scenarioId === sc.id && d.quarter === s.currentQuarter,
       ),
   );
-  const todayNews = NEWS_BY_QUARTER[s.currentQuarter] ?? [];
 
   const onOpen = (id: PanelId) => openPanel(id);
 
@@ -168,34 +166,7 @@ export function OverviewPanel() {
         </ul>
       </div>
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
-            World news · Q{s.currentQuarter}
-          </div>
-          <button
-            className="text-[0.75rem] text-ink-muted hover:text-ink"
-            onClick={() => onOpen("news")}
-          >
-            All {todayNews.length} →
-          </button>
-        </div>
-        <div className="space-y-3">
-          {todayNews.slice(0, 3).map((n) => (
-            <div key={n.id} className="flex gap-3 items-start">
-              <span className="text-[1rem] text-ink-muted mt-0.5 w-5">{n.icon}</span>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <Badge tone={newsTone(n.impact)}>{n.impact.toUpperCase()}</Badge>
-                </div>
-                <div className="text-[0.8125rem] text-ink font-medium leading-snug">
-                  {n.headline}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* World news lives in the sidebar now (past + current quarter, by outlet). */}
 
       {/* Cargo contracts */}
       {s.cargoContracts.filter((c) => c.teamId === player.id).length > 0 && (
