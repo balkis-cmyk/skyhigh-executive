@@ -79,12 +79,29 @@ function CanvasInner() {
     if (!origin) return setOrigin(c.code);
     // Clicked the same origin: deselect.
     if (c.code === origin) { setOrigin(null); setDest(null); return; }
-    // Origin set, new city clicked: set as destination AND auto-open the
-    // route setup modal so the player goes straight from the second click
-    // into managing the new route.
+    // Origin set, new city clicked: pick as destination.
     if (!dest) {
       setDest(c.code);
-      setLaunchOpen(true);
+      // If a route already exists between these endpoints (either
+      // direction), open the Routes panel focused on that route instead
+      // of the New Route modal. Otherwise, create-new flow.
+      const existing = player?.routes.find(
+        (r) =>
+          r.status !== "closed" &&
+          ((r.originCode === origin && r.destCode === c.code) ||
+            (r.originCode === c.code && r.destCode === origin)),
+      );
+      if (existing) {
+        useUi.getState().openPanel("routes");
+        useUi.getState().setFocusedRouteId(existing.id);
+        // Clear the click-state so the launch bar / new-route modal
+        // doesn't pop up afterwards.
+        setOrigin(null);
+        setDest(null);
+        setLaunchOpen(false);
+      } else {
+        setLaunchOpen(true);
+      }
       return;
     }
     // Otherwise restart with the new origin.
@@ -174,7 +191,10 @@ function CanvasInner() {
           Left inset matches the rail's current width so the rail never sits
           on top of the map. */}
       <div
-        className="absolute inset-0 top-14 transition-[left] duration-[var(--dur-fast)]"
+        // `isolate` creates a stacking context so Leaflet's pane z-indices
+        // (which go up to 1000) stay inside this map container instead of
+        // competing in the document root with our fixed-position chrome.
+        className="absolute inset-0 top-14 isolate transition-[left] duration-[var(--dur-fast)]"
         style={{ left: railExpanded ? "14rem" : "3.5rem" }}
       >
         <WorldMap

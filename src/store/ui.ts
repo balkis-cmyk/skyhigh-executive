@@ -25,6 +25,10 @@ interface UiStore {
   railExpanded: boolean;
   setRailExpanded(v: boolean): void;
   toggleRail(): void;
+  /** Route to auto-focus when the Routes panel opens. Set when the player
+   *  clicks an existing route on the map; cleared after the panel reads it. */
+  focusedRouteId: string | null;
+  setFocusedRouteId(id: string | null): void;
 }
 
 /**
@@ -39,4 +43,6 @@ export const useUi = create<UiStore>((set, get) => ({
   railExpanded: false,
   setRailExpanded: (v) => set({ railExpanded: v }),
   toggleRail: () => set({ railExpanded: !get().railExpanded }),
+  focusedRouteId: null,
+  setFocusedRouteId: (id) => set({ focusedRouteId: id }),
 }));

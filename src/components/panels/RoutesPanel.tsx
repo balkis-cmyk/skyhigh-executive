@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge, Input, Modal, ModalBody, ModalFooter, ModalHeader, Button } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
+import { useUi } from "@/store/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { CITIES_BY_CODE } from "@/data/cities";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
@@ -24,6 +25,17 @@ export function RoutesPanel() {
 
   const [query, setQuery] = useState("");
   const [activeRouteId, setActiveRouteId] = useState<string | null>(null);
+
+  // If GameCanvas asked us to focus a specific route (because the player
+  // clicked an existing route's endpoints on the map), auto-open it once.
+  const focusedRouteId = useUi((u) => u.focusedRouteId);
+  const setFocusedRouteId = useUi((u) => u.setFocusedRouteId);
+  useEffect(() => {
+    if (focusedRouteId) {
+      setActiveRouteId(focusedRouteId);
+      setFocusedRouteId(null);  // consume the signal
+    }
+  }, [focusedRouteId, setFocusedRouteId]);
 
   const rows = useMemo(() => {
     if (!player) return [];
