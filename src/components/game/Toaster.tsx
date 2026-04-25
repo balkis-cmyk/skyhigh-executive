@@ -53,12 +53,24 @@ export function Toaster() {
 
   if (toasts.length === 0) return null;
 
+  // Cap visible toasts at 6. Anything older spills off-stack but is still
+  // captured in the persistent Notification Center (bell icon in TopBar).
+  // Quarter-close events frequently fire 8-10 toasts at once and we don't
+  // want to flood the screen.
+  const visible = toasts.slice(-6);
+  const overflow = toasts.length - visible.length;
+
   return (
     <div
       className="fixed bottom-6 right-6 z-50 flex flex-col gap-2 max-w-[380px] pointer-events-none"
       aria-live="polite"
     >
-      {toasts.map((t) => {
+      {overflow > 0 && (
+        <div className="pointer-events-auto rounded-md border border-line bg-surface/95 backdrop-blur-md px-3 py-1.5 text-[0.6875rem] text-ink-muted self-end shadow-[var(--shadow-2)]">
+          +{overflow} more in <strong className="text-ink">Notifications</strong>
+        </div>
+      )}
+      {visible.map((t) => {
         const meta = KIND_META[t.kind];
         return (
           <div

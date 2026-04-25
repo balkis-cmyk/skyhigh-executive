@@ -41,7 +41,10 @@ export const useToasts = create<ToastStore>()(
       toasts: [],
       history: [],
       lastReadAt: 0,
-      push: ({ kind, title, detail, duration = 4200 }) => {
+      // Default duration bumped 4.2s → 6.5s so quarter-close bursts (5+
+      // toasts in quick succession) stay readable. Anything the user
+      // misses still lives in the persistent Notification Center.
+      push: ({ kind, title, detail, duration = 6500 }) => {
         const id = `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const toast: Toast = {
           id,
