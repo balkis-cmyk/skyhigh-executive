@@ -357,6 +357,22 @@
   font-size: 9px;
 }
 
+/* Flowing dashes that march along route polylines, creating a sense of
+   traffic moving on each route without rendering actual moving markers
+   (cheap and respects reduced-motion). */
+@keyframes sf-route-flow-march {
+  to { stroke-dashoffset: -32; }
+}
+.sf-route-flow {
+  animation: sf-route-flow-march 1.6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sf-route-flow {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* Toast entrance — slides in from the bottom-right */
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }

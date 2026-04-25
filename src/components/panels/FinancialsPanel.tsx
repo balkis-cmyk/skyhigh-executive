@@ -35,6 +35,23 @@ export function FinancialsPanel() {
     setBorrowOpen(false); setError(null);
   }
 
+  // Loan covenant signals based on debt ratio
+  // 0–30%: healthy
+  // 30–50%: borrowing premium kicks in (1.5pp)
+  // 50–70%: high leverage (3.0pp premium)
+  // 70%+: covenant breach (5pp premium, refinance gets harder)
+  const covenant: { tone: "info" | "warn" | "neg" | null; label: string; detail: string } =
+    debtRatio < 30
+      ? { tone: null, label: "", detail: "" }
+      : debtRatio < 50
+        ? { tone: "info", label: "Leverage building",
+            detail: "Borrowing rate has a +1.5pp premium. Plenty of headroom; just don't ratchet further." }
+        : debtRatio < 70
+          ? { tone: "warn", label: "High leverage",
+              detail: "Borrowing rate has a +3pp premium and lenders are watching. Consider refinancing or repaying." }
+          : { tone: "neg", label: "Covenant breach",
+              detail: "Debt > 70% of airline value. Borrowing rate +5pp, board is uncomfortable. Repay or refi to lower." };
+
   return (
     <div className="space-y-4">
       <section>
@@ -44,8 +61,24 @@ export function FinancialsPanel() {
           <Row k="Fleet book value" v={fmtMoney(player.fleet.reduce((s, f) => s + f.bookValue, 0))} />
           <Row k="Total debt" v={fmtMoney(player.totalDebtUsd)} tone="neg" />
           <Row k="Airline value" v={fmtMoney(airlineValue)} bold />
-          <Row k="Debt ratio" v={`${debtRatio.toFixed(1)}%`} />
+          <Row k="Debt ratio" v={`${debtRatio.toFixed(1)}%`} tone={covenant.tone === "neg" ? "neg" : undefined} />
         </div>
+        {covenant.tone && (
+          <div
+            className={`mt-2 rounded-md px-3 py-2 text-[0.75rem] leading-relaxed ${
+              covenant.tone === "neg"
+                ? "border border-negative bg-[var(--negative-soft)] text-negative"
+                : covenant.tone === "warn"
+                  ? "border border-warning bg-[var(--warning-soft)] text-warning"
+                  : "border border-line bg-surface-2/40 text-ink-2"
+            }`}
+          >
+            <span className="font-semibold uppercase tracking-wider text-[0.625rem] mr-2">
+              {covenant.label}
+            </span>
+            {covenant.detail}
+          </div>
+        )}
       </section>
 
       <section>

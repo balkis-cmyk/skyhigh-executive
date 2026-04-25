@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -193,7 +193,7 @@ export function WorldMap({
             .filter(Boolean) as React.ReactElement[];
         })}
 
-        {/* Player route arcs */}
+        {/* Player route arcs — base line + animated flow on top */}
         {activeRoutes.map((r) => {
           const a = CITIES_BY_CODE[r.originCode];
           const b = CITIES_BY_CODE[r.destCode];
@@ -207,16 +207,31 @@ export function WorldMap({
               : team.color;
           const positions = greatCirclePath(a.lon, a.lat, b.lon, b.lat, 64);
           return (
-            <Polyline
-              key={r.id}
-              positions={positions}
-              pathOptions={{
-                color,
-                weight: 2.5,
-                opacity: 0.85,
-                lineCap: "round",
-              }}
-            />
+            <Fragment key={r.id}>
+              {/* Base arc */}
+              <Polyline
+                positions={positions}
+                pathOptions={{
+                  color,
+                  weight: 2.5,
+                  opacity: 0.65,
+                  lineCap: "round",
+                }}
+              />
+              {/* Flow overlay — short dashes that march along the path,
+                  giving the illusion of planes traversing the route. */}
+              <Polyline
+                positions={positions}
+                pathOptions={{
+                  color: "#fde047",
+                  weight: 1.6,
+                  opacity: 0.95,
+                  lineCap: "round",
+                  dashArray: "2 14",
+                  className: "sf-route-flow",
+                }}
+              />
+            </Fragment>
           );
         })}
 
