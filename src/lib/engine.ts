@@ -1292,7 +1292,9 @@ export function runQuarterClose(
   let opsDelta = 0;
   for (const k of sliderKeys) {
     const level = next.sliders[k];
-    const streak = next.sliderStreaks[k];
+    // Defensive: persisted saves from older versions may be missing entries
+    // for newer slider keys. Treat missing as a fresh streak at the current level.
+    const streak = next.sliderStreaks[k] ?? { level, quarters: 0 };
     const mult = streak.level === level
       ? streakMultiplier(streak.quarters + 1)
       : 1.0;

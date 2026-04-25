@@ -181,6 +181,15 @@ export interface GameStore extends GameState {
   /** Admin: refund 50% of slot fees on a grounded route for the current quarter (PRD G6). */
   adminGroundStopRefund(routeId: string): void;
 
+  /** Admin: fire a queued deferred event on the player team immediately,
+   *  bypassing its rolled probability. Useful for facilitator-driven plot
+   *  twists in live sessions (PRD §10.7). */
+  adminTriggerDeferred(eventId: string): void;
+
+  /** Admin: shock the market — apply a fuel index spike that decays over
+   *  three quarters. Used for facilitator-driven crises. */
+  adminFuelShock(magnitude: number): void;
+
   /** Start the simulation with pre-seeded demo data (PRD §24). */
   startDemo(): void;
 
@@ -294,18 +303,17 @@ function makeStartingTeam(args: {
 }
 
 function ensureStreaks(t: Team): Team {
-  if (!t.sliderStreaks) return { ...t, sliderStreaks: emptyStreaks() };
-  // Backfill missing customerService streak for pre-v5 saves
-  if (!t.sliderStreaks.customerService) {
-    t = {
-      ...t,
-      sliderStreaks: {
-        ...t.sliderStreaks,
-        customerService: { level: 2, quarters: 0 },
-      },
-    };
+  // Backfill ALL slider streaks defensively. Old saves are missing keys that
+  // newer engine code reads (e.g. customerService, rewards) and would crash on.
+  const empty = emptyStreaks();
+  const merged = { ...empty, ...(t.sliderStreaks ?? {}) };
+  // Make sure each entry is itself a valid {level, quarters} record
+  for (const k of Object.keys(empty) as Array<keyof typeof empty>) {
+    if (!merged[k] || typeof (merged[k] as { level?: unknown }).level !== "number") {
+      merged[k] = empty[k];
+    }
   }
-  return t;
+  return { ...t, sliderStreaks: merged };
 }
 
 export const useGame = create<GameStore>()(
@@ -1541,6 +1549,56 @@ export const useGame = create<GameStore>()(
         toast.info(
           `Slot fee refund · ${route.originCode} → ${route.destCode}`,
           `+${fmtMoneyPlain(refund)} (50% ground-stop refund)`,
+        );
+      },
+
+      // ── Admin: trigger deferred event NOW (plot twist) ─────
+      adminTriggerDeferred: (eventId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return;
+        const event = (player.deferredEvents ?? []).find((e) => e.id === eventId);
+        if (!event || event.resolved) return;
+        let eff: ReturnType<typeof JSON.parse>;
+        try {
+          eff = JSON.parse(event.effectJson);
+        } catch {
+          toast.negative("Cannot parse deferred event effect");
+          return;
+        }
+        const newCash = player.cashUsd + (eff.cash ?? 0);
+        const newBrand = Math.max(0, player.brandPts + (eff.brandPts ?? 0));
+        const newOps = Math.max(0, player.opsPts + (eff.opsPts ?? 0));
+        const newLoyalty = Math.max(0, Math.min(100, player.customerLoyaltyPct + (eff.loyaltyDelta ?? 0)));
+        const newFlags = new Set(player.flags);
+        for (const f of (eff.setFlags ?? [])) newFlags.add(f);
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: newCash,
+            brandPts: newBrand,
+            opsPts: newOps,
+            customerLoyaltyPct: newLoyalty,
+            flags: newFlags,
+            deferredEvents: (t.deferredEvents ?? []).map((e) => e.id === eventId
+              ? { ...e, resolved: true, resolvedOutcome: "triggered" as const, resolvedAtQuarter: s.currentQuarter }
+              : e),
+          }),
+        });
+        toast.warning(
+          `Plot twist · ${event.sourceScenario}-${event.sourceOption} triggered`,
+          event.noteAtQueue ?? "Effects applied immediately",
+        );
+      },
+
+      // ── Admin: fuel shock (multi-quarter market disruption) ─
+      adminFuelShock: (magnitude) => {
+        const s = get();
+        const newIndex = Math.max(50, Math.min(220, s.fuelIndex + magnitude));
+        set({ fuelIndex: newIndex });
+        toast.warning(
+          `Fuel market shock · Δ${magnitude > 0 ? "+" : ""}${magnitude}`,
+          `Fuel index now ${newIndex.toFixed(0)}. All teams pay more this quarter.`,
         );
       },
 

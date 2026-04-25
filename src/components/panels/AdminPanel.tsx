@@ -523,6 +523,72 @@ export function AdminPanel() {
         </div>
       </section>
 
+      {/* Plot twists — fire deferred events NOW (PRD §10.7) */}
+      {(player.deferredEvents ?? []).filter((e) => !e.resolved).length > 0 && (
+        <section>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Plot twists · trigger deferred events
+          </div>
+          <div className="space-y-1.5">
+            {(player.deferredEvents ?? [])
+              .filter((e) => !e.resolved)
+              .sort((a, b) => a.targetQuarter - b.targetQuarter)
+              .map((e) => (
+                <div
+                  key={e.id}
+                  className="flex items-baseline justify-between gap-2 rounded-md border border-line bg-surface-2/50 px-2.5 py-2 text-[0.75rem]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-primary">{e.sourceScenario}</span>
+                      <span className="text-[0.625rem] tabular text-ink-muted">→ Q{e.targetQuarter}</span>
+                      <span className="text-[0.625rem] tabular text-ink-muted">{(e.probability * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="text-ink-2 mt-0.5 truncate">{e.noteAtQueue ?? "(no note)"}</div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      if (confirm(`Trigger ${e.sourceScenario}-${e.sourceOption} now? This applies its effect immediately.`)) {
+                        s.adminTriggerDeferred(e.id);
+                      }
+                    }}
+                  >
+                    Fire
+                  </Button>
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
+
+      {/* Quick world-event buttons */}
+      <section>
+        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+          World event shocks
+        </div>
+        <div className="grid grid-cols-2 gap-1.5 text-[0.75rem]">
+          <Button size="sm" variant="secondary" onClick={() => s.adminFuelShock(30)}>
+            Oil shock +30
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => s.adminFuelShock(-15)}>
+            Oil glut −15
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => useGame.setState({ baseInterestRatePct: s.baseInterestRatePct + 1.5 })}>
+            Rate hike +1.5%
+          </Button>
+          <Button size="sm" variant="secondary"
+            onClick={() => useGame.setState({ baseInterestRatePct: Math.max(0, s.baseInterestRatePct - 1.0) })}>
+            Easing −1.0%
+          </Button>
+        </div>
+        <div className="text-[0.6875rem] text-ink-muted mt-1 leading-relaxed">
+          Use during live-sim moments to test how the player responds under stress.
+        </div>
+      </section>
+
       {/* Slot auction resolver (PRD §10.7) */}
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">

@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { Badge, Button } from "@/components/ui";
-import { SCENARIOS, SCENARIOS_BY_QUARTER } from "@/data/scenarios";
+import { SCENARIOS, SCENARIOS_BY_QUARTER, type OptionEffect, type ScenarioOption } from "@/data/scenarios";
 import { useGame, selectPlayer } from "@/store/game";
 import { cn } from "@/lib/cn";
 import type { Team } from "@/types/game";
+import { fmtMoney } from "@/lib/format";
+import { CheckCircle2, AlertTriangle } from "lucide-react";
 
 export function DecisionsPanel() {
   const s = useGame();
@@ -153,6 +155,132 @@ function ScenarioCard({
           </Button>
         </div>
       )}
+
+      {locked && (() => {
+        const submittedOption = scenario.options.find((o) => o.id === submittedOptionId);
+        if (!submittedOption) return null;
+        return <ConsequenceCard option={submittedOption} />;
+      })()}
     </div>
+  );
+}
+
+/**
+ * Renders the immediate + deferred effects of a chosen option, so the player
+ * sees the boardroom consequences of the choice they just locked in. Tied to
+ * the existing `OptionEffect` schema in src/data/scenarios.ts.
+ */
+function ConsequenceCard({ option }: { option: ScenarioOption }) {
+  const e = option.effect;
+  const hasImmediate = !!(
+    e.cash || e.brandPts || e.opsPts || e.loyaltyDelta ||
+    (e.setFlags && e.setFlags.length > 0)
+  );
+  const deferred = e.deferred;
+  return (
+    <div className="mt-3 pt-3 border-t border-line">
+      <div className="flex items-center gap-1.5 text-[0.6875rem] uppercase tracking-wider text-positive font-semibold mb-2">
+        <CheckCircle2 size={12} /> Boardroom consequence
+      </div>
+      {hasImmediate ? (
+        <div className="rounded-md border border-line bg-surface-2/40 px-3 py-2 space-y-1">
+          <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-0.5">
+            Effects this quarter
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem]">
+            {e.cash !== undefined && e.cash !== 0 && (
+              <Pill tone={e.cash >= 0 ? "positive" : "negative"}>
+                Cash {e.cash >= 0 ? "+" : ""}{fmtMoney(e.cash)}
+              </Pill>
+            )}
+            {e.brandPts !== undefined && e.brandPts !== 0 && (
+              <Pill tone={e.brandPts >= 0 ? "positive" : "negative"}>
+                Brand {e.brandPts >= 0 ? "+" : ""}{e.brandPts}
+              </Pill>
+            )}
+            {e.loyaltyDelta !== undefined && e.loyaltyDelta !== 0 && (
+              <Pill tone={e.loyaltyDelta >= 0 ? "positive" : "negative"}>
+                Loyalty {e.loyaltyDelta >= 0 ? "+" : ""}{e.loyaltyDelta}%
+              </Pill>
+            )}
+            {e.opsPts !== undefined && e.opsPts !== 0 && (
+              <Pill tone={e.opsPts >= 0 ? "positive" : "negative"}>
+                Ops {e.opsPts >= 0 ? "+" : ""}{e.opsPts}
+              </Pill>
+            )}
+            {(e.setFlags ?? []).map((f) => (
+              <Pill key={f} tone="info">{f.replace(/_/g, " ")}</Pill>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="text-[0.75rem] text-ink-muted italic">No immediate effects.</div>
+      )}
+
+      {deferred && (
+        <div className="mt-2 rounded-md border border-warning bg-[var(--warning-soft)] px-3 py-2">
+          <div className="flex items-center gap-1.5 text-[0.625rem] uppercase tracking-wider text-warning font-semibold mb-1">
+            <AlertTriangle size={11} /> Deferred consequence · Q{deferred.quarter}
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.8125rem]">
+            {deferred.probability !== undefined && deferred.probability < 1 && (
+              <span className="text-[0.6875rem] tabular font-mono text-warning font-semibold">
+                {(deferred.probability * 100).toFixed(0)}% chance
+              </span>
+            )}
+            <DeferredEffectSummary effect={deferred.effect} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeferredEffectSummary({ effect }: { effect: OptionEffect }) {
+  const parts: React.ReactNode[] = [];
+  if (effect.cash) {
+    parts.push(
+      <Pill key="cash" tone={effect.cash >= 0 ? "positive" : "negative"}>
+        Cash {effect.cash >= 0 ? "+" : ""}{fmtMoney(effect.cash)}
+      </Pill>,
+    );
+  }
+  if (effect.brandPts) {
+    parts.push(
+      <Pill key="brand" tone={effect.brandPts >= 0 ? "positive" : "negative"}>
+        Brand {effect.brandPts >= 0 ? "+" : ""}{effect.brandPts}
+      </Pill>,
+    );
+  }
+  if (effect.loyaltyDelta) {
+    parts.push(
+      <Pill key="loyalty" tone={effect.loyaltyDelta >= 0 ? "positive" : "negative"}>
+        Loyalty {effect.loyaltyDelta >= 0 ? "+" : ""}{effect.loyaltyDelta}%
+      </Pill>,
+    );
+  }
+  if (effect.opsPts) {
+    parts.push(
+      <Pill key="ops" tone={effect.opsPts >= 0 ? "positive" : "negative"}>
+        Ops {effect.opsPts >= 0 ? "+" : ""}{effect.opsPts}
+      </Pill>,
+    );
+  }
+  if (parts.length === 0) parts.push(<span key="none" className="text-ink-2">No deferred effect</span>);
+  return <>{parts}</>;
+}
+
+function Pill({ tone, children }: { tone: "positive" | "negative" | "info"; children: React.ReactNode }) {
+  const cls =
+    tone === "positive" ? "bg-[var(--positive-soft)] text-positive"
+      : tone === "negative" ? "bg-[var(--negative-soft)] text-negative"
+      : "bg-[var(--info-soft)] text-info";
+  return (
+    <span className={cn(
+      "inline-flex items-center text-[0.6875rem] tabular font-mono px-1.5 py-0.5 rounded",
+      cls,
+    )}>
+      {children}
+    </span>
   );
 }
