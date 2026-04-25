@@ -20,6 +20,7 @@ import { AdminPanel } from "@/components/panels/AdminPanel";
 import { RouteSetupModal } from "@/components/game/RouteSetupModal";
 import { QuarterTimerDriver } from "@/components/game/QuarterTimer";
 import { Toaster } from "@/components/game/Toaster";
+import { useShallow } from "zustand/react/shallow";
 import { useGame, selectPlayer, selectRivals } from "@/store/game";
 import type { City } from "@/types/game";
 import { Button } from "@/components/ui";
@@ -46,7 +47,9 @@ function CanvasInner() {
   const phase = useGame((state) => state.phase);
   const playerTeamId = useGame((state) => state.playerTeamId);
   const player = useGame(selectPlayer);
-  const rivals = useGame(selectRivals);
+  // useShallow so the .filter() in selectRivals doesn't return a fresh array
+  // reference every render and trip the getServerSnapshot infinite-loop guard.
+  const rivals = useGame(useShallow(selectRivals));
   const currentPanel = useUi((s) => s.panel);
 
   // Hydration-aware
