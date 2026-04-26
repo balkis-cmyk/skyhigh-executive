@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Badge, Button, Input, Modal, ModalBody, ModalHeader } from "@/components/ui";
+import { Badge, Button, Input, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { AIRCRAFT, AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { planeImagePath } from "@/lib/aircraft-images";
 import { fmtMoney, fmtAgeYQ, fmtQuarter } from "@/lib/format";
@@ -769,6 +769,13 @@ function SecondaryMarket({
     const t = teams.find((x) => x.id === sellerTeamId);
     return t ? t.name : "rival airline";
   };
+  // Branded confirm — used-aircraft purchases are six- or seven-figure
+  // commitments and were previously a one-tap action straight off a
+  // dense listing row. The confirm summarises age / remaining life /
+  // asking price so the player understands what they're committing to.
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const confirmListing = confirmId ? listings.find((x) => x.id === confirmId) : null;
+  const confirmSpec = confirmListing ? AIRCRAFT_BY_ID[confirmListing.specId] : null;
   if (listings.length === 0) {
     return (
       <div className="text-[0.8125rem] text-ink-muted italic py-8 text-center">
@@ -816,13 +823,79 @@ function SecondaryMarket({
               </div>
             </div>
             <div className="shrink-0">
-              <Button size="sm" variant="primary" onClick={() => onBuy(l.id)}>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => setConfirmId(l.id)}
+                aria-label={`Buy ${spec.name} from ${sellerName(l.sellerTeamId)} for ${fmtMoney(l.askingPriceUsd)}`}
+              >
                 Buy {fmtMoney(l.askingPriceUsd)}
               </Button>
             </div>
           </div>
         );
       })}
+
+      {/* Confirm purchase of used aircraft */}
+      <Modal open={!!confirmListing} onClose={() => setConfirmId(null)}>
+        {confirmListing && confirmSpec && (() => {
+          const ageQ = currentQuarter - confirmListing.manufactureQuarter;
+          const remainingQ = Math.max(0, confirmListing.retirementQuarter - currentQuarter);
+          return (
+            <>
+              <ModalHeader>
+                <h2 className="font-display text-[1.5rem] text-ink">
+                  Buy {confirmSpec.name}?
+                </h2>
+                <p className="text-ink-muted text-[0.8125rem] mt-1">
+                  Pre-owned aircraft transfer immediately. The asking price is
+                  withdrawn from your cash this quarter; the airframe slots
+                  into your fleet at idle and is available for routes from
+                  next quarter onward.
+                </p>
+              </ModalHeader>
+              <ModalBody>
+                <div className="rounded-md border border-line bg-surface p-3 text-[0.8125rem] space-y-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-ink-muted">Asset</span>
+                    <span className="text-ink">{confirmSpec.name}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-ink-muted">Listed by</span>
+                    <span className="text-ink">{sellerName(confirmListing.sellerTeamId)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-ink-muted">Age · remaining life</span>
+                    <span className="tabular font-mono text-ink">
+                      {fmtAgeYQ(ageQ)} · {fmtAgeYQ(remainingQ)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3 border-t border-line pt-1.5 mt-1.5">
+                    <span className="text-ink font-semibold">Asking price</span>
+                    <span className="tabular font-mono text-negative font-semibold">
+                      −{fmtMoney(confirmListing.askingPriceUsd)}
+                    </span>
+                  </div>
+                </div>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="ghost" onClick={() => setConfirmId(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    onBuy(confirmListing.id);
+                    setConfirmId(null);
+                  }}
+                >
+                  Buy · {fmtMoney(confirmListing.askingPriceUsd)}
+                </Button>
+              </ModalFooter>
+            </>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }
