@@ -204,23 +204,64 @@ export function routeDemandPerDay(
   if (!a || !b) return { tourism: 0, business: 0, total: 0, amplifier: 1 };
   const amplifier = Math.min(a.amplifier, b.amplifier);
 
-  const eventA = cityEventImpact(origin, quarter).pct / 100;
-  const eventB = cityEventImpact(dest, quarter).pct / 100;
+  // Per-category event modifiers (tourism / business broken out separately
+  // so a tourism-only news item doesn't inflate business demand and vice
+  // versa). Each NewsItem in `world-news.ts` carries a structured
+  // `modifiers: { city, category, pct, rounds }[]` array — see
+  // `cityEventImpact()` for the rounds-window walker.
+  const evA = cityEventImpact(origin, quarter);
+  const evB = cityEventImpact(dest, quarter);
+  const tourismEventA = evA.tourism / 100;
+  const tourismEventB = evB.tourism / 100;
+  const businessEventA = evA.business / 100;
+  const businessEventB = evB.business / 100;
 
-  // Global Travel Index master multiplier (PRD E6)
-  const travelIdx = (TRAVEL_INDEX[quarter] ?? 100) / 100;
+  // Global Travel Index master multiplier (PRD E6) — news items can
+  // override this via `travelIndex` (e.g. recession/Olympics global pulses).
+  const travelIdx = effectiveTravelIndex(quarter) / 100;
   // Seasonal multiplier (PRD D5)
   const season = seasonalMultiplier(quarter);
 
   const tourism =
-    (cityTourismAtQuarter(a, quarter) * (1 + eventA) +
-     cityTourismAtQuarter(b, quarter) * (1 + eventB)) *
+    (cityTourismAtQuarter(a, quarter) * (1 + tourismEventA) +
+     cityTourismAtQuarter(b, quarter) * (1 + tourismEventB)) *
     amplifier * travelIdx * season.tourism;
   const business =
-    (cityBusinessAtQuarter(a, quarter) * (1 + eventA) +
-     cityBusinessAtQuarter(b, quarter) * (1 + eventB)) *
+    (cityBusinessAtQuarter(a, quarter) * (1 + businessEventA) +
+     cityBusinessAtQuarter(b, quarter) * (1 + businessEventB)) *
     amplifier * travelIdx * season.business;
   return { tourism, business, total: tourism + business, amplifier };
+}
+
+/** Effective Travel Index for a given quarter — defaults to TRAVEL_INDEX
+ *  but is overridden by any news item at that quarter that ships an
+ *  explicit `travelIndex` value (e.g. recession dips, Olympics spikes).
+ *  Multiple overrides at the same quarter are averaged so a +pulse and
+ *  a −pulse on the same round don't unfairly stack. */
+export function effectiveTravelIndex(quarter: number): number {
+  const news = NEWS_BY_QUARTER[quarter] ?? [];
+  const overrides = news
+    .map((n) => n.travelIndex)
+    .filter((v): v is number => typeof v === "number");
+  if (overrides.length === 0) return TRAVEL_INDEX[quarter] ?? 100;
+  const sum = overrides.reduce((a, b) => a + b, 0);
+  return sum / overrides.length;
+}
+
+/** Effective fuel index for a given quarter — defaults to whatever the
+ *  game state holds, but news items with `fuelIndexAtBaseline` (relative
+ *  to 100) hint the engine where the fuel index *should* be after the
+ *  shock. The game state is the truth; this helper exposes the news
+ *  expectation so dashboards can show "fuel news at quarter N expected
+ *  +X% spike" alongside the player's actual current fuel index. */
+export function newsFuelIndexHint(quarter: number): number | null {
+  const news = NEWS_BY_QUARTER[quarter] ?? [];
+  for (const n of news) {
+    if (typeof n.fuelIndexAtBaseline === "number") {
+      return n.fuelIndexAtBaseline;
+    }
+  }
+  return null;
 }
 
 // ─── Pricing multipliers (PRD §5.5 + §17) ──────────────────
@@ -576,12 +617,16 @@ export function computeRouteEconomics(
       return sum + (spec?.cargoTonnes ?? 0);
     }, 0);
     const dailyCapacityT = tonnesPerFlight * route.dailyFrequency;
-    // Cargo demand = min of the two cities' business demand (A4).
+    // Cargo demand = min of the two cities' business demand (A4),
+    // multiplied by per-city cargo-category event modifiers from the
+    // structured news feed (e-commerce booms, port closures, etc.).
     // Cargo-focused doctrine adds 15% on top.
     const cargoFocusBonus = team.marketFocus === "cargo" ? 1.15 : 1.0;
+    const cargoEventA = cityEventImpact(route.originCode, quarter).cargo / 100;
+    const cargoEventB = cityEventImpact(route.destCode, quarter).cargo / 100;
     const cargoDemandT = Math.min(
-      cityBusinessAtQuarter(origin, quarter),
-      cityBusinessAtQuarter(dest, quarter),
+      cityBusinessAtQuarter(origin, quarter) * (1 + cargoEventA),
+      cityBusinessAtQuarter(dest, quarter) * (1 + cargoEventB),
     ) * cargoFocusBonus;
     const dailyTonnes = Math.min(dailyCapacityT, cargoDemandT);
     const occupancy = dailyCapacityT > 0 ? Math.min(0.98, dailyTonnes / dailyCapacityT) : 0;

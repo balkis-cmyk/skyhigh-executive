@@ -7,8 +7,10 @@ import { fmtMoney, fmtPct, fmtQuarter } from "@/lib/format";
 import {
   brandRating,
   computeAirlineValue,
+  effectiveTravelIndex,
   fleetCount,
 } from "@/lib/engine";
+import { cityEventImpact, activeNewsAtQuarter } from "@/lib/city-events";
 import { cn } from "@/lib/cn";
 import { TrendingUp, TrendingDown, Plane, Users, BarChart3, Wallet } from "lucide-react";
 
@@ -241,14 +243,146 @@ export function DashboardPanel() {
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
           Market vitals
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <SnapCard label="Fuel index" value={fuelIndex.toFixed(0)} sub="100 = baseline" />
+          <SnapCard
+            label="Travel index"
+            value={effectiveTravelIndex(currentQuarter).toFixed(0)}
+            sub="global demand multiplier"
+          />
           <SnapCard label="Base rate" value={`${baseInterestRatePct.toFixed(1)}%`} sub="commercial debt" />
           <SnapCard label="Brand grade" value={grade.grade} sub={`Brand ${player.brandPts.toFixed(0)}/100 · Ops ${player.opsPts.toFixed(0)}/100`} color={grade.color} />
         </div>
       </section>
+
+      {/* ── 7. Active demand modifiers (news in effect on YOUR network) ── */}
+      <ActiveModifiersSection player={player} currentQuarter={currentQuarter} />
     </div>
   );
+}
+
+/** Surface the per-city demand modifiers currently active across the
+ *  player's hub + secondary hubs + every endpoint of an active route.
+ *  This is the dashboard's window into the structured news engine —
+ *  the player can see "Mumbai +25% tourism for 2 more rounds because
+ *  IPL is on" without having to dig through the news log. */
+function ActiveModifiersSection({
+  player,
+  currentQuarter,
+}: {
+  player: NonNullable<ReturnType<typeof selectPlayer>>;
+  currentQuarter: number;
+}) {
+  // Collect every city in the player's network.
+  const networkCodes = useMemo(() => {
+    const s = new Set<string>([player.hubCode, ...player.secondaryHubCodes]);
+    for (const r of player.routes) {
+      if (r.status !== "closed") {
+        s.add(r.originCode);
+        s.add(r.destCode);
+      }
+    }
+    return Array.from(s);
+  }, [player]);
+
+  // For each network city, get the current per-category impact. Skip
+  // cities with zero net effect so the panel doesn't show noise.
+  const rows = useMemo(() => {
+    const out: {
+      code: string;
+      tourism: number;
+      business: number;
+      cargo: number;
+      total: number;
+    }[] = [];
+    for (const code of networkCodes) {
+      const im = cityEventImpact(code, currentQuarter);
+      const total = im.tourism + im.business + im.cargo;
+      if (total === 0 && im.tourism === 0 && im.business === 0 && im.cargo === 0) continue;
+      out.push({
+        code,
+        tourism: im.tourism,
+        business: im.business,
+        cargo: im.cargo,
+        total,
+      });
+    }
+    return out.sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  }, [networkCodes, currentQuarter]);
+
+  const activeNews = useMemo(() => activeNewsAtQuarter(currentQuarter), [currentQuarter]);
+
+  if (rows.length === 0) {
+    return (
+      <section>
+        <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+          Active demand modifiers
+        </div>
+        <div className="rounded-md border border-line bg-surface p-3 text-[0.75rem] text-ink-muted italic">
+          No structured news is shifting demand on your current network this round.
+          {" "}
+          {activeNews.length > 0 && (
+            <span>{activeNews.length} headline{activeNews.length === 1 ? "" : "s"} in effect — open the News tab.</span>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2 flex items-center gap-2">
+        <span>Active demand modifiers · {fmtQuarter(currentQuarter)}</span>
+        <span className="h-px flex-1 bg-line" />
+        <span className="tabular text-ink-muted">{rows.length} cit{rows.length === 1 ? "y" : "ies"}</span>
+      </div>
+      <div className="rounded-md border border-line bg-surface overflow-hidden">
+        <table className="w-full text-[0.75rem]">
+          <thead>
+            <tr className="bg-surface-2 text-[0.625rem] uppercase tracking-wider text-ink-muted">
+              <th className="text-left px-3 py-1.5 font-semibold">City</th>
+              <th className="text-right px-2 py-1.5 font-semibold">Tourism</th>
+              <th className="text-right px-2 py-1.5 font-semibold">Business</th>
+              <th className="text-right px-2 py-1.5 font-semibold">Cargo</th>
+              <th className="text-right px-3 py-1.5 font-semibold">Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.code} className="border-t border-line">
+                <td className="px-3 py-1.5 font-mono tabular text-ink">{r.code}</td>
+                <td className={cn("px-2 py-1.5 text-right tabular font-mono", deltaClass(r.tourism))}>
+                  {fmtDelta(r.tourism)}
+                </td>
+                <td className={cn("px-2 py-1.5 text-right tabular font-mono", deltaClass(r.business))}>
+                  {fmtDelta(r.business)}
+                </td>
+                <td className={cn("px-2 py-1.5 text-right tabular font-mono", deltaClass(r.cargo))}>
+                  {fmtDelta(r.cargo)}
+                </td>
+                <td className={cn("px-3 py-1.5 text-right tabular font-mono font-semibold", deltaClass(r.total))}>
+                  {fmtDelta(r.total)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[0.625rem] text-ink-muted italic mt-1.5">
+        Per-city demand shift driven by world news (current + back-dated multi-round events).
+        Dashes mean no modifier in that category.
+      </p>
+    </section>
+  );
+}
+
+function fmtDelta(n: number): string {
+  if (n === 0) return "—";
+  return `${n > 0 ? "+" : ""}${n}%`;
+}
+function deltaClass(n: number): string {
+  if (n === 0) return "text-ink-muted";
+  return n > 0 ? "text-positive" : "text-negative";
 }
 
 function aggregate(rows: Array<{ revenue: number; costs: number; netProfit: number }>) {

@@ -208,6 +208,28 @@ export type NewsImpact =
   | "fuel"
   | "none";
 
+/** Demand category a news modifier targets. "all" hits every category. */
+export type NewsCategory =
+  | "tourism"
+  | "business"
+  | "cargo"
+  | "all";
+
+/** Structured per-city demand modifier parsed from master ref `→ CITY: ±N%
+ *  category · X rounds` lines. The engine applies these deterministically
+ *  when computing route demand instead of regex-scraping the headline text. */
+export interface NewsModifier {
+  /** City code (e.g. "DXB") or "ALL" for a global modifier. */
+  city: string;
+  /** Demand category being moved. */
+  category: NewsCategory;
+  /** Percentage delta — +25 means +25% over baseline, -40 means down 40%. */
+  pct: number;
+  /** Rounds the modifier persists for. 1 = current round only.
+   *  99 = permanent for the rest of the campaign. */
+  rounds: number;
+}
+
 export interface NewsItem {
   id: string;
   quarter: number;
@@ -215,6 +237,14 @@ export interface NewsItem {
   impact: NewsImpact;
   headline: string;
   detail: string;
+  /** Per-city demand modifiers attached to this headline. The engine
+   *  scans the active set every round and applies them to route demand. */
+  modifiers?: NewsModifier[];
+  /** Global fuel-index delta — % of baseline (e.g. -22 = fuel index 78). */
+  fuelIndexAtBaseline?: number;
+  /** Global travel-index delta — multiplies overall demand (e.g. 110 =
+   *  +10% baseline demand worldwide for the round). */
+  travelIndex?: number;
 }
 
 // ─── Team / Airline ──────────────────────────────────────

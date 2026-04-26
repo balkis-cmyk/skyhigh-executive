@@ -103,16 +103,45 @@ function NewsCard({
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // Find network cities touched by this specific headline.
+  // Find network cities touched by this specific headline. Show the
+  // per-city modifier pct that THIS news contributes (not the blended
+  // total across all current-quarter news), so a +25% MXP modifier on
+  // an Expo headline is what shows even if a separate Olympics +20%
+  // modifier is also active on the same city.
   const affectedCities = useMemo(() => {
-    const out: { code: string; name: string; pct: number }[] = [];
-    for (const code of networkCodes) {
-      const impact = cityEventImpact(code, item.quarter);
-      if (impact.pct === 0) continue;
-      if (!impact.items.some((it) => it.id === item.id)) continue;
-      const city = CITIES_BY_CODE[code];
-      if (!city) continue;
-      out.push({ code, name: city.name, pct: impact.pct });
+    const out: { code: string; name: string; pct: number; cat?: string }[] = [];
+    if (item.modifiers && item.modifiers.length > 0) {
+      // Structured path: walk this news's own modifiers, filter to network.
+      const byCity = new Map<string, { pct: number; cat?: string }>();
+      for (const m of item.modifiers) {
+        if (!networkCodes.has(m.city)) continue;
+        const prev = byCity.get(m.city);
+        // Same city + multiple categories: stack and label as "mixed".
+        if (prev) {
+          byCity.set(m.city, {
+            pct: prev.pct + m.pct,
+            cat: prev.cat === m.category ? prev.cat : "mixed",
+          });
+        } else {
+          byCity.set(m.city, { pct: m.pct, cat: m.category });
+        }
+      }
+      for (const [code, { pct, cat }] of byCity) {
+        const city = CITIES_BY_CODE[code];
+        if (!city) continue;
+        out.push({ code, name: city.name, pct, cat });
+      }
+    } else {
+      // Legacy fallback: rely on cityEventImpact() detecting the headline
+      // (regex / region match) and surface its blended pct.
+      for (const code of networkCodes) {
+        const impact = cityEventImpact(code, item.quarter);
+        if (impact.pct === 0) continue;
+        if (!impact.items.some((it) => it.id === item.id)) continue;
+        const city = CITIES_BY_CODE[code];
+        if (!city) continue;
+        out.push({ code, name: city.name, pct: impact.pct });
+      }
     }
     return out.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
   }, [item, networkCodes]);
@@ -216,6 +245,11 @@ function NewsCard({
                     <span className="flex items-center gap-1.5 min-w-0">
                       <span className="font-mono text-[0.6875rem] text-ink-muted">{c.code}</span>
                       <span className="text-[0.75rem] text-ink truncate">{c.name}</span>
+                      {c.cat && c.cat !== "all" && (
+                        <span className="text-[0.5625rem] uppercase tracking-wider text-ink-muted shrink-0">
+                          {c.cat}
+                        </span>
+                      )}
                     </span>
                     <span className={cn(
                       "tabular font-mono text-[0.6875rem] font-semibold shrink-0",
@@ -226,6 +260,11 @@ function NewsCard({
                   </div>
                 ))}
               </div>
+              {item.modifiers && item.modifiers.some((m) => m.rounds > 1) && (
+                <p className="text-[0.6875rem] text-ink-muted italic mt-2">
+                  Demand effect persists for {Math.max(...item.modifiers.map((m) => m.rounds))} rounds from when this news fired.
+                </p>
+              )}
             </div>
           ) : (
             <div className="pt-2 border-t border-line/60 text-[0.75rem] text-ink-muted italic">

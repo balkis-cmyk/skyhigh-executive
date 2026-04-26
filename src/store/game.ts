@@ -29,6 +29,7 @@ import {
   loadSnapshot as snapLoad,
   deleteSnapshot as snapDelete,
 } from "@/lib/snapshots";
+import { newsFuelIndexHint } from "@/lib/engine";
 import type {
   AirportLease,
   CabinConfig,
@@ -2361,14 +2362,25 @@ export const useGame = create<GameStore>()(
           );
         }
 
+        // Fuel index drift — if next quarter has a fuel news event with
+        // an explicit fuelIndexAtBaseline target, drift 70% of the way
+        // toward that target plus a small random walk. Otherwise pure
+        // random walk like before. This keeps the structured news as
+        // the canonical fuel driver while preserving emergent variance.
+        const nextQ = s.currentQuarter + 1;
+        const fuelHint = newsFuelIndexHint(nextQ);
+        const randomDrift = (Math.random() - 0.5) * 10;
+        const newFuel = fuelHint != null
+          ? s.fuelIndex + (fuelHint - s.fuelIndex) * 0.7 + randomDrift
+          : s.fuelIndex + randomDrift;
+
         set({
           teams: teamsWithAwards,
           cargoContracts: updatedCargoContracts,
           lastCloseResult: result,
           phase: "quarter-closing",
           airportSlots: slotsAfterAuction,
-          // Fuel index drifts
-          fuelIndex: Math.max(70, Math.min(160, s.fuelIndex + (Math.random() - 0.5) * 10)),
+          fuelIndex: Math.max(50, Math.min(220, newFuel)),
         });
       },
 
@@ -2382,9 +2394,12 @@ export const useGame = create<GameStore>()(
         const nextQ = s.currentQuarter + 1;
 
         // PRD G4 — 787 Dreamliner delivery delay event.
-        // After the gameplay-tuning shift, 787-8 unlocks at round 12,
-        // so the delay event fires at round 13 (one round after unlock)
-        // and pushes any round-12 orders back by 2 rounds.
+        // 787-8 unlocks at round 12 (Q4 2017). The delay event fires at
+        // round 13 (Q1 2018) and pushes any round-12 orders to round 15
+        // (Q3 2018) — a 3-round slip, matching the master reference doc:
+        //   R12 → R15 ("first delayed deliveries finally arrive").
+        // The R13 delay news + R15 delivery confirmation news already
+        // ship in src/data/world-news.ts.
         let delayedTeams = s.teams;
         if (nextQ === 13) {
           let delayedCount = 0;
@@ -2393,7 +2408,7 @@ export const useGame = create<GameStore>()(
             fleet: t.fleet.map((f) => {
               if (f.specId === "B787-8" && f.status === "ordered" && f.purchaseQuarter === 12) {
                 delayedCount += 1;
-                return { ...f, purchaseQuarter: 14 };
+                return { ...f, purchaseQuarter: 15 };
               }
               return f;
             }),
@@ -2401,7 +2416,7 @@ export const useGame = create<GameStore>()(
           if (delayedCount > 0) {
             toast.warning(
               `Boeing 787 Dreamliner delivery delay`,
-              `${delayedCount} aircraft pushed back 2 rounds due to manufacturing issues`,
+              `${delayedCount} aircraft pushed back to R15 due to manufacturing issues`,
             );
           }
         }
