@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { Badge, Button, Card, CardBody, Input } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
@@ -8,7 +8,14 @@ import { AdminPanel } from "@/components/panels/AdminPanel";
 import { fmtMoney, fmtQuarter } from "@/lib/format";
 import { computeAirlineValue, brandRating, fleetCount } from "@/lib/engine";
 import { cn } from "@/lib/cn";
-import { ArrowLeft, Plane, Users, Settings2, Trophy, Key, Mic } from "lucide-react";
+import { ArrowLeft, Plane, Users, Settings2, Trophy, Key, Mic, Save, Download, Upload, RotateCcw, Trash2, Lock, Unlock } from "lucide-react";
+import {
+  listSnapshots,
+  exportSnapshotJson,
+  importSnapshotJson,
+  type SnapshotMeta,
+} from "@/lib/snapshots";
+import { toast } from "@/store/toasts";
 import { LiveSimForm } from "@/components/game/LiveSimForm";
 import type { Team } from "@/types/game";
 
@@ -28,7 +35,7 @@ export default function FacilitatorPage() {
   const player = selectPlayer(s);
   const setActiveTeam = useGame((g) => g.setActiveTeam);
 
-  const [section, setSection] = useState<"teams" | "admin" | "leaderboard" | "session" | "livesims">("session");
+  const [section, setSection] = useState<"teams" | "admin" | "leaderboard" | "session" | "livesims" | "saves">("session");
 
   return (
     <main className="flex-1 flex flex-col bg-surface-2/30">
@@ -89,6 +96,13 @@ export default function FacilitatorPage() {
             sub="L0–L7 outcomes"
           />
           <NavItem
+            active={section === "saves"}
+            onClick={() => setSection("saves")}
+            Icon={Save}
+            label="Saves"
+            sub="Snapshots & restore"
+          />
+          <NavItem
             active={section === "admin"}
             onClick={() => setSection("admin")}
             Icon={Settings2}
@@ -135,6 +149,7 @@ export default function FacilitatorPage() {
               </CardBody>
             </Card>
           )}
+          {section === "saves" && <SavesView />}
           {section === "admin" && s.teams.length > 0 && (
             <Card>
               <CardBody>
@@ -159,8 +174,11 @@ export default function FacilitatorPage() {
 
 function SessionView() {
   const sessionCode = useGame((s) => s.sessionCode);
+  const sessionLocked = useGame((s) => s.sessionLocked);
   const sessionSlots = useGame((s) => s.sessionSlots);
   const startSession = useGame((s) => s.startFacilitatedSession);
+  const setSessionLocked = useGame((s) => s.setSessionLocked);
+  const rebroadcastSessionCode = useGame((s) => s.rebroadcastSessionCode);
   const [seatCount, setSeatCount] = useState(5);
 
   const claimed = sessionSlots.filter((x) => x.claimed).length;
@@ -241,6 +259,34 @@ function SessionView() {
                 <span className="font-mono text-ink">/join</span>{" "}
                 and enter this code along with their company name and hub.
               </div>
+            </div>
+
+            {/* Session controls — lock toggle + reissue. Locked sessions
+                still allow reconnects (a player whose computer dropped
+                can rejoin by entering their original company name) but
+                refuse new seat claims. */}
+            <div className="flex items-center gap-2 mb-4 flex-wrap">
+              <Button
+                variant={sessionLocked ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setSessionLocked(!sessionLocked)}
+              >
+                {sessionLocked ? <Lock size={13} className="mr-1.5" /> : <Unlock size={13} className="mr-1.5" />}
+                {sessionLocked ? "Session locked" : "Lock session"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => rebroadcastSessionCode()}
+                title="Generate a new join code. Existing players keep their teams; new players use the new code."
+              >
+                Reissue code
+              </Button>
+              <span className="text-[0.6875rem] text-ink-muted leading-relaxed flex-1 min-w-[180px]">
+                {sessionLocked
+                  ? "Locked — only existing players can reconnect (by their original company name)."
+                  : "Unlocked — new players can claim any open seat. Lock once your cohort is in to prevent strays."}
+              </span>
             </div>
 
             <div className="space-y-1.5">
@@ -439,6 +485,249 @@ function Row({ k, v, bold = false }: { k: string; v: string; bold?: boolean }) {
     <div className="flex items-baseline justify-between">
       <span className="text-ink-muted text-[0.6875rem] uppercase tracking-wider">{k}</span>
       <span className={cn("tabular font-mono", bold ? "text-ink font-semibold" : "text-ink-2")}>{v}</span>
+    </div>
+  );
+}
+
+/**
+ * Quarter-snapshot facilitator surface.
+ *
+ * Lists every snapshot in localStorage (auto-saved at the start of each
+ * round, plus any manual saves) and exposes Restore / Export / Import /
+ * Delete. Restore replaces the live game state with the snapshot's
+ * payload; Export downloads the JSON for archival; Import lets the
+ * facilitator load a previously-exported JSON, useful if the localStorage
+ * was wiped or the cohort moved to a new machine.
+ */
+function SavesView() {
+  const saveQuarterSnapshot = useGame((s) => s.saveQuarterSnapshot);
+  const restoreQuarterSnapshot = useGame((s) => s.restoreQuarterSnapshot);
+  const deleteQuarterSnapshot = useGame((s) => s.deleteQuarterSnapshot);
+  const currentQuarter = useGame((s) => s.currentQuarter);
+  const phase = useGame((s) => s.phase);
+
+  const [snapshots, setSnapshots] = useState<SnapshotMeta[]>(() => listSnapshots());
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [confirmRestoreId, setConfirmRestoreId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function refresh() {
+    setSnapshots(listSnapshots());
+  }
+
+  function handleManualSave() {
+    saveQuarterSnapshot();
+    toast.accent("Snapshot saved", `Game saved at ${fmtQuarter(currentQuarter)}.`);
+    refresh();
+  }
+
+  function handleRestore(id: string) {
+    setPendingId(id);
+    const r = restoreQuarterSnapshot(id);
+    setPendingId(null);
+    if (!r.ok) {
+      toast.negative("Restore failed", r.error ?? "Unknown error.");
+    } else {
+      refresh();
+      setConfirmRestoreId(null);
+    }
+  }
+
+  function handleDelete(id: string) {
+    deleteQuarterSnapshot(id);
+    refresh();
+    toast.info("Snapshot deleted", "Removed from local storage.");
+  }
+
+  function handleExport(id: string) {
+    const json = exportSnapshotJson(id);
+    if (!json) {
+      toast.negative("Export failed", "Snapshot couldn't be read from storage.");
+      return;
+    }
+    const meta = snapshots.find((s) => s.id === id);
+    const filename = `skyforce-${meta?.quarterLabel?.replace(/\s+/g, "-").toLowerCase() ?? id}.json`;
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.accent("Snapshot exported", filename);
+  }
+
+  function handleImport(file: File) {
+    file.text().then((text) => {
+      const r = importSnapshotJson(text);
+      if (!r.ok) {
+        toast.negative("Import failed", r.error);
+        return;
+      }
+      refresh();
+      toast.accent("Snapshot imported", r.meta.quarterLabel);
+    });
+  }
+
+  return (
+    <div className="space-y-4 max-w-3xl">
+      <header>
+        <h1 className="font-display text-[1.75rem] text-ink mb-1">Game saves</h1>
+        <p className="text-ink-2 text-[0.9375rem] leading-relaxed">
+          One snapshot per round, auto-saved when each round begins. Use
+          <span className="font-medium text-ink"> Restore</span> to roll the
+          game back to that exact moment — useful for re-syncing a cohort
+          after a disconnection or replaying a critical decision.
+        </p>
+      </header>
+
+      <Card>
+        <CardBody>
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleManualSave}
+              disabled={phase === "idle"}
+            >
+              <Save size={13} className="mr-1.5" />
+              Save current state
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload size={13} className="mr-1.5" />
+              Import JSON
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleImport(f);
+                e.target.value = "";
+              }}
+            />
+            <span className="text-[0.6875rem] text-ink-muted ml-auto">
+              {snapshots.length} snapshot{snapshots.length === 1 ? "" : "s"}
+            </span>
+          </div>
+
+          {snapshots.length === 0 ? (
+            <div className="text-[0.875rem] text-ink-muted italic py-8 text-center rounded-md border border-dashed border-line">
+              No snapshots yet. They auto-save at the start of each round, or
+              click <strong className="text-ink">Save current state</strong> above
+              to take one now.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {snapshots.map((m) => (
+                <div
+                  key={m.id}
+                  className="rounded-md border border-line p-3 flex items-center gap-3 hover:bg-surface-hover"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-[0.8125rem] text-ink font-semibold">
+                        {m.quarterLabel}
+                      </span>
+                      <span className="text-[0.6875rem] text-ink-muted">
+                        Round {m.quarter}/40
+                      </span>
+                      {m.quarter === currentQuarter && (
+                        <Badge tone="primary">Current</Badge>
+                      )}
+                    </div>
+                    <div className="text-[0.75rem] text-ink-muted mt-0.5 truncate">
+                      {m.label}
+                    </div>
+                    <div className="text-[0.625rem] text-ink-muted/70 mt-0.5">
+                      Saved {new Date(m.savedAt).toLocaleString()} · {m.teamCount} team{m.teamCount === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => setConfirmRestoreId(m.id)}
+                      disabled={pendingId === m.id}
+                      className="px-2 py-1 rounded-md border border-line text-[0.75rem] hover:bg-[var(--accent-soft)] hover:border-accent flex items-center gap-1 disabled:opacity-50"
+                      title="Restore this snapshot — replaces live game state"
+                    >
+                      <RotateCcw size={11} /> Restore
+                    </button>
+                    <button
+                      onClick={() => handleExport(m.id)}
+                      className="px-2 py-1 rounded-md border border-line text-[0.75rem] hover:bg-surface-hover flex items-center gap-1"
+                      title="Download this snapshot as JSON"
+                    >
+                      <Download size={11} /> Export
+                    </button>
+                    <button
+                      onClick={() => handleDelete(m.id)}
+                      className="px-2 py-1 rounded-md border border-line text-[0.75rem] hover:bg-[var(--negative-soft)] hover:border-negative flex items-center gap-1 text-ink-muted hover:text-negative"
+                      title="Delete this snapshot"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardBody>
+      </Card>
+
+      <p className="text-[0.75rem] text-ink-muted leading-relaxed">
+        Snapshots live in your browser&apos;s local storage. To move a save
+        between machines, export it as JSON and import it on the new
+        machine. The schema is versioned — saves from incompatible builds
+        are rejected at import time.
+      </p>
+
+      {/* Restore confirmation modal — restoring a snapshot is destructive
+          (replaces the live game state) so we make the player confirm. */}
+      {confirmRestoreId && (() => {
+        const meta = snapshots.find((m) => m.id === confirmRestoreId);
+        if (!meta) return null;
+        return (
+          <div
+            className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
+            onClick={() => setConfirmRestoreId(null)}
+          >
+            <div
+              className="rounded-lg bg-surface border border-line shadow-2xl p-5 max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-display text-[1.25rem] text-ink mb-2">
+                Restore {meta.quarterLabel}?
+              </h3>
+              <p className="text-[0.875rem] text-ink-2 leading-relaxed mb-4">
+                This replaces the current game state with the snapshot taken at{" "}
+                <strong className="text-ink">{meta.quarterLabel}</strong>.
+                Every team rolls back to where they were at the start of that
+                round. Subsequent rounds are wiped from the live state but
+                their snapshots stay in this list.
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setConfirmRestoreId(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => handleRestore(meta.id)}
+                  disabled={pendingId === meta.id}
+                >
+                  Restore game
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

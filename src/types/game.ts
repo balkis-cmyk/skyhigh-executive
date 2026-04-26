@@ -420,6 +420,10 @@ export interface GameState {
    *  on /join along with their company name to take a seat. Null when no
    *  facilitated session is active. */
   sessionCode: string | null;
+  /** When true, the facilitator has locked the session — no NEW seats
+   *  can be claimed via /join. Existing players can still reconnect by
+   *  re-entering the same company name (rejoin path). Default false. */
+  sessionLocked: boolean;
   /** Slots reserved by the facilitator for players to claim. Each entry
    *  represents an unclaimed seat — once a player joins with the session
    *  code, one of these slots binds to their team. */

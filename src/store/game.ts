@@ -23,6 +23,11 @@ import {
 import { toast } from "./toasts";
 import { fmtQuarter, TOTAL_GAME_ROUNDS } from "@/lib/format";
 import { planBotAircraftOrder, planBotRoutes } from "@/lib/ai-bots";
+import {
+  saveSnapshot as snapSave,
+  loadSnapshot as snapLoad,
+  deleteSnapshot as snapDelete,
+} from "@/lib/snapshots";
 import type {
   AirportLease,
   CabinConfig,
@@ -167,6 +172,22 @@ export interface GameStore extends GameState {
   closeQuarter(): void;
   advanceToNext(): void;
   resetGame(): void;
+
+  /** Quarter-versioned saves. The auto-save fires at the start of every
+   *  new round; the facilitator can also trigger saves manually. Each
+   *  snapshot carries the entire persisted game state so a restore
+   *  fully resyncs the cohort to that moment. See lib/snapshots.ts. */
+  saveQuarterSnapshot(): void;
+  restoreQuarterSnapshot(snapshotId: string): { ok: boolean; error?: string };
+  deleteQuarterSnapshot(snapshotId: string): void;
+  /** Re-issue the session code without creating a new game state.
+   *  Players reconnecting use the new code; existing saved snapshots
+   *  are preserved. Useful after a facilitator restores a snapshot. */
+  rebroadcastSessionCode(): { code: string };
+  /** Lock the session so no NEW seats can be claimed. Existing players
+   *  can still reconnect using their company name. Toggled on by the
+   *  facilitator once the cohort has joined. */
+  setSessionLocked(locked: boolean): void;
 
   /** Facilitator-only: switch which team the main UI views as. Pivots
    *  `playerTeamId` so all selectors that derive from it follow the
@@ -429,6 +450,7 @@ export const useGame = create<GameStore>()(
       worldCupHostCode: null,
       olympicHostCode: null,
       sessionCode: null,
+      sessionLocked: false,
       sessionSlots: [],
 
       startNewGame: (args) => {
@@ -2519,11 +2541,31 @@ export const useGame = create<GameStore>()(
           quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining !== null ? 1800 : null,
           quarterTimerPaused: false,
         });
-        // Player-facing label: "Round 10/20" headline with the calendar
-        // quarter as the detail line. The internal round number is Q1..Q20;
-        // calendar quarters are Q1 2026..Q4 2030 derived from that.
+
+        // Auto-snapshot at the start of every new round. Stored in a
+        // separate localStorage namespace so the facilitator can roll
+        // back, re-sync disconnected players, or export an archive
+        // copy of any past round. Saving AFTER the set() above means
+        // the snapshot represents the freshly-advanced state — i.e.
+        // "the game at the start of round nextQ". One snapshot per
+        // round (re-saving same round overwrites).
+        try {
+          get().saveQuarterSnapshot();
+        } catch (err) {
+          // Auto-save must never break the game flow. Surface a
+          // soft warning if it failed but keep the round advancing.
+          console.error("[snapshots] auto-save failed", err);
+          toast.warning(
+            "Save failed",
+            "Could not write a snapshot for this round. Game continues.",
+          );
+        }
+
+        // Player-facing label: "Round 13/40" headline with the calendar
+        // quarter as the detail line. Internal round numbers are 1..40;
+        // calendar quarters are Q1 2015..Q4 2024 derived from that.
         toast.accent(
-          `Round ${nextQ}/20`,
+          `Round ${nextQ}/${TOTAL_GAME_ROUNDS}`,
           fmtQuarter(nextQ),
         );
       },
@@ -2559,9 +2601,40 @@ export const useGame = create<GameStore>()(
         if (!s.sessionCode || s.sessionCode !== code.trim()) {
           return { ok: false, error: "Code doesn't match the active session." };
         }
-        if (!companyName.trim()) {
+        const trimmedName = companyName.trim();
+        if (!trimmedName) {
           return { ok: false, error: "Pick a company name." };
         }
+
+        // ── Reconnect path ─────────────────────────────────────
+        // If a seat is already claimed under THIS company name, treat
+        // the join as a reconnect. We don't allocate a new team —
+        // just pivot `playerTeamId` so this browser binds back to
+        // the existing team. This is what fixes the "I refreshed and
+        // lost my airline" scenario.
+        const existingSeat = s.sessionSlots.find(
+          (x) => x.claimed && x.companyName?.toLowerCase() === trimmedName.toLowerCase(),
+        );
+        if (existingSeat && existingSeat.teamId) {
+          const team = s.teams.find((t) => t.id === existingSeat.teamId);
+          if (team) {
+            set({ playerTeamId: team.id });
+            toast.accent("Reconnected", `Welcome back, ${team.name}.`);
+            return { ok: true };
+          }
+          // Seat record exists but team is missing → corrupted state.
+          // Fall through and let them claim a fresh seat below.
+        }
+
+        // ── Lock check (after reconnect path so existing players
+        //    can always rejoin even when locked) ──
+        if (s.sessionLocked) {
+          return {
+            ok: false,
+            error: "Session is locked — no new seats can be claimed. Use the company name you joined with originally to reconnect.",
+          };
+        }
+
         const seat = s.sessionSlots.find((x) => !x.claimed);
         if (!seat) {
           return { ok: false, error: "All seats already claimed for this session." };
@@ -2579,6 +2652,15 @@ export const useGame = create<GameStore>()(
           return {
             ok: false,
             error: `${hubCode} is already ${hubTaken.name}'s hub. Pick another city — no two teams may share a hub.`,
+          };
+        }
+        // Reject duplicate names — a new player can't use a company
+        // name that's already in use (other than via the reconnect
+        // path above, which short-circuits earlier).
+        if (s.teams.some((t) => t.name.toLowerCase() === trimmedName.toLowerCase())) {
+          return {
+            ok: false,
+            error: `"${trimmedName}" is already taken in this session. Pick a different name, or — if you're rejoining — use the exact name you joined with originally.`,
           };
         }
         // Claim the seat: create a team for this company and bind it.
@@ -2727,7 +2809,113 @@ export const useGame = create<GameStore>()(
           secondHandListings: [],
           cargoContracts: [],
           airportSlots: {},
+          sessionCode: null,
+          sessionLocked: false,
+          sessionSlots: [],
         });
+      },
+
+      // ── Quarter snapshots (V1.5: rollback + reconnect resync) ──
+      saveQuarterSnapshot: () => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        const ctx = player
+          ? `${s.teams.length} team${s.teams.length === 1 ? "" : "s"} · ${player.code} ${fmtMoneyPlain(player.cashUsd)}`
+          : `${s.teams.length} team${s.teams.length === 1 ? "" : "s"}`;
+        // Build the same payload shape that the persist's `partialize`
+        // returns so a restore is byte-compatible with the rehydration
+        // pipeline. flags get serialized as arrays (Sets don't survive
+        // JSON), matching the partialize convention.
+        const persistPayload = {
+          phase: s.phase,
+          currentQuarter: s.currentQuarter,
+          fuelIndex: s.fuelIndex,
+          baseInterestRatePct: s.baseInterestRatePct,
+          teams: s.teams.map((t) => ({
+            ...t,
+            flags: Array.from(t.flags) as unknown as Set<string>,
+          })),
+          playerTeamId: s.playerTeamId,
+          quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining,
+          quarterTimerPaused: s.quarterTimerPaused,
+          secondHandListings: s.secondHandListings,
+          cargoContracts: s.cargoContracts,
+          airportSlots: s.airportSlots,
+          worldCupHostCode: s.worldCupHostCode,
+          olympicHostCode: s.olympicHostCode,
+          sessionCode: s.sessionCode,
+          sessionLocked: s.sessionLocked,
+          sessionSlots: s.sessionSlots,
+        };
+        snapSave({
+          quarter: s.currentQuarter,
+          state: persistPayload,
+          contextLabel: ctx,
+          quarterLabel: fmtQuarter(s.currentQuarter),
+          teamCount: s.teams.length,
+        });
+      },
+
+      restoreQuarterSnapshot: (snapshotId) => {
+        const payload = snapLoad(snapshotId);
+        if (!payload) {
+          return { ok: false, error: "Snapshot not found or unreadable." };
+        }
+        // The state shape matches the persist partialize, so we can
+        // apply it via the same rehydration path the store already
+        // uses. We do an in-place merge into the live store + run the
+        // post-rehydrate fixups (flag Set conversion, slot backfill,
+        // etc) by invoking a fresh hydrate.
+        type Persisted = ReturnType<typeof get>;
+        const restored = payload.state as Partial<Persisted>;
+        try {
+          // Convert flags arrays → Sets on each team (mirror of the
+          // onRehydrateStorage hook, since we're skipping Zustand's
+          // built-in rehydrate for this in-place restore).
+          const teams = (restored.teams ?? []).map((t) => ({
+            ...t,
+            flags: new Set(
+              Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? []),
+            ),
+          }));
+          set({
+            ...restored,
+            teams,
+            // Reset transient UI state — a restore is a hard reload of
+            // the campaign, not a continuation.
+            lastCloseResult: null,
+            phase: restored.phase === "endgame" ? "endgame" : "playing",
+          } as Partial<Persisted>);
+          toast.accent(
+            "Snapshot restored",
+            `Game rolled back to ${fmtQuarter((restored as { currentQuarter?: number }).currentQuarter ?? 1)}.`,
+          );
+          return { ok: true };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "Restore failed",
+          };
+        }
+      },
+
+      deleteQuarterSnapshot: (id) => {
+        snapDelete(id);
+      },
+
+      rebroadcastSessionCode: () => {
+        const s = get();
+        // Generate a fresh 4-digit code — keeps the seat list intact
+        // so disconnected players can rebind by company name without
+        // losing their team data.
+        const code = String(Math.floor(1000 + Math.random() * 9000));
+        set({ sessionCode: code, sessionLocked: false });
+        toast.accent("Session code reissued", `New code: ${code}`);
+        return { code };
+      },
+
+      setSessionLocked: (locked) => {
+        set({ sessionLocked: locked });
       },
 
       // ── Fuel Storage (PRD E2) ──────────────────────────────
@@ -3536,6 +3724,7 @@ export const useGame = create<GameStore>()(
         worldCupHostCode: s.worldCupHostCode,
         olympicHostCode: s.olympicHostCode,
         sessionCode: s.sessionCode,
+        sessionLocked: s.sessionLocked,
         sessionSlots: s.sessionSlots,
       }),
       onRehydrateStorage: () => (state) => {
@@ -3553,6 +3742,9 @@ export const useGame = create<GameStore>()(
         // as a hub by any team.
         if (state.worldCupHostCode === undefined) state.worldCupHostCode = null;
         if (state.olympicHostCode === undefined) state.olympicHostCode = null;
+        // Older saves predate the session-lock toggle. Default to false
+        // so existing facilitated cohorts can keep accepting new joiners.
+        if (state.sessionLocked === undefined) state.sessionLocked = false;
         if (!state.worldCupHostCode || !state.olympicHostCode) {
           const allTeamHubs = new Set<string>();
           for (const t of state.teams ?? []) {
