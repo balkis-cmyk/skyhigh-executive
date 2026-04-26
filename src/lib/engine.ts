@@ -121,6 +121,57 @@ export const TRAVEL_INDEX: Record<number, number> = {
   39: 130, 40: 130, // PRD Q20 — Peak global aviation era.
 };
 
+/** Base commercial-debt interest rate over the 40-quarter campaign,
+ *  aligned with the same world-events arc that drives TRAVEL_INDEX.
+ *  Earlier the rate was hardcoded at 3.5% and never moved — players
+ *  flagged it as broken. The schedule below mirrors a realistic 2015–
+ *  2024 macro cycle:
+ *
+ *    2015–2016 ZIRP era → 3.0–3.5% (cheap debt)
+ *    2017 stabilising  → 3.5–4.0%
+ *    2018 hawkish turn → 4.5–5.0%
+ *    2019 dovish pivot → 4.0% (S6 Rate Window)
+ *    2020 COVID cuts   → 1.5–2.5%
+ *    2021 recovery     → 3.0%
+ *    2022 inflation    → 5.5–7.0% (rapid hikes)
+ *    2023 peak         → 7.0–7.5%
+ *    2024 plateau      → 7.0%
+ */
+export const BASE_RATE_BY_QUARTER: Record<number, number> = {
+  1: 3.5,  2: 3.5,   // Q1–Q2 2015 — campaign baseline
+  3: 3.0,  4: 3.0,   // Q3–Q4 2015 — fuel-shock-driven dovish stance
+  5: 3.5,  6: 3.5,   // Q1–Q2 2016 — stabilising
+  7: 4.0,  8: 4.0,   // Q3–Q4 2016 — tech-driven optimism, normalisation begins
+  9: 4.0,  10: 4.5,  // Q1–Q2 2017 — geopolitical-risk premium
+  11: 4.5, 12: 4.5,  // Q3–Q4 2017 — central banks tightening
+  13: 5.0, 14: 5.0,  // Q1–Q2 2018 — hawkish turn (trade war risk-on)
+  15: 5.0, 16: 4.5,  // Q3–Q4 2018 — first signs of cooling
+  17: 4.0, 18: 4.0,  // Q1–Q2 2019 — S6 Rate Window dovish pivot
+  19: 4.0, 20: 4.0,  // Q3–Q4 2019 — last pre-pandemic months
+  21: 2.5, 22: 1.5,  // Q1–Q2 2020 — emergency COVID cuts
+  23: 1.5, 24: 1.5,  // Q3–Q4 2020 — sustained zero-bound
+  25: 2.0, 26: 2.5,  // Q1–Q2 2021 — early recovery
+  27: 3.0, 28: 3.5,  // Q3–Q4 2021 — recovery confirmed
+  29: 4.5, 30: 5.5,  // Q1–Q2 2022 — inflation surprise; rapid hikes
+  31: 6.0, 32: 6.5,  // Q3–Q4 2022 — aggressive tightening continues
+  33: 7.0, 34: 7.0,  // Q1–Q2 2023 — peak rates, recession fears
+  35: 7.5, 36: 7.5,  // Q3–Q4 2023 — held high
+  37: 7.0, 38: 7.0,  // Q1–Q2 2024 — early easing signals
+  39: 7.0, 40: 7.0,  // Q3–Q4 2024 — plateau into endgame
+};
+
+/** Effective base rate at a given quarter — schedule lookup with a
+ *  fallback chain (exact → previous quarter → 3.5% baseline). */
+export function effectiveBaseRatePct(quarter: number): number {
+  if (quarter in BASE_RATE_BY_QUARTER) return BASE_RATE_BY_QUARTER[quarter];
+  // Walk back to the most recent defined quarter so the chart stays
+  // monotonic past the schedule's boundaries.
+  for (let q = quarter - 1; q >= 1; q--) {
+    if (q in BASE_RATE_BY_QUARTER) return BASE_RATE_BY_QUARTER[q];
+  }
+  return 3.5;
+}
+
 /** Seasonal multipliers (PRD D5) indexed by quarter-within-game-year. */
 export function seasonalMultiplier(
   quarter: number,

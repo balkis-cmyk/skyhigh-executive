@@ -114,7 +114,13 @@ export function applyYearlyTickIfDue(
     }
     const tier = city.tier as CityTier;
     const cur = slots[code];
+    // Preserve ownership / capacity / acquisition fields. Earlier this
+    // overwrote the entry with a fresh object literal which silently
+    // wiped `ownerTeamId`, `ownerSlotRatePerWeekUsd`, `totalCapacity`,
+    // `acquiredAtQuarter`, `purchaseCostUsd` on every yearly tick —
+    // an owned airport would suddenly become "unowned" at Q5/Q9/Q13/Q17.
     out[code] = {
+      ...cur,
       available: cur.available + cur.nextOpening,
       nextOpening: rollYearlyOpen(tier),
       nextTickQuarter: nextTickQuarter(currentQuarter),

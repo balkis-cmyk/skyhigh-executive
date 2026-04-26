@@ -3940,10 +3940,20 @@ export const useGame = create<GameStore>()(
         const plane = player.fleet.find((f) => f.id === aircraftId);
         if (!plane) return { ok: false, error: "Aircraft not found" };
         if (plane.acquisitionType !== "buy") return { ok: false, error: "Only owned aircraft" };
-        if (askingPriceUsd < plane.bookValue)
-          return { ok: false, error: `Minimum ${fmtMoneyPlain(plane.bookValue)} (book value)` };
-        if (askingPriceUsd > plane.bookValue * 1.5)
-          return { ok: false, error: `Max ${fmtMoneyPlain(plane.bookValue * 1.5)} (1.5× book)` };
+        // Listing bounds: floor at 20% of book value (fire-sale clearance),
+        // ceiling at 120% of the airframe's current new-build list price.
+        // Earlier the floor was the full book value (no fire-sale possible)
+        // and the ceiling was 1.5× book — both bounds tied to a single
+        // depreciated number, which made hot models like in-shortage
+        // 777Xs un-listable above their depreciated book even though the
+        // secondary market would gladly bear a premium.
+        const spec = AIRCRAFT_BY_ID[plane.specId];
+        const minPrice = Math.round(plane.bookValue * 0.20);
+        const maxPrice = Math.round((spec?.buyPriceUsd ?? plane.bookValue) * 1.20);
+        if (askingPriceUsd < minPrice)
+          return { ok: false, error: `Minimum ${fmtMoneyPlain(minPrice)} (20% of book)` };
+        if (askingPriceUsd > maxPrice)
+          return { ok: false, error: `Max ${fmtMoneyPlain(maxPrice)} (120% of market list price)` };
         const listing: SecondHandListing = {
           id: mkId("sh"),
           specId: plane.specId,

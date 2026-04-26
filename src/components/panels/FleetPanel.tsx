@@ -84,12 +84,15 @@ export function FleetPanel() {
       fuselageUpgrade?: boolean;
     };
   } | null>(null);
-  /** Listing-for-sale modal — replaces the legacy native browser
-   *  prompt(). Gives the player a proper price slider with min/max
-   *  bounds derived from the aircraft's book value. */
+  /** Listing-for-sale modal — bounds:
+   *    min = 20% of book value (fire-sale floor — clears fast)
+   *    max = 120% of the airframe's current new-build market price
+   *  The wider range lets a player undercut on tired old metal or
+   *  ride a hot-model premium when the secondary market is starved. */
   const [sellState, setSellState] = useState<{
     aircraftId: string;
     bookValue: number;
+    marketValue: number;   // spec.buyPriceUsd at current quarter
     name: string;
     price: number;
   } | null>(null);
@@ -566,8 +569,13 @@ export function FleetPanel() {
                         onClick={() => setSellState({
                           aircraftId: f.id,
                           bookValue: f.bookValue,
+                          // "Market value" anchor for the upper bound is
+                          // the airframe's current new-build list price —
+                          // captures appreciation on hot models even when
+                          // the player's specific airframe is depreciated.
+                          marketValue: expanded.buyPriceUsd,
                           name: expanded.name,
-                          price: Math.round(f.bookValue * 1.1),
+                          price: Math.round(f.bookValue * 1.0),
                         })}
                       >
                         Sell
@@ -609,14 +617,18 @@ export function FleetPanel() {
       })()}
 
       {/* Sell modal — proper UI replacing the legacy native prompt(). */}
-      {sellState && (
+      {sellState && (() => {
+        const minPrice = Math.round(sellState.bookValue * 0.20);
+        const maxPrice = Math.round(sellState.marketValue * 1.20);
+        const clamped = Math.max(minPrice, Math.min(maxPrice, sellState.price));
+        return (
         <Modal open onClose={() => setSellState(null)} className="w-[min(520px,calc(100vw-3rem))]">
           <ModalHeader>
             <h2 className="font-display text-[1.25rem] text-ink leading-tight">
               List {sellState.name} for sale
             </h2>
             <p className="text-[0.8125rem] text-ink-muted mt-1">
-              Listing price must be at least the book value ({fmtMoney(sellState.bookValue)}) and at most 1.5× book.
+              Floor 20% of book value ({fmtMoney(sellState.bookValue)}); ceiling 120% of new-build market price ({fmtMoney(sellState.marketValue)}).
             </p>
           </ModalHeader>
           <ModalBody className="space-y-3">
@@ -624,26 +636,28 @@ export function FleetPanel() {
               <div className="flex items-baseline justify-between text-[0.8125rem]">
                 <span className="text-ink-muted">Asking price</span>
                 <span className="font-mono tabular text-ink font-semibold text-[1rem]">
-                  {fmtMoney(sellState.price)}
+                  {fmtMoney(clamped)}
                 </span>
               </div>
               <input
                 type="range"
-                min={Math.round(sellState.bookValue)}
-                max={Math.round(sellState.bookValue * 1.5)}
+                min={minPrice}
+                max={maxPrice}
                 step={100_000}
-                value={sellState.price}
+                value={clamped}
                 onChange={(e) => setSellState({ ...sellState, price: parseInt(e.target.value, 10) })}
                 className="w-full accent-primary"
               />
               <div className="flex items-baseline justify-between text-[0.6875rem] text-ink-muted tabular font-mono">
-                <span>Min {fmtMoney(sellState.bookValue)}</span>
-                <span>Max {fmtMoney(sellState.bookValue * 1.5)}</span>
+                <span>Min {fmtMoney(minPrice)} <span className="text-ink-muted/70">· 20% book</span></span>
+                <span><span className="text-ink-muted/70">120% market ·</span> Max {fmtMoney(maxPrice)}</span>
+              </div>
+              <div className="text-[0.625rem] text-ink-muted tabular font-mono">
+                Reference · book {fmtMoney(sellState.bookValue)} · market {fmtMoney(sellState.marketValue)}
               </div>
             </div>
             <p className="text-[0.75rem] text-ink-muted leading-relaxed">
-              Used aircraft surface in the secondary market under your airline name. Higher prices
-              mean fewer buyers; book-value pricing usually clears within a quarter or two.
+              Used aircraft surface in the secondary market under your airline name. Below book = fast clear at a loss; near book = clears within a quarter or two; above market = stale listing unless the model is in short supply.
             </p>
           </ModalBody>
           <ModalFooter>
@@ -651,20 +665,21 @@ export function FleetPanel() {
             <Button
               variant="primary"
               onClick={() => {
-                const r = s.listSecondHand(sellState.aircraftId, sellState.price);
+                const r = s.listSecondHand(sellState.aircraftId, clamped);
                 if (!r.ok) {
                   toast.negative("Listing failed", r.error ?? "Could not list this aircraft for sale.");
                   return;
                 }
-                toast.success("Listed for sale", `${sellState.name} at ${fmtMoney(sellState.price)}`);
+                toast.success("Listed for sale", `${sellState.name} at ${fmtMoney(clamped)}`);
                 setSellState(null);
               }}
             >
-              List at {fmtMoney(sellState.price)}
+              List at {fmtMoney(clamped)}
             </Button>
           </ModalFooter>
         </Modal>
-      )}
+        );
+      })()}
 
       {/* Retire modal — proper UI replacing the legacy native confirm(). */}
       {retireState && (

@@ -533,6 +533,18 @@ export interface GameState {
     companyName: string | null;
   }>;
 
+  /** Per-quarter snapshot of the three macro indices (fuel / travel /
+   *  base interest rate) so the Reports tab can render real charts of
+   *  market vitals over the campaign. Appended at every quarter close;
+   *  a new game starts with a single Q1 baseline entry. Optional for
+   *  back-compat with persisted saves predating this field. */
+  marketHistory?: Array<{
+    quarter: number;
+    fuelIndex: number;
+    travelIndex: number;
+    baseRatePct: number;
+  }>;
+
   /** Aircraft pre-order queue. FIFO across all teams, per-spec.
    *  Each round at quarter-close, up to spec.productionCapPerQuarter (or
    *  facilitator override in `productionCapOverrides[specId]`) entries
