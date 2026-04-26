@@ -34,6 +34,11 @@ export interface AircraftSpec {
   buyPriceUsd: number;
   leasePerQuarterUsd: number;
   ecoUpgradeUsd: number;         // cost to add eco engine
+  /** Per-quarter production cap once unlocked. Once a queue forms,
+   *  only `productionCapPerQuarter` units are delivered each round
+   *  (FIFO across teams). Defaults to 8 for standard aircraft and 5
+   *  for premium ($80M+) airframes. May be overridden by facilitator. */
+  productionCapPerQuarter?: number;
   note?: string;
 }
 
@@ -467,6 +472,51 @@ export interface GameState {
     /** Player's company name once they join. */
     companyName: string | null;
   }>;
+
+  /** Aircraft pre-order queue. FIFO across all teams, per-spec.
+   *  Each round at quarter-close, up to spec.productionCapPerQuarter (or
+   *  facilitator override in `productionCapOverrides[specId]`) entries
+   *  are dequeued in order and delivered to their respective teams. */
+  preOrders: PreOrder[];
+
+  /** Facilitator-set per-quarter production cap overrides. When set,
+   *  overrides spec.productionCapPerQuarter for that spec for ALL future
+   *  delivery batches. Used to cool off or surge supply. */
+  productionCapOverrides: Record<string, number>;
+}
+
+/** Aircraft pre-order entry. Pre-orders open 2 rounds before unlock
+ *  (announcement window) and continue past unlock as the manufacturing
+ *  queue forms. Each FIFO entry is one aircraft slot — orders for
+ *  multiple units fan out to multiple PreOrder rows so the queue can
+ *  partially fill (5 of 8 ordered → 5 delivered now, 3 next round).
+ *
+ *  Lifecycle:
+ *    queued    → placed, deposit charged
+ *    delivered → balance charged at delivery, FleetAircraft created
+ *    cancelled → 15% of deposit kept as penalty, 85% refunded
+ */
+export interface PreOrder {
+  id: string;
+  teamId: string;
+  specId: string;
+  /** Quarter the order was placed (FIFO key). */
+  orderedAtQuarter: number;
+  /** 20% of total cost held as deposit when queued. */
+  depositUsd: number;
+  /** Total list price (incl. upgrades) committed at order time. */
+  totalPriceUsd: number;
+  /** Acquisition mode — buy or lease. Lease deposit = 1Q lease fee. */
+  acquisitionType: "buy" | "lease";
+  cabinConfig: CabinConfig;
+  customSeats?: CustomCabin;
+  engineUpgrade?: EngineUpgrade;
+  fuselageUpgrade?: boolean;
+  status: "queued" | "delivered" | "cancelled";
+  /** When the engine actually delivered this slot (status=delivered). */
+  deliveredAtQuarter?: number;
+  /** Fleet instance id created on delivery (so the order can link back). */
+  deliveredAircraftId?: string;
 }
 
 /** Slot bidding state for a single airport. Players bid in pendingSlotBids

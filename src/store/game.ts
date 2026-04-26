@@ -30,6 +30,14 @@ import {
   deleteSnapshot as snapDelete,
 } from "@/lib/snapshots";
 import { newsFuelIndexHint } from "@/lib/engine";
+import {
+  PREORDER_DEPOSIT_PCT,
+  PREORDER_CANCEL_PENALTY_PCT,
+  effectiveProductionCap,
+  isAnnouncementOpen,
+  isReleased,
+  queuedForSpec,
+} from "@/lib/pre-orders";
 import type {
   AirportLease,
   CabinConfig,
@@ -39,6 +47,7 @@ import type {
   FleetAircraft,
   GameState,
   LoanInstrument,
+  PreOrder,
   PricingTier,
   Route,
   ScenarioDecision,
@@ -102,7 +111,22 @@ export interface GameStore extends GameState {
     engineUpgrade?: "fuel" | "power" | "super" | null;
     /** Fuselage coating retrofit at purchase. */
     fuselageUpgrade?: boolean;
-  }): { ok: boolean; error?: string };
+  }): { ok: boolean; error?: string; queuedCount?: number; deliveredCount?: number };
+
+  /** Cancel a queued pre-order. 15% of the deposit is kept as a
+   *  cancellation penalty; the remaining 85% is refunded. Once
+   *  delivered, an order can no longer be cancelled. */
+  cancelPreOrder(orderId: string): { ok: boolean; error?: string };
+
+  /** Facilitator-only: override the per-quarter production cap for a
+   *  specific aircraft spec. Pass `null` to clear the override and
+   *  fall back to spec.productionCapPerQuarter. */
+  setProductionCapOverride(specId: string, cap: number | null): void;
+
+  /** Facilitator-only: instant-deliver the next-in-line pre-order(s)
+   *  for a spec, bypassing the queue cap. Used to clear backlogs or
+   *  resolve disputes during a workshop. */
+  forceDeliverPreOrders(specId: string, count: number): { delivered: number };
 
   addEcoUpgrade(aircraftId: string): { ok: boolean; error?: string };
 
@@ -338,6 +362,98 @@ function fmtMoneyPlain(n: number): string {
   return `$${n.toFixed(0)}`;
 }
 
+/** Pure helper that delivers a list of queued PreOrders. Charges the
+ *  balance (price − deposit) on each team, builds the FleetAircraft
+ *  rows, and returns updated `preOrders` + `teams` arrays. The caller
+ *  performs the `set()` so this stays test-friendly and consistent with
+ *  the immutable-update style of the rest of the store.
+ *
+ *  If a team can't pay the balance we still deliver the aircraft (the
+ *  balance becomes negative cash — the team is in debt). This matches
+ *  how the rest of the engine treats over-spend (loan deficit). The
+ *  alternative (reverting the order + refunding the deposit) was
+ *  considered but rejected because at quarter-close the player has
+ *  already committed and is in middle of close — surprise reversals
+ *  break the close transaction's economics. */
+function deliverPreOrders(
+  allPreOrders: PreOrder[],
+  teams: Team[],
+  toDeliver: PreOrder[],
+  deliveryQuarter: number,
+): { newPreOrders: PreOrder[]; teamUpdates: Team[] } {
+  if (toDeliver.length === 0) {
+    return { newPreOrders: allPreOrders, teamUpdates: teams };
+  }
+  // Group by team for a single cash debit per team per delivery batch.
+  const planesByTeam = new Map<string, FleetAircraft[]>();
+  const balanceByTeam = new Map<string, number>();
+  const deliveredById = new Map<string, string>(); // orderId → fleet ac id
+
+  for (const order of toDeliver) {
+    const spec = AIRCRAFT_BY_ID[order.specId];
+    if (!spec) continue;
+    const totalPerPlane = order.totalPriceUsd;
+    const balance = Math.max(0, totalPerPlane - order.depositUsd);
+    const acId = mkId("ac");
+    deliveredById.set(order.id, acId);
+    const ac: FleetAircraft = {
+      id: acId,
+      specId: order.specId,
+      status: "ordered",
+      acquisitionType: order.acquisitionType,
+      // PurchaseQuarter = delivery round (this is when it was paid in
+      // full and arrived as physical metal). Existing fleet code reads
+      // purchaseQuarter for arrival timing — we keep that contract.
+      purchaseQuarter: deliveryQuarter,
+      purchasePrice: order.acquisitionType === "buy" ? totalPerPlane : 0,
+      bookValue: order.acquisitionType === "buy" ? totalPerPlane : 0,
+      leaseQuarterly: order.acquisitionType === "lease" ? spec.leasePerQuarterUsd : null,
+      ecoUpgrade: false,
+      ecoUpgradeQuarter: null,
+      ecoUpgradeCost: 0,
+      cabinConfig: order.cabinConfig,
+      routeId: null,
+      customSeats: order.customSeats,
+      engineUpgrade: order.engineUpgrade ?? null,
+      fuselageUpgrade: !!order.fuselageUpgrade,
+      retirementQuarter: deliveryQuarter + 28,
+      maintenanceDeficit: 0,
+      satisfactionPct: 75,
+    };
+    const existingPlanes = planesByTeam.get(order.teamId) ?? [];
+    planesByTeam.set(order.teamId, [...existingPlanes, ac]);
+    balanceByTeam.set(
+      order.teamId,
+      (balanceByTeam.get(order.teamId) ?? 0) + balance,
+    );
+  }
+
+  const teamUpdates = teams.map((t) => {
+    const planes = planesByTeam.get(t.id);
+    if (!planes) return t;
+    const debit = balanceByTeam.get(t.id) ?? 0;
+    return {
+      ...t,
+      cashUsd: t.cashUsd - debit,
+      fleet: [...t.fleet, ...planes],
+    };
+  });
+
+  const deliveredIdSet = new Set(toDeliver.map((o) => o.id));
+  const newPreOrders = allPreOrders.map((o) =>
+    deliveredIdSet.has(o.id)
+      ? {
+          ...o,
+          status: "delivered" as const,
+          deliveredAtQuarter: deliveryQuarter,
+          deliveredAircraftId: deliveredById.get(o.id),
+        }
+      : o,
+  );
+
+  return { newPreOrders, teamUpdates };
+}
+
 function makeStartingTeam(args: {
   airlineName: string;
   code: string;
@@ -454,6 +570,8 @@ export const useGame = create<GameStore>()(
       sessionCode: null,
       sessionLocked: false,
       sessionSlots: [],
+      preOrders: [],
+      productionCapOverrides: {},
 
       startNewGame: (args) => {
         const {
@@ -746,8 +864,14 @@ export const useGame = create<GameStore>()(
         const s = get();
         const spec = AIRCRAFT_BY_ID[specId];
         if (!spec) return { ok: false, error: "Unknown aircraft" };
-        if (spec.unlockQuarter > s.currentQuarter) {
-          return { ok: false, error: `Not yet available — unlocks Q${spec.unlockQuarter}` };
+        // Pre-orders open at unlockQuarter − 2 (announcement window per
+        // master ref Section 1E). Before that the order is rejected.
+        if (!isAnnouncementOpen(spec, s.currentQuarter)) {
+          const announceQ = spec.unlockQuarter - 2;
+          return {
+            ok: false,
+            error: `Pre-orders open Q${announceQ} (announcement) · unlocks Q${spec.unlockQuarter}`,
+          };
         }
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player team" };
@@ -785,15 +909,47 @@ export const useGame = create<GameStore>()(
         const basePrice = acquisitionType === "buy" ? spec.buyPriceUsd : spec.leasePerQuarterUsd;
         const totalPerPlane = basePrice + upgradeCostPerPlane;
         const totalCost = totalPerPlane * qty;
-        if (player.cashUsd < totalCost) {
+
+        // Decide how many of `qty` can be delivered this round vs queued.
+        // - Released: up to (cap − already-delivered-this-round) ship now.
+        //   Earlier batches at quarter-close drained the queue first, so the
+        //   "deliver instantly" path is reserved for end-of-round walk-ups.
+        // - Pre-release: ALL units queue (they wait for unlock).
+        // - Always: orders beyond the round's headroom go to the FIFO queue
+        //   and pay 20% deposit upfront, balance at delivery.
+        const released = isReleased(spec, s.currentQuarter);
+        const cap = effectiveProductionCap(spec, s.productionCapOverrides);
+        // How many of this spec have already been delivered in the current
+        // round (either via instant orders or batch deliveries).
+        const deliveredThisRound = s.preOrders.filter(
+          (o) => o.specId === specId && o.deliveredAtQuarter === s.currentQuarter,
+        ).length;
+        // Queue depth ahead of any new order placed *now* — instant fulfilment
+        // only happens if the queue is empty AND room remains in this round.
+        const queueAhead = queuedForSpec(s.preOrders, specId).length;
+
+        let instantQty = 0;
+        if (released && queueAhead === 0) {
+          instantQty = Math.min(qty, Math.max(0, cap - deliveredThisRound));
+        }
+        const queuedQty = qty - instantQty;
+
+        // Cash check — instant units charge full price; queued units charge
+        // 20% deposit only at order time. Total cash demanded = instant + deposits.
+        const depositPerPlane = totalPerPlane * PREORDER_DEPOSIT_PCT;
+        const cashNeeded = instantQty * totalPerPlane + queuedQty * depositPerPlane;
+        if (player.cashUsd < cashNeeded) {
           return {
             ok: false,
-            error: `Insufficient cash — need ${fmtMoneyPlain(totalCost)} for ` +
-              `${qty} × ${spec.name}${upgradeCostPerPlane > 0 ? " w/ upgrades" : ""}`,
+            error: `Insufficient cash — need ${fmtMoneyPlain(cashNeeded)} ` +
+              (queuedQty > 0
+                ? `(${instantQty} delivered now + ${queuedQty} × 20% deposit)`
+                : `for ${qty} × ${spec.name}`),
           };
         }
 
-        const planes: FleetAircraft[] = Array.from({ length: qty }, () => ({
+        // Build the FleetAircraft rows for instant deliveries (existing path).
+        const planes: FleetAircraft[] = Array.from({ length: instantQty }, () => ({
           id: mkId("ac"), specId, status: "ordered" as const,
           acquisitionType, purchaseQuarter: s.currentQuarter,
           purchasePrice: acquisitionType === "buy" ? totalPerPlane : 0,
@@ -808,21 +964,121 @@ export const useGame = create<GameStore>()(
           maintenanceDeficit: 0, satisfactionPct: 75,
         }));
 
+        // Build PreOrder rows for queued units. Each unit becomes its own
+        // entry so the queue can partially fill (5 of 8 ordered → 5
+        // delivered, 3 still waiting next round).
+        const newPreOrders: PreOrder[] = Array.from({ length: queuedQty }, () => ({
+          id: mkId("po"),
+          teamId: s.playerTeamId!,
+          specId,
+          orderedAtQuarter: s.currentQuarter,
+          depositUsd: depositPerPlane,
+          totalPriceUsd: totalPerPlane,
+          acquisitionType,
+          cabinConfig,
+          customSeats: customSeats && spec.family === "passenger" ? customSeats : undefined,
+          engineUpgrade: engineUpgrade ?? null,
+          fuselageUpgrade: !!fuselageUpgrade,
+          status: "queued",
+        }));
+
         set({
           teams: s.teams.map((t) =>
             t.id === s.playerTeamId
-              ? { ...t, cashUsd: t.cashUsd - totalCost, fleet: [...t.fleet, ...planes] }
+              ? { ...t, cashUsd: t.cashUsd - cashNeeded, fleet: [...t.fleet, ...planes] }
               : t,
           ),
+          preOrders: [...s.preOrders, ...newPreOrders],
         });
-        toast.success(
-          `${qty}× ${spec.name} ${acquisitionType === "buy" ? "purchased" : "leased"}`,
-          `${fmtMoneyPlain(totalCost)} total · arrives Q${s.currentQuarter + 1}` +
-            (upgradeCostPerPlane > 0
-              ? ` · upgrades: ${[engineUpgrade, fuselageUpgrade && "fuselage"].filter(Boolean).join(", ")}`
-              : ""),
+
+        if (instantQty > 0 && queuedQty === 0) {
+          toast.success(
+            `${qty}× ${spec.name} ${acquisitionType === "buy" ? "purchased" : "leased"}`,
+            `${fmtMoneyPlain(totalCost)} total · arrives Q${s.currentQuarter + 1}` +
+              (upgradeCostPerPlane > 0
+                ? ` · upgrades: ${[engineUpgrade, fuselageUpgrade && "fuselage"].filter(Boolean).join(", ")}`
+                : ""),
+          );
+        } else if (instantQty > 0 && queuedQty > 0) {
+          toast.warning(
+            `${qty}× ${spec.name} — partial`,
+            `${instantQty} arriving Q${s.currentQuarter + 1}; ${queuedQty} queued ` +
+              `(deposit ${fmtMoneyPlain(queuedQty * depositPerPlane)})`,
+          );
+        } else {
+          // Pure queue. Tell the player what they'll wait for.
+          const earliestRound = Math.max(s.currentQuarter + 1, spec.unlockQuarter);
+          toast.accent(
+            `${queuedQty}× ${spec.name} pre-ordered`,
+            released
+              ? `Queued behind ${queueAhead}; deposit ${fmtMoneyPlain(queuedQty * depositPerPlane)}; balance at delivery.`
+              : `Holds your slot until unlock Q${spec.unlockQuarter}; deposit ${fmtMoneyPlain(queuedQty * depositPerPlane)}.`,
+          );
+          // earliestRound used by the toast subtitle below (silence linter).
+          void earliestRound;
+        }
+        return { ok: true, queuedCount: queuedQty, deliveredCount: instantQty };
+      },
+
+      cancelPreOrder: (orderId) => {
+        const s = get();
+        const order = s.preOrders.find((o) => o.id === orderId);
+        if (!order) return { ok: false, error: "Pre-order not found" };
+        if (order.status !== "queued") {
+          return {
+            ok: false,
+            error: order.status === "delivered"
+              ? "Already delivered — cannot cancel"
+              : "Already cancelled",
+          };
+        }
+        if (order.teamId !== s.playerTeamId) {
+          return { ok: false, error: "Not your pre-order" };
+        }
+        const refund = order.depositUsd * (1 - PREORDER_CANCEL_PENALTY_PCT);
+        const penalty = order.depositUsd * PREORDER_CANCEL_PENALTY_PCT;
+        set({
+          teams: s.teams.map((t) =>
+            t.id === order.teamId ? { ...t, cashUsd: t.cashUsd + refund } : t,
+          ),
+          preOrders: s.preOrders.map((o) =>
+            o.id === orderId ? { ...o, status: "cancelled" as const } : o,
+          ),
+        });
+        const spec = AIRCRAFT_BY_ID[order.specId];
+        toast.warning(
+          `Cancelled · 1× ${spec?.name ?? order.specId}`,
+          `Refunded ${fmtMoneyPlain(refund)} · ${fmtMoneyPlain(penalty)} cancellation penalty (15%)`,
         );
         return { ok: true };
+      },
+
+      setProductionCapOverride: (specId, cap) => {
+        const s = get();
+        const next = { ...s.productionCapOverrides };
+        if (cap === null) {
+          delete next[specId];
+        } else {
+          next[specId] = Math.max(1, Math.floor(cap));
+        }
+        set({ productionCapOverrides: next });
+      },
+
+      forceDeliverPreOrders: (specId, count) => {
+        const s = get();
+        const queue = queuedForSpec(s.preOrders, specId);
+        const toDeliver = queue.slice(0, Math.max(0, Math.floor(count)));
+        if (toDeliver.length === 0) return { delivered: 0 };
+        const { newPreOrders, teamUpdates } = deliverPreOrders(
+          s.preOrders, s.teams, toDeliver, s.currentQuarter,
+        );
+        set({ preOrders: newPreOrders, teams: teamUpdates });
+        const spec = AIRCRAFT_BY_ID[specId];
+        toast.accent(
+          `Force-delivered ${toDeliver.length}× ${spec?.name ?? specId}`,
+          "Facilitator override · queue cap bypassed.",
+        );
+        return { delivered: toDeliver.length };
       },
 
       addEcoUpgrade: (aircraftId) => {
@@ -2374,13 +2630,60 @@ export const useGame = create<GameStore>()(
           ? s.fuelIndex + (fuelHint - s.fuelIndex) * 0.7 + randomDrift
           : s.fuelIndex + randomDrift;
 
+        // Pre-order production batch — deliver up to per-spec cap from
+        // the FIFO queue at quarter close, but only for specs that have
+        // actually reached unlockQuarter. Pre-orders placed during the
+        // announcement window (R-2) sit in the queue until unlock.
+        const deliveriesToMake: PreOrder[] = [];
+        const queuedNow = teamsWithAwards.length === 0
+          ? s.preOrders
+          : s.preOrders;
+        const seenSpecs = new Set<string>();
+        for (const order of queuedNow) {
+          if (order.status !== "queued") continue;
+          if (seenSpecs.has(order.specId)) continue;
+          seenSpecs.add(order.specId);
+          const spec = AIRCRAFT_BY_ID[order.specId];
+          if (!spec) continue;
+          // Only deliver from queue once spec has reached unlock — earlier
+          // means the announcement window is open but production hasn't.
+          if (s.currentQuarter < spec.unlockQuarter) continue;
+          const cap = effectiveProductionCap(spec, s.productionCapOverrides);
+          // Subtract anything already delivered this round (i.e. instant
+          // walk-up orders fulfilled inline via orderAircraft).
+          const alreadyThisRound = queuedNow.filter(
+            (o) => o.specId === spec.id && o.deliveredAtQuarter === s.currentQuarter,
+          ).length;
+          const remainingCap = Math.max(0, cap - alreadyThisRound);
+          if (remainingCap === 0) continue;
+          const queueSlice = queuedForSpec(queuedNow, spec.id).slice(0, remainingCap);
+          deliveriesToMake.push(...queueSlice);
+        }
+        const { newPreOrders: preOrdersAfterDelivery, teamUpdates: teamsAfterDelivery } =
+          deliverPreOrders(s.preOrders, teamsWithAwards, deliveriesToMake, s.currentQuarter);
+        if (deliveriesToMake.length > 0) {
+          // Group by team for one toast per team.
+          const byTeam = new Map<string, number>();
+          for (const o of deliveriesToMake) {
+            byTeam.set(o.teamId, (byTeam.get(o.teamId) ?? 0) + 1);
+          }
+          const playerCount = byTeam.get(s.playerTeamId ?? "") ?? 0;
+          if (playerCount > 0) {
+            toast.success(
+              `${playerCount} aircraft delivered from queue`,
+              `Balance charged · arriving Q${s.currentQuarter + 1}`,
+            );
+          }
+        }
+
         set({
-          teams: teamsWithAwards,
+          teams: teamsAfterDelivery,
           cargoContracts: updatedCargoContracts,
           lastCloseResult: result,
           phase: "quarter-closing",
           airportSlots: slotsAfterAuction,
           fuelIndex: Math.max(50, Math.min(220, newFuel)),
+          preOrders: preOrdersAfterDelivery,
         });
       },
 
@@ -2830,6 +3133,8 @@ export const useGame = create<GameStore>()(
           sessionCode: null,
           sessionLocked: false,
           sessionSlots: [],
+          preOrders: [],
+          productionCapOverrides: {},
         });
       },
 
@@ -2864,6 +3169,8 @@ export const useGame = create<GameStore>()(
           sessionCode: s.sessionCode,
           sessionLocked: s.sessionLocked,
           sessionSlots: s.sessionSlots,
+          preOrders: s.preOrders,
+          productionCapOverrides: s.productionCapOverrides,
         };
         snapSave({
           quarter: s.currentQuarter,
@@ -3748,6 +4055,8 @@ export const useGame = create<GameStore>()(
         sessionCode: s.sessionCode,
         sessionLocked: s.sessionLocked,
         sessionSlots: s.sessionSlots,
+        preOrders: s.preOrders,
+        productionCapOverrides: s.productionCapOverrides,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
@@ -3767,6 +4076,11 @@ export const useGame = create<GameStore>()(
         // Older saves predate the session-lock toggle. Default to false
         // so existing facilitated cohorts can keep accepting new joiners.
         if (state.sessionLocked === undefined) state.sessionLocked = false;
+        // Pre-order queue + production cap overrides are new in
+        // SkyForce post-master-ref. Older saves get empty arrays so
+        // delivery batches and cancel-penalty paths run safely.
+        if (!state.preOrders) state.preOrders = [];
+        if (!state.productionCapOverrides) state.productionCapOverrides = {};
         if (!state.worldCupHostCode || !state.olympicHostCode) {
           const allTeamHubs = new Set<string>();
           for (const t of state.teams ?? []) {
