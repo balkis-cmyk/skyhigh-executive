@@ -94,9 +94,46 @@ export function cruiseSpeedKmh(
   return base;
 }
 
-/** Max weekly schedules for a single aircraft on a given route (D1 formula). */
-export function maxWeeklyRotations(specId: string, routeDistanceKm: number): number {
-  const oneWayHrs = routeDistanceKm / cruiseSpeedKmh(specId);
+/** Effective range after retrofits. The "fuel" and "super" engines
+ *  ship a 10% range extension on top of the spec's published range —
+ *  that bonus is now actually applied here so the route-distance
+ *  check honours what the upgrade card promised. Without this helper
+ *  the +10% range was dead text. */
+export function effectiveRangeKm(
+  spec: { rangeKm: number },
+  engineUpgrade?: "fuel" | "power" | "super" | null,
+): number {
+  if (engineUpgrade === "fuel" || engineUpgrade === "super") {
+    return Math.round(spec.rangeKm * 1.1);
+  }
+  return spec.rangeKm;
+}
+
+/** Effective fuel burn after retrofits. "fuel" / "super" engine = ×0.9
+ *  (−10% burn). Anti-drag fuselage coating = ×0.9 (−10% burn). The two
+ *  stack multiplicatively (×0.81 combined = −19% burn). */
+export function effectiveFuelBurnPerKm(
+  spec: { fuelBurnPerKm: number },
+  engineUpgrade?: "fuel" | "power" | "super" | null,
+  fuselageUpgrade?: boolean,
+): number {
+  let burn = spec.fuelBurnPerKm;
+  if (engineUpgrade === "fuel" || engineUpgrade === "super") burn *= 0.9;
+  if (fuselageUpgrade) burn *= 0.9;
+  return burn;
+}
+
+/** Max weekly schedules for a single aircraft on a given route (D1 formula).
+ *  Now honours the power/super engine boost — the cruise-speed bump
+ *  was previously computed but never threaded into the rotations
+ *  formula, so power/super was dead code. Pass the aircraft's
+ *  engineUpgrade to actually feel the +10% speed → tighter schedule. */
+export function maxWeeklyRotations(
+  specId: string,
+  routeDistanceKm: number,
+  engineUpgrade?: "fuel" | "power" | "super" | null,
+): number {
+  const oneWayHrs = routeDistanceKm / cruiseSpeedKmh(specId, engineUpgrade);
   const turnaround = 2.0;
   const roundTrip = oneWayHrs * 2 + turnaround * 2;
   const daily = Math.max(1, Math.floor(24 / roundTrip));
@@ -1374,9 +1411,13 @@ export function runQuarterClose(
     if (f.status !== "active") continue;
     const ageQ = Math.max(0, ctx.quarter - f.purchaseQuarter);
     const basePct =
-      ageQ < 5 ? 0.008 :
-      ageQ < 10 ? 0.012 :
-      ageQ < 15 ? 0.018 : 0.025;
+      // Maintenance bands scaled to the 28Q (7-year) lifespan: 0-7 / 7-14
+      // / 14-21 / 21+ replaces the old 0-5 / 5-10 / 10-15 / 15+. Same
+      // four-tier shape, just stretched proportionally with the longer
+      // life so the older-plane bands actually trigger before retirement.
+      ageQ < 7  ? 0.008 :
+      ageQ < 14 ? 0.012 :
+      ageQ < 21 ? 0.018 : 0.025;
     const effectivePct = basePct * (1 - opsPtsDiscount);
     maintenanceCost += f.purchasePrice * effectivePct;
   }

@@ -35,13 +35,27 @@ export function QuarterCloseModal() {
     if (s.currentQuarter >= TOTAL_GAME_ROUNDS) router.push("/endgame");
   }
 
-  // Top winners + top losers, computed once per result
+  // Top winners + top losers, ranked by DIRECT contribution margin
+  // (revenue − fuel − slot) rather than the allocated profit. The
+  // allocated number divides team-wide overhead by revenue share,
+  // which means a fully-loaded route can show as "losing" simply
+  // because the network is sub-scale and can't yet absorb fixed
+  // costs. We want this section to surface routes that genuinely
+  // can't pay their direct operating costs, not routes that look
+  // bad after overhead allocation.
   const { topWinners, topLosers } = useMemo(() => {
     if (!result) return { topWinners: [], topLosers: [] };
-    const sorted = [...result.routeBreakdown].sort((a, b) => b.profit - a.profit);
+    const withDirect = result.routeBreakdown.map((r) => ({
+      ...r,
+      direct: r.revenue - r.fuelCost - r.slotCost,
+    }));
+    const sorted = [...withDirect].sort((a, b) => b.direct - a.direct);
     return {
-      topWinners: sorted.slice(0, 3).filter((r) => r.profit > 0),
-      topLosers: sorted.slice(-3).reverse().filter((r) => r.profit < 0),
+      // Winners ranked by direct contribution (covers fuel + slot AND
+      // throws cash at overhead). Losers are routes that can't even
+      // cover their direct costs — those need real triage.
+      topWinners: sorted.slice(0, 3).filter((r) => r.direct > 0),
+      topLosers: sorted.slice(-3).reverse().filter((r) => r.direct < 0),
     };
   }, [result]);
 

@@ -51,6 +51,20 @@ export function fmtQuarterShort(q: number): string {
   return `Round ${q} of ${TOTAL_GAME_ROUNDS}`;
 }
 
+/** Format a span in quarters as "Y & Q" — e.g. 9 → "2Y 1Q", 4 → "1Y",
+ *  3 → "3Q". Used for aircraft age and remaining lifespan in the fleet
+ *  + market UIs so the player reads them in human terms instead of
+ *  raw quarter counts. */
+export function fmtAgeYQ(quarters: number): string {
+  const q = Math.max(0, Math.round(quarters));
+  if (q === 0) return "0Q";
+  const years = Math.floor(q / 4);
+  const remQ = q % 4;
+  if (years === 0) return `${remQ}Q`;
+  if (remQ === 0) return `${years}Y`;
+  return `${years}Y ${remQ}Q`;
+}
+
 /**
  * Convert a real-world EIS year (e.g. 2007 for the A380) to the GAME
  * round at which the aircraft becomes available.

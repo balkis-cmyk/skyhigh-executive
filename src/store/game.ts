@@ -506,7 +506,7 @@ export const useGame = create<GameStore>()(
           purchasePrice: 25_000_000, bookValue: 25_000_000,
           leaseQuarterly: null, ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
-          retirementQuarter: 1 + 20, // PRD §5.2 — 20Q lifespan
+          retirementQuarter: 1 + 28, // 7-year (28Q) lifespan
           maintenanceDeficit: 0, satisfactionPct: 75,
         };
         const starter2: FleetAircraft = { ...starter1, id: mkId("ac") };
@@ -628,7 +628,7 @@ export const useGame = create<GameStore>()(
               leaseQuarterly: null, ecoUpgrade: false,
               ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
               cabinConfig: "default", routeId: null,
-              retirementQuarter: 1 + 20,
+              retirementQuarter: 1 + 28,
               maintenanceDeficit: 0, satisfactionPct: 70,
             });
             const dailyFreq = doctrine === "budget-expansion" ? 4
@@ -803,7 +803,7 @@ export const useGame = create<GameStore>()(
           customSeats: customSeats && spec.family === "passenger" ? customSeats : undefined,
           engineUpgrade: engineUpgrade ?? null,
           fuselageUpgrade: !!fuselageUpgrade,
-          retirementQuarter: s.currentQuarter + 20,
+          retirementQuarter: s.currentQuarter + 28,
           maintenanceDeficit: 0, satisfactionPct: 75,
         }));
 
@@ -1818,7 +1818,10 @@ export const useGame = create<GameStore>()(
         const averageAge = updatedFleet.length > 0
           ? updatedFleet.reduce((sum, f) => sum + (s.currentQuarter - f.purchaseQuarter), 0) / updatedFleet.length
           : 0;
-        if (ordersThisQuarter === 0 && averageAge >= 12) {
+        // 60% of the 28Q lifespan = 17Q. The old 12Q threshold was set
+        // when lifespan was 20Q and would now fire too early relative
+        // to actual retirement timing.
+        if (ordersThisQuarter === 0 && averageAge >= 17) {
           newFlags.add("aging_fleet");
         }
         const teamReadyPre: Team = {
@@ -2097,7 +2100,7 @@ export const useGame = create<GameStore>()(
                   ecoUpgradeCost: 0,
                   cabinConfig: "default",
                   routeId: null,
-                  retirementQuarter: s.currentQuarter + 20,
+                  retirementQuarter: s.currentQuarter + 28,
                   maintenanceDeficit: 0,
                   satisfactionPct: 75,
                 }));
@@ -3546,7 +3549,7 @@ export const useGame = create<GameStore>()(
           purchasePrice: 28_000_000, bookValue: 28_000_000,
           leaseQuarterly: null, ecoUpgrade: true, ecoUpgradeQuarter: s.currentQuarter, ecoUpgradeCost: 0,
           cabinConfig: "default", routeId: null,
-          retirementQuarter: s.currentQuarter + 20,
+          retirementQuarter: s.currentQuarter + 28,
           maintenanceDeficit: 0, satisfactionPct: 75,
         }));
         set({
@@ -3815,9 +3818,22 @@ export const useGame = create<GameStore>()(
             const stale = f.routeId
               ? !((t.routes ?? []).some((r) => r.id === f.routeId && r.status !== "closed"))
               : false;
+            // Aircraft lifespan migration: legacy 20Q saves get an
+            // 8-quarter extension on rehydrate so the 7-year lifespan
+            // applies retroactively. Heuristic: if retirement is
+            // exactly purchase+20, this is a legacy plane → bump it.
+            // Newer purchases (28Q) and any custom values are left alone.
+            const legacy20Q = f.retirementQuarter !== undefined
+              && f.retirementQuarter === f.purchaseQuarter + 20;
+            const fixedRetirement =
+              f.retirementQuarter === undefined
+                ? f.purchaseQuarter + 28
+                : legacy20Q
+                  ? f.retirementQuarter + 8
+                  : f.retirementQuarter;
             return {
               ...f,
-              retirementQuarter: f.retirementQuarter ?? f.purchaseQuarter + 20,
+              retirementQuarter: fixedRetirement,
               maintenanceDeficit: f.maintenanceDeficit ?? 0,
               satisfactionPct: f.satisfactionPct ?? 75,
               ecoUpgrade: f.ecoUpgrade ?? false,

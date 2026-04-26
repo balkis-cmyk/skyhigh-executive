@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { Badge, Button, Input, Modal, ModalBody, ModalHeader } from "@/components/ui";
 import { AIRCRAFT, AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { planeImagePath } from "@/lib/aircraft-images";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, fmtAgeYQ } from "@/lib/format";
+import { useGame } from "@/store/game";
 import { cn } from "@/lib/cn";
 import { Plane, ChevronDown, ChevronUp } from "lucide-react";
 import type { AircraftSpec, SecondHandListing } from "@/types/game";
@@ -702,6 +703,14 @@ function SecondaryMarket({
   onBuy: (id: string) => void;
   currentQuarter: number;
 }) {
+  // Look up seller team names so the "Listed by …" line shows the
+  // actual airline (e.g. "Avantair") instead of generic "rival airline".
+  const teams = useGame((s) => s.teams);
+  const sellerName = (sellerTeamId: string): string => {
+    if (sellerTeamId === "admin") return "auctioneer";
+    const t = teams.find((x) => x.id === sellerTeamId);
+    return t ? t.name : "rival airline";
+  };
   if (listings.length === 0) {
     return (
       <div className="text-[0.8125rem] text-ink-muted italic py-8 text-center">
@@ -739,10 +748,13 @@ function SecondaryMarket({
               <div className="text-[0.75rem] text-ink-muted mt-0.5 font-mono tabular">
                 {spec.family === "passenger" ? `${seats} seats` : `${spec.cargoTonnes ?? 0}T cargo`}
                 {" · "}{spec.rangeKm.toLocaleString()} km
-                {" · "}{ageQ}Q age · {remainingQ}Q remaining
+                {" · "}{fmtAgeYQ(ageQ)} age · {fmtAgeYQ(remainingQ)} remaining
               </div>
               <div className="text-[0.6875rem] text-ink-muted mt-1">
-                Listed by {l.sellerTeamId === "admin" ? "auctioneer" : "rival airline"}
+                Listed by{" "}
+                <span className="text-ink-2 font-medium">
+                  {sellerName(l.sellerTeamId)}
+                </span>
               </div>
             </div>
             <div className="shrink-0">
