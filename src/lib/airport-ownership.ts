@@ -162,3 +162,135 @@ export function effectiveAirportCapacity(
   if (!city) return AIRPORT_DEFAULT_CAPACITY_BY_TIER[4];
   return AIRPORT_DEFAULT_CAPACITY_BY_TIER[city.tier as 1 | 2 | 3 | 4] ?? AIRPORT_DEFAULT_CAPACITY_BY_TIER[4];
 }
+
+/** Effective tier for an airport — honours the government-upgrade
+ *  override if one has fired, otherwise falls back to the static city
+ *  tier. Used by demand-growth and storage-cost lookups. */
+export function effectiveAirportTier(
+  airportCode: string,
+  slotState: AirportSlotState | undefined,
+): 1 | 2 | 3 | 4 {
+  if (slotState?.tierOverride) return slotState.tierOverride as 1 | 2 | 3 | 4;
+  const city = CITIES_BY_CODE[airportCode];
+  return (city?.tier ?? 4) as 1 | 2 | 3 | 4;
+}
+
+/** Government-funded airport upgrade schedule. Each entry fires at
+ *  `quarter` ONLY if the airport is still unowned at that point —
+ *  player-owned airports skip the auto-upgrade and the player must
+ *  fund their own +200-slot expansions. The 2-quarter announcement
+ *  news fires regardless of ownership so the player has time to act. */
+export interface AirportGovernmentUpgrade {
+  airportCode: string;
+  quarter: number;          // when the upgrade actually applies
+  capacitySlotBump: number; // slots added on completion
+  raiseTier: boolean;       // tier increases by 1 (capped at 1)
+  projectName: string;      // shown in the news headline
+  detail: string;           // body for the announcement + completion news
+}
+
+export const AIRPORT_GOVERNMENT_UPGRADES: AirportGovernmentUpgrade[] = [
+  {
+    airportCode: "PEK", quarter: 14, capacitySlotBump: 600, raiseTier: true,
+    projectName: "Beijing Capital + Daxing dual-hub expansion",
+    detail: "China announces $11.7B parallel expansion of Beijing Capital and the new Daxing International, lifting combined annual movements by 40%. Government funding closes the financing gap; new slots open for international airlines.",
+  },
+  {
+    airportCode: "IST", quarter: 16, capacitySlotBump: 600, raiseTier: true,
+    projectName: "Istanbul New Airport mega-hub opening",
+    detail: "Türkiye opens the new $11B six-runway mega-hub on Istanbul's European side, replacing Atatürk for commercial operations. Initial capacity sized for 90M passengers; phase two reaches 200M by end of decade.",
+  },
+  {
+    airportCode: "DOH", quarter: 18, capacitySlotBump: 400, raiseTier: true,
+    projectName: "Hamad International expansion programme",
+    detail: "Qatar's Civil Aviation Authority confirms the $5B Hamad International expansion, adding two new concourses and a second cargo apron ahead of regional sporting events. Slot inventory rises by 400.",
+  },
+  {
+    airportCode: "ICN", quarter: 20, capacitySlotBump: 400, raiseTier: true,
+    projectName: "Incheon Phase 4 — Terminal 2 commissioning",
+    detail: "Korea's flagship gateway opens its long-promised Phase 4 expansion: Terminal 2 commissioning, additional concourses, and a fourth runway. Slot inventory rises by 400; Incheon promoted to a Tier-1 demand market.",
+  },
+  {
+    airportCode: "ATL", quarter: 22, capacitySlotBump: 400, raiseTier: true,
+    projectName: "Hartsfield-Jackson capacity programme",
+    detail: "The City of Atlanta unveils a $6B capital programme covering Concourse G, taxiway optimisation, and a fifth runway. ATL — long the world's busiest airport by movements — gets a fresh demand uplift as it absorbs decade-long Sun Belt growth.",
+  },
+  {
+    airportCode: "YYZ", quarter: 24, capacitySlotBump: 300, raiseTier: true,
+    projectName: "Toronto Pearson Terminal 6 + Apron expansion",
+    detail: "GTAA announces a $4B investment in Terminal 6, Apron VIII, and people-mover extensions. Pearson breaks Canadian transit volume records and is promoted to Tier-1 hub status in the demand model.",
+  },
+  {
+    airportCode: "JED", quarter: 26, capacitySlotBump: 300, raiseTier: true,
+    projectName: "King Abdulaziz International new terminal complex",
+    detail: "Saudi Arabia commissions the new King Abdulaziz International terminal complex, lifting capacity to 80M passengers. Hajj-season throughput more than doubles; Jeddah advances from regional to major hub status.",
+  },
+  {
+    airportCode: "BER", quarter: 27, capacitySlotBump: 300, raiseTier: true,
+    projectName: "Berlin Brandenburg full commissioning",
+    detail: "After years of delay, Berlin Brandenburg Airport officially completes phase-one commissioning and absorbs traffic from Tegel and Schönefeld. Germany's third-largest hub finally takes its expected demand profile.",
+  },
+  {
+    airportCode: "DFW", quarter: 28, capacitySlotBump: 400, raiseTier: true,
+    projectName: "DFW Terminal F + sixth-runway programme",
+    detail: "Dallas-Fort Worth approves a $3.5B Terminal F build-out plus the long-deferred sixth runway. North Texas's hub-of-record consolidates further capacity in advance of expected sustained Sun Belt growth.",
+  },
+  {
+    airportCode: "SVO", quarter: 29, capacitySlotBump: 300, raiseTier: true,
+    projectName: "Sheremetyevo Terminal C + cargo precinct",
+    detail: "The Russian government completes the long-running $2.4B Sheremetyevo Terminal C expansion plus a new dedicated cargo precinct. SVO is upgraded in the demand model from a regional hub to a major one.",
+  },
+  {
+    airportCode: "SYD", quarter: 30, capacitySlotBump: 300, raiseTier: true,
+    projectName: "Western Sydney International + Kingsford-Smith expansion",
+    detail: "Australia opens Western Sydney International (Nancy-Bird Walton) plus a complementary expansion at Kingsford-Smith. The dual-airport model unlocks 300 additional slots and elevates Sydney to Tier-1 status in the demand model.",
+  },
+];
+
+/** Map of upgrade quarter → entries fired at that quarter (lookup
+ *  helper for the engine + news layer). */
+export const AIRPORT_UPGRADES_BY_QUARTER: Record<number, AirportGovernmentUpgrade[]> =
+  AIRPORT_GOVERNMENT_UPGRADES.reduce((acc, u) => {
+    (acc[u.quarter] ??= []).push(u);
+    return acc;
+  }, {} as Record<number, AirportGovernmentUpgrade[]>);
+
+/** Map of announcement quarter (= upgrade.quarter - 2) → entries.
+ *  The announcement news fires regardless of ownership so the player
+ *  has 2 quarters to acquire the airport before government funds it. */
+export const AIRPORT_UPGRADES_ANNOUNCED_BY_QUARTER: Record<number, AirportGovernmentUpgrade[]> =
+  AIRPORT_GOVERNMENT_UPGRADES.reduce((acc, u) => {
+    const q = u.quarter - 2;
+    (acc[q] ??= []).push(u);
+    return acc;
+  }, {} as Record<number, AirportGovernmentUpgrade[]>);
+
+/** Apply a government upgrade to an airport's slot state — runs at
+ *  the upgrade.quarter ONLY if the airport is currently unowned.
+ *  Returns the new slot state plus a flag indicating whether the
+ *  upgrade was actually applied (for news bookkeeping). */
+export function applyGovernmentUpgrade(
+  slotState: AirportSlotState | undefined,
+  upgrade: AirportGovernmentUpgrade,
+  cityTier: number,
+): { slotState: AirportSlotState; applied: boolean } {
+  const cur = slotState ?? { available: 0, nextOpening: 0, nextTickQuarter: 5 };
+  if (cur.ownerTeamId) {
+    // Player-owned: government doesn't subsidise private operators.
+    // Player-funded +200 expansions remain the only growth path here.
+    return { slotState: cur, applied: false };
+  }
+  const newTier = upgrade.raiseTier
+    ? Math.max(1, cityTier - 1) as 1 | 2 | 3 | 4
+    : cityTier as 1 | 2 | 3 | 4;
+  const newCapacity = (cur.totalCapacity ?? AIRPORT_DEFAULT_CAPACITY_BY_TIER[newTier]) + upgrade.capacitySlotBump;
+  return {
+    slotState: {
+      ...cur,
+      tierOverride: upgrade.raiseTier ? newTier : cur.tierOverride,
+      totalCapacity: newCapacity,
+      available: cur.available + upgrade.capacitySlotBump,
+    },
+    applied: true,
+  };
+}

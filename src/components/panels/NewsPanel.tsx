@@ -28,6 +28,7 @@ export function NewsPanel() {
   const currentQuarter = useGame((s) => s.currentQuarter);
   const worldCupHostCode = useGame((s) => s.worldCupHostCode);
   const olympicHostCode = useGame((s) => s.olympicHostCode);
+  const airportSlots = useGame((s) => s.airportSlots);
   const player = useGame(selectPlayer);
   const [view, setView] = useState<NewsView>("compact");
 
@@ -55,7 +56,8 @@ export function NewsPanel() {
     const out: NewsItem[] = [];
     for (const q of quartersToShow) {
       const dynamic = dynamicHostNews(q, worldCupHostCode, olympicHostCode,
-        (code) => CITIES_BY_CODE[code]?.name);
+        (code) => CITIES_BY_CODE[code]?.name,
+        airportSlots);
       out.push(...dynamic, ...(NEWS_BY_QUARTER[q] ?? []));
     }
     return out;
@@ -108,7 +110,8 @@ export function NewsPanel() {
       ) : (
         quartersToShow.map((q) => {
           const dynamic = dynamicHostNews(q, worldCupHostCode, olympicHostCode,
-            (code) => CITIES_BY_CODE[code]?.name);
+            (code) => CITIES_BY_CODE[code]?.name,
+            airportSlots);
           const items = [...dynamic, ...(NEWS_BY_QUARTER[q] ?? [])];
           if (items.length === 0) return null;
           return (

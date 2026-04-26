@@ -660,6 +660,12 @@ export interface AirportSlotState {
   /** Owner-imposed weekly fee per slot. Replaces the auction-cleared
    *  price when ownerTeamId is set. */
   ownerSlotRatePerWeekUsd?: number;
+  /** Effective tier override after a government-funded upgrade (Sprint 11).
+   *  When set, the engine reads this instead of CITY.tier for demand
+   *  growth + storage cost lookups. Only assigned when an upgrade
+   *  actually fired — owned airports skip the auto-upgrade and the
+   *  override stays undefined. */
+  tierOverride?: number;
   /** Total runway capacity at the airport — the cap on
    *  Σ(team slot leases) + available. Capacity grows in +200 chunks
    *  via owner-funded expansions. Undefined = "default" (the engine

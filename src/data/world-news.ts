@@ -1,4 +1,5 @@
 import type { NewsItem, NewsModifier } from "@/types/game";
+import { AIRPORT_GOVERNMENT_UPGRADES } from "@/lib/airport-ownership";
 
 /**
  * World news for SkyForce — sourced from SkyForce_Master_Reference.md
@@ -1798,16 +1799,22 @@ export const NEWS_BY_QUARTER: Record<number, NewsItem[]> = WORLD_NEWS.reduce(
 );
 
 /**
- * Dynamic host-city headlines. The World Cup and Olympic host cities
- * are randomized per-game (tier 1-2, never a player or rival hub), so
- * they can't live in the static WORLD_NEWS array. This helper returns
- * any host-related headline that should fire for the given quarter.
+ * Dynamic host-city + airport-upgrade headlines. World Cup / Olympic
+ * host cities are randomised per-game so they can't live in static
+ * WORLD_NEWS. Airport upgrades are scheduled but conditional on
+ * ownership (player-owned airports skip the auto-upgrade), so the
+ * "completion" news is only emitted if the upgrade actually fired.
  */
 export function dynamicHostNews(
   quarter: number,
   worldCupHostCode: string | null | undefined,
   olympicHostCode: string | null | undefined,
   cityNameLookup: (code: string) => string | undefined,
+  /** Snapshot of airportSlots so the helper can determine which
+   *  upgrades fired vs were skipped because the player owned the
+   *  airport. Optional — when omitted, only announcement (Q-2) news
+   *  fires; completion news is suppressed. */
+  airportSlots?: Record<string, { ownerTeamId?: string; tierOverride?: number }>,
 ): NewsItem[] {
   const out: NewsItem[] = [];
 
@@ -1818,7 +1825,7 @@ export function dynamicHostNews(
         id: `Q${quarter}-WC-HOST-ANNOUNCED`,
         quarter, icon: "⚽", impact: "tourism",
         headline: `FIFA names ${wcCity} as official World Cup host city`,
-        detail: `Routes touching ${wcCity} (${worldCupHostCode}) will see heavy demand surges in rounds 19-24. S10 sealed-bid carrier auction opens this quarter.`,
+        detail: `Routes touching ${wcCity} (${worldCupHostCode}) will see heavy demand surges through the tournament window. S10 sealed-bid carrier auction opens this quarter.`,
       });
     }
   }
@@ -1830,8 +1837,48 @@ export function dynamicHostNews(
         id: `Q${quarter}-OL-HOST-ANNOUNCED`,
         quarter, icon: "🏅", impact: "tourism",
         headline: `IOC confirms ${olCity} for the upcoming Summer Olympics`,
-        detail: `Demand surge expected on ${olCity} (${olympicHostCode}) routes through the rounds 29-32 window. S11 Olympic Play sponsorship slots open this quarter.`,
+        detail: `Demand surge expected on ${olCity} (${olympicHostCode}) routes during the Games window. S11 Olympic Play sponsorship slots open this quarter.`,
       });
+    }
+  }
+
+  // Airport government-upgrade announcements (2 quarters ahead) +
+  // completion notices (at the upgrade quarter, only if applied).
+  for (const u of AIRPORT_GOVERNMENT_UPGRADES) {
+    const cityName = cityNameLookup(u.airportCode) ?? u.airportCode;
+    if (quarter === u.quarter - 2) {
+      out.push({
+        id: `Q${quarter}-AIRPORT-ANNOUNCE-${u.airportCode}`,
+        quarter, icon: "🏗", impact: "ops",
+        headline: `${cityName} announces ${u.projectName} — completion in 2 quarters`,
+        detail:
+          `${u.detail} Capacity rises by ${u.capacitySlotBump} slots on completion` +
+          (u.raiseTier ? ` and the airport is promoted by one tier in the demand model.` : `.`) +
+          ` If a private operator acquires ${u.airportCode} before completion, the new owner funds capacity expansions instead — government doesn't subsidise private airports.`,
+      });
+    }
+    if (quarter === u.quarter) {
+      // Only emit completion news if the upgrade actually fired (i.e.
+      // the airport was unowned and the engine flipped tierOverride).
+      const slot = airportSlots?.[u.airportCode];
+      const wasApplied = !slot?.ownerTeamId; // engine only applies when unowned
+      if (wasApplied) {
+        out.push({
+          id: `Q${quarter}-AIRPORT-COMPLETE-${u.airportCode}`,
+          quarter, icon: "🛫", impact: "ops",
+          headline: `${u.projectName} completes — ${cityName} live with new capacity`,
+          detail:
+            `${u.detail} +${u.capacitySlotBump} slots online; bidding reopens for the new pool` +
+            (u.raiseTier ? `. ${u.airportCode} promoted in the demand model — tourism + business growth recalibrated upward.` : `.`),
+        });
+      } else {
+        out.push({
+          id: `Q${quarter}-AIRPORT-PRIVATIZED-${u.airportCode}`,
+          quarter, icon: "🏛", impact: "ops",
+          headline: `${cityName} expansion deferred — airport now privately operated`,
+          detail: `Government-funded ${u.projectName} cancelled following private acquisition. The new owner can fund their own +200-slot expansions on a per-tier cost basis. No public-sector capacity uplift this quarter.`,
+        });
+      }
     }
   }
 

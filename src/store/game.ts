@@ -49,8 +49,11 @@ import {
   AIRPORT_EXPANSION_COST_PER_LEVEL,
   AIRPORT_EXPANSION_SLOTS,
   AIRPORT_MAX_CAPACITY_BY_TIER,
+  AIRPORT_UPGRADES_BY_QUARTER,
   airportAskingPriceUsd,
+  applyGovernmentUpgrade,
   applyOwnerSlotRate,
+  type AirportGovernmentUpgrade,
 } from "@/lib/airport-ownership";
 import {
   LEASE_BUYOUT_RESIDUAL_PCT,
@@ -3214,7 +3217,7 @@ export const useGame = create<GameStore>()(
         // Apply yearly slot opens at Q5 / Q9 / Q13 / Q17 (PRD slot bidding).
         // Each airport adds its previously-announced nextOpening to available
         // and rolls the next year's batch.
-        const { slots: tickedSlots, ticked } = applyYearlyTickIfDue(
+        const { slots: postYearlyTick, ticked } = applyYearlyTickIfDue(
           s.airportSlots ?? {},
           nextQ,
         );
@@ -3222,6 +3225,31 @@ export const useGame = create<GameStore>()(
           toast.accent(
             `New airport slots open · Year ${Math.ceil(nextQ / 4)}`,
             "Submit bids in the Slot Market. Winners announced at quarter close.",
+          );
+        }
+
+        // Government-funded airport upgrades (Sprint 11 / 11 airports
+        // Q14–Q30). Each fires only if the airport is still UNOWNED at
+        // its scheduled quarter; player-owned airports skip the auto-
+        // upgrade and rely on the player-funded +200 expansion path.
+        let tickedSlots = postYearlyTick;
+        const upgradesThisQuarter = AIRPORT_UPGRADES_BY_QUARTER[nextQ] ?? [];
+        const upgradesApplied: AirportGovernmentUpgrade[] = [];
+        for (const upgrade of upgradesThisQuarter) {
+          const cur = tickedSlots[upgrade.airportCode];
+          const cityTier = (CITIES_BY_CODE[upgrade.airportCode]?.tier ?? 4);
+          const { slotState: nextState, applied } =
+            applyGovernmentUpgrade(cur, upgrade, cityTier);
+          if (applied) {
+            tickedSlots = { ...tickedSlots, [upgrade.airportCode]: nextState };
+            upgradesApplied.push(upgrade);
+          }
+        }
+        if (upgradesApplied.length > 0) {
+          const names = upgradesApplied.map((u) => u.airportCode).join(", ");
+          toast.accent(
+            `Airport expansion: ${names}`,
+            "Government-funded upgrade complete — new slots and demand uplift live this quarter.",
           );
         }
 
