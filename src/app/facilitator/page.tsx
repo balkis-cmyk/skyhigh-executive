@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { Badge, Button, Card, CardBody, Input } from "@/components/ui";
+import { Badge, Button, Card, CardBody, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
 import { AdminPanel } from "@/components/panels/AdminPanel";
 import { fmtMoney, fmtQuarter } from "@/lib/format";
@@ -201,26 +201,39 @@ function SessionView() {
             <h2 className="font-display text-[1.25rem] text-ink mb-3">Start a new session</h2>
             <div className="space-y-3">
               <div>
-                <label className="block text-[0.6875rem] uppercase tracking-wider text-ink-muted font-semibold mb-1.5">
+                <div
+                  id="seat-count-label"
+                  className="block text-[0.6875rem] uppercase tracking-wider text-ink-muted font-semibold mb-1.5"
+                >
                   Number of teams
-                </label>
-                <div className="flex items-center gap-3">
+                </div>
+                <div
+                  role="group"
+                  aria-labelledby="seat-count-label"
+                  className="flex items-center gap-3"
+                >
                   <button
                     onClick={() => setSeatCount(Math.max(2, seatCount - 1))}
-                    className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40"
+                    aria-label="Decrease team count"
+                    className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
                     disabled={seatCount <= 2}
                   >
-                    −
+                    <span aria-hidden="true">−</span>
                   </button>
-                  <span className="tabular font-mono text-[1.5rem] text-ink font-bold w-14 text-center">
+                  <span
+                    className="tabular font-mono text-[1.5rem] text-ink font-bold w-14 text-center"
+                    aria-live="polite"
+                    aria-atomic="true"
+                  >
                     {seatCount}
                   </span>
                   <button
                     onClick={() => setSeatCount(Math.min(10, seatCount + 1))}
-                    className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40"
+                    aria-label="Increase team count"
+                    className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
                     disabled={seatCount >= 10}
                   >
-                    +
+                    <span aria-hidden="true">+</span>
                   </button>
                   <span className="text-[0.75rem] text-ink-muted ml-2">
                     Between 2 and 10 players
@@ -335,15 +348,18 @@ function NavItem({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      aria-label={`${label} — ${sub}`}
       className={cn(
-        "rounded-lg flex items-start gap-3 px-3 py-2.5 text-left transition-colors",
+        "rounded-lg flex items-start gap-3 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
         active
           ? "bg-primary text-primary-fg"
           : "text-ink-2 hover:bg-surface-hover hover:text-ink",
       )}
     >
-      <Icon size={16} strokeWidth={1.75} className="shrink-0 mt-0.5" />
+      <Icon size={16} strokeWidth={1.75} aria-hidden="true" className="shrink-0 mt-0.5" />
       <div>
         <div className="font-medium text-[0.875rem] leading-tight">{label}</div>
         <div className={cn(
@@ -376,7 +392,11 @@ function TeamsView({
         </p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div
+        role="radiogroup"
+        aria-label="Active team viewer"
+        className="grid grid-cols-1 md:grid-cols-2 gap-3"
+      >
         {teams.map((t) => {
           const isActive = t.id === activeId;
           const av = computeAirlineValue(t);
@@ -386,9 +406,13 @@ function TeamsView({
           return (
             <button
               key={t.id}
+              type="button"
+              role="radio"
+              aria-checked={isActive}
+              aria-label={`View as ${t.name} (${t.code}), hub ${t.hubCode}`}
               onClick={() => onSelectTeam(t.id)}
               className={cn(
-                "rounded-lg border bg-surface p-4 text-left transition-all",
+                "rounded-lg border bg-surface p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
                 isActive
                   ? "border-primary shadow-[var(--shadow-2)] ring-2 ring-primary/20"
                   : "border-line hover:bg-surface-hover hover:border-line",
@@ -509,6 +533,7 @@ function SavesView() {
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>(() => listSnapshots());
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [confirmRestoreId, setConfirmRestoreId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function refresh() {
@@ -666,8 +691,9 @@ function SavesView() {
                       <Download size={11} /> Export
                     </button>
                     <button
-                      onClick={() => handleDelete(m.id)}
-                      className="px-2 py-1 rounded-md border border-line text-[0.75rem] hover:bg-[var(--negative-soft)] hover:border-negative flex items-center gap-1 text-ink-muted hover:text-negative"
+                      onClick={() => setConfirmDeleteId(m.id)}
+                      aria-label={`Delete snapshot ${m.quarterLabel}`}
+                      className="px-2 py-1 rounded-md border border-line text-[0.75rem] hover:bg-[var(--negative-soft)] hover:border-negative flex items-center gap-1 text-ink-muted hover:text-negative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
                       title="Delete this snapshot"
                     >
                       <Trash2 size={11} />
@@ -687,47 +713,96 @@ function SavesView() {
         are rejected at import time.
       </p>
 
-      {/* Restore confirmation modal — restoring a snapshot is destructive
-          (replaces the live game state) so we make the player confirm. */}
-      {confirmRestoreId && (() => {
-        const meta = snapshots.find((m) => m.id === confirmRestoreId);
-        if (!meta) return null;
-        return (
-          <div
-            className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
-            onClick={() => setConfirmRestoreId(null)}
-          >
-            <div
-              className="rounded-lg bg-surface border border-line shadow-2xl p-5 max-w-md w-full"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="font-display text-[1.25rem] text-ink mb-2">
-                Restore {meta.quarterLabel}?
-              </h3>
-              <p className="text-[0.875rem] text-ink-2 leading-relaxed mb-4">
-                This replaces the current game state with the snapshot taken at{" "}
-                <strong className="text-ink">{meta.quarterLabel}</strong>.
-                Every team rolls back to where they were at the start of that
-                round. Subsequent rounds are wiped from the live state but
-                their snapshots stay in this list.
-              </p>
-              <div className="flex items-center justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setConfirmRestoreId(null)}>
+      {/* Restore confirmation — destructive (replaces live state) so we
+          force a confirm. Switched from a hand-rolled overlay to the
+          canonical <Modal> for visual consistency with every other
+          confirm in the app. */}
+      <Modal open={!!confirmRestoreId} onClose={() => setConfirmRestoreId(null)}>
+        {confirmRestoreId && (() => {
+          const meta = snapshots.find((m) => m.id === confirmRestoreId);
+          if (!meta) return null;
+          return (
+            <>
+              <ModalHeader>
+                <h2 className="font-display text-[1.5rem] text-ink">
+                  Restore {meta.quarterLabel}?
+                </h2>
+                <p className="text-ink-muted text-[0.8125rem] mt-1">
+                  This replaces the current game state with the snapshot taken
+                  at the start of that round. Every team rolls back to where
+                  they were at that moment. Subsequent rounds are wiped from
+                  the live state but their snapshots stay in this list, so
+                  you can re-restore at any time.
+                </p>
+              </ModalHeader>
+              <ModalBody>
+                <div className="rounded-md border border-line bg-surface p-3 text-[0.8125rem] space-y-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-ink-muted">Quarter</span>
+                    <span className="tabular font-mono text-ink">{meta.quarterLabel}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-ink-muted">Teams at snapshot</span>
+                    <span className="tabular font-mono text-ink">{meta.teamCount}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-ink-muted">Saved</span>
+                    <span className="text-ink">{new Date(meta.savedAt).toLocaleString()}</span>
+                  </div>
+                </div>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="ghost" onClick={() => setConfirmRestoreId(null)}>
                   Cancel
                 </Button>
                 <Button
                   variant="primary"
-                  size="sm"
                   onClick={() => handleRestore(meta.id)}
                   disabled={pendingId === meta.id}
                 >
-                  Restore game
+                  {pendingId === meta.id ? "Restoring…" : "Restore game"}
                 </Button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+              </ModalFooter>
+            </>
+          );
+        })()}
+      </Modal>
+
+      {/* Delete-snapshot confirm — small but irreversible. */}
+      <Modal open={!!confirmDeleteId} onClose={() => setConfirmDeleteId(null)}>
+        {confirmDeleteId && (() => {
+          const meta = snapshots.find((m) => m.id === confirmDeleteId);
+          if (!meta) return null;
+          return (
+            <>
+              <ModalHeader>
+                <h2 className="font-display text-[1.5rem] text-ink">
+                  Delete {meta.quarterLabel} snapshot?
+                </h2>
+                <p className="text-ink-muted text-[0.8125rem] mt-1">
+                  Removes this saved state from local storage. The current
+                  game session is unaffected — only the snapshot you took at
+                  the start of {meta.quarterLabel} is lost.
+                </p>
+              </ModalHeader>
+              <ModalFooter>
+                <Button variant="ghost" onClick={() => setConfirmDeleteId(null)}>
+                  Keep snapshot
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    handleDelete(meta.id);
+                    setConfirmDeleteId(null);
+                  }}
+                >
+                  Delete
+                </Button>
+              </ModalFooter>
+            </>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }

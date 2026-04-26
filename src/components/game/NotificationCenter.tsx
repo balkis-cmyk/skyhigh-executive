@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Bell, Trash2, X, Info, CheckCircle2, AlertTriangle, CircleX, Sparkles } from "lucide-react";
 import { useToasts, type ToastKind } from "@/store/toasts";
 import { cn } from "@/lib/cn";
@@ -50,9 +50,25 @@ export function NotificationCenter() {
     }
   }
 
+  // Bucketing depends on "now", which we refresh once per minute while
+  // the panel is open. Pulling Date.now() inline in render or a memo
+  // breaks idempotency — buckets would drift on every re-render. We
+  // intentionally setState inside an effect to (a) snapshot now at
+  // open-time so a stale mount-time value isn't reused hours later,
+  // and (b) tick once per minute so "just now" eventually rolls over.
+  // The effect-set is bounded (only on open transition) so cascading
+  // renders aren't a real concern here.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, [open]);
+
   // Group by relative bucket (newest first)
   const groups = useMemo(() => {
-    const now = Date.now();
     const HOUR = 60 * 60 * 1000;
     const justNow: typeof history = [];
     const today: typeof history = [];
@@ -66,7 +82,7 @@ export function NotificationCenter() {
       else older.push(t);
     }
     return { justNow, today, older };
-  }, [history]);
+  }, [history, now]);
 
   return (
     <>
