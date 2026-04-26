@@ -52,7 +52,7 @@ interface BotProfile {
 const PROFILES: Record<BotDifficulty, BotProfile> = {
   easy: {
     orderAircraftCashRatio: 3,
-    actionProbability: 0.55,
+    actionProbability: 0.75,
     routesOpenedPerQuarter: 1,
     slotBidMultiplier: 1.0,
     pricingBias: 0,
@@ -228,7 +228,13 @@ export function planBotAircraftOrder(
   currentQuarter: number,
 ): { specId: string; quantity: number; acquisitionType: "buy" | "lease" } | null {
   const profile = PROFILES[difficulty];
-  if (Math.random() > profile.actionProbability * 0.7) return null;
+  // Earlier this throttle was actionProbability * 0.7, which made
+  // even Hard bots skip ~33% of order chances on top of the action
+  // probability roll — leading to "bots aren't doing anything"
+  // complaints. Now just gate on actionProbability directly: Hard
+  // bots order ~95% of quarters when they have cash, Medium ~85%,
+  // Easy ~75%.
+  if (Math.random() > profile.actionProbability) return null;
 
   // Available specs for this quarter
   const availableSpecs = AIRCRAFT.filter((a) => a.unlockQuarter <= currentQuarter);

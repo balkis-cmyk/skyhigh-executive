@@ -2798,22 +2798,43 @@ export const useGame = create<GameStore>()(
           if (!t.botDifficulty) return t;
           let updated = { ...t };
 
-          // Aircraft order — bot may add a fresh purchase
+          // Aircraft order — bot may add a fresh purchase or lease.
+          // Now goes through the same lease/buy plumbing as the player
+          // so deposits, lease term/buy-out residual, production caps
+          // etc. are all respected. Bots that lease ineligible specs
+          // silently fall back to buy.
           const order = planBotAircraftOrder(updated, t.botDifficulty, s.currentQuarter);
           if (order) {
             const spec = AIRCRAFT_BY_ID[order.specId];
             if (spec) {
-              const totalCost = spec.buyPriceUsd * order.quantity;
+              // Lease eligibility check — if the chosen acquisition is
+              // lease but the spec isn't in the top-7/top-3 list, fall
+              // back to buy so the bot still acts.
+              let acquisitionType = order.acquisitionType;
+              if (acquisitionType === "lease" && !canLeaseSpec(spec, AIRCRAFT, s.currentQuarter)) {
+                acquisitionType = "buy";
+              }
+              // Cash check + lease economics (15% deposit) vs buy (full).
+              const leaseTerms = leaseTermsFor(spec);
+              const perPlaneCost = acquisitionType === "buy"
+                ? spec.buyPriceUsd
+                : leaseTerms.depositUsd;
+              const totalCost = perPlaneCost * order.quantity;
               if (updated.cashUsd >= totalCost) {
                 const newPlanes: FleetAircraft[] = Array.from({ length: order.quantity }, () => ({
                   id: mkId("ac"),
                   specId: order.specId,
                   status: "ordered",
-                  acquisitionType: "buy",
+                  acquisitionType,
                   purchaseQuarter: s.currentQuarter,
-                  purchasePrice: spec.buyPriceUsd,
-                  bookValue: spec.buyPriceUsd,
-                  leaseQuarterly: null,
+                  purchasePrice: acquisitionType === "buy" ? spec.buyPriceUsd : 0,
+                  bookValue: acquisitionType === "buy" ? spec.buyPriceUsd : 0,
+                  leaseQuarterly: acquisitionType === "lease" ? leaseTerms.perQuarterUsd : null,
+                  leaseDepositUsd: acquisitionType === "lease" ? leaseTerms.depositUsd : undefined,
+                  leaseTermEndsAtQuarter: acquisitionType === "lease"
+                    ? s.currentQuarter + leaseTerms.termQuarters - 1
+                    : undefined,
+                  leaseBuyoutBasisUsd: acquisitionType === "lease" ? spec.buyPriceUsd : undefined,
                   ecoUpgrade: false,
                   ecoUpgradeQuarter: null,
                   ecoUpgradeCost: 0,
