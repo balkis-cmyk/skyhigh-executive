@@ -101,30 +101,64 @@ export function QuarterCloseModal() {
           </span>
         </div>
 
-        {/* Tab strip */}
-        <nav className="mt-4 -mb-3 flex items-center gap-1 border-b border-line">
+        {/* Tab strip — proper tablist/tab/tabpanel ARIA so screen readers
+            announce "tab N of 6" and arrow-key navigation works as
+            expected. The tabpanel association lives on ModalBody below. */}
+        <nav
+          role="tablist"
+          aria-label="Quarter close report sections"
+          className="mt-4 -mb-3 flex items-center gap-1 border-b border-line"
+        >
           {TABS.map((t) => {
             const active = tab === t.id;
             return (
               <button
                 key={t.id}
+                type="button"
+                role="tab"
+                id={`qc-tab-${t.id}`}
+                aria-selected={active}
+                aria-controls={`qc-tabpanel-${t.id}`}
+                tabIndex={active ? 0 : -1}
                 onClick={() => setTab(t.id)}
+                onKeyDown={(e) => {
+                  // Roving tabindex: ←/→ moves through the tab strip
+                  // without cycling outside the modal. Wraps at edges.
+                  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                  e.preventDefault();
+                  const idx = TABS.findIndex((x) => x.id === tab);
+                  const next =
+                    e.key === "ArrowRight"
+                      ? (idx + 1) % TABS.length
+                      : (idx - 1 + TABS.length) % TABS.length;
+                  setTab(TABS[next].id);
+                  // Focus the newly-selected tab so the visible focus
+                  // ring follows the user's navigation.
+                  const el = document.getElementById(`qc-tab-${TABS[next].id}`);
+                  el?.focus();
+                }}
                 className={cn(
                   "px-3 py-2 text-[0.75rem] font-medium flex items-center gap-1.5",
                   "border-b-2 -mb-px transition-colors duration-[var(--dur-fast)]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-t",
                   active
                     ? "border-primary text-primary"
                     : "border-transparent text-ink-muted hover:text-ink",
                 )}
               >
-                <t.Icon size={13} /> {t.label}
+                <t.Icon size={13} aria-hidden="true" /> {t.label}
               </button>
             );
           })}
         </nav>
       </ModalHeader>
 
-      <ModalBody className="space-y-5 min-h-[280px]">
+      <ModalBody
+        role="tabpanel"
+        id={`qc-tabpanel-${tab}`}
+        aria-labelledby={`qc-tab-${tab}`}
+        className="space-y-5 min-h-[280px]"
+      >
         {tab === "overview" && (
           <div className="space-y-5">
             <div className="grid grid-cols-3 gap-4">

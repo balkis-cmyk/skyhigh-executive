@@ -30,22 +30,44 @@ export function ReportsPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <nav className="flex items-stretch gap-0 border-b border-line -mt-1 mb-3 -mx-1">
+      <nav
+        role="tablist"
+        aria-label="Reports sections"
+        className="flex items-stretch gap-0 border-b border-line -mt-1 mb-3 -mx-1"
+      >
         {TABS.map((t) => {
           const active = tab === t.id;
           return (
             <button
               key={t.id}
+              type="button"
+              role="tab"
+              id={`reports-tab-${t.id}`}
+              aria-selected={active}
+              aria-controls={`reports-tabpanel-${t.id}`}
+              tabIndex={active ? 0 : -1}
               onClick={() => setTab(t.id)}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                e.preventDefault();
+                const idx = TABS.findIndex((x) => x.id === tab);
+                const next =
+                  e.key === "ArrowRight"
+                    ? (idx + 1) % TABS.length
+                    : (idx - 1 + TABS.length) % TABS.length;
+                setTab(TABS[next].id);
+                document.getElementById(`reports-tab-${TABS[next].id}`)?.focus();
+              }}
               className={cn(
                 "flex-1 flex items-center justify-center gap-2 px-3 py-2.5",
                 "text-[0.875rem] font-medium border-b-2 -mb-px transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-t",
                 active
                   ? "border-primary text-primary"
                   : "border-transparent text-ink-muted hover:text-ink hover:bg-surface-hover",
               )}
             >
-              <t.Icon size={14} strokeWidth={1.75} />
+              <t.Icon size={14} strokeWidth={1.75} aria-hidden="true" />
               {t.label}
             </button>
           );
@@ -56,7 +78,12 @@ export function ReportsPanel() {
         {meta.subtitle}
       </div>
 
-      <div className="flex-1 overflow-auto pb-1">
+      <div
+        role="tabpanel"
+        id={`reports-tabpanel-${tab}`}
+        aria-labelledby={`reports-tab-${tab}`}
+        className="flex-1 overflow-auto pb-1"
+      >
         {tab === "overview" && <OverviewPanel />}
         {tab === "mgmt" && <DashboardPanel />}
         {tab === "financials" && <FinancialsPanel />}
