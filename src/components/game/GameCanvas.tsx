@@ -91,24 +91,31 @@ function CanvasInner() {
     // Origin set, new city clicked: pick as destination.
     if (!dest) {
       setDest(c.code);
-      // If a route already exists between these endpoints (either
-      // direction), open the Routes panel focused on that route instead
-      // of the New Route modal. Otherwise, create-new flow.
-      const existing = player?.routes.find(
+      // If a route already exists between these endpoints AND of the
+      // SAME mode (passenger/cargo) as the current click intent, open
+      // the Routes panel focused on it. If a passenger route exists
+      // and the player has the Cargo toggle on, fall through to the
+      // new-route launch bar so the player can stack a cargo lane on
+      // top of the existing passenger lane (and vice versa). Earlier
+      // the handler always matched any route regardless of mode, so
+      // adding cargo on an existing passenger OD pair was impossible.
+      const existingSameMode = player?.routes.find(
         (r) =>
           r.status !== "closed" &&
+          !!r.isCargo === isCargo &&
           ((r.originCode === origin && r.destCode === c.code) ||
             (r.originCode === c.code && r.destCode === origin)),
       );
-      if (existing) {
+      if (existingSameMode) {
         useUi.getState().openPanel("routes");
-        useUi.getState().setFocusedRouteId(existing.id);
-        // Clear the click-state so the launch bar / new-route modal
-        // doesn't pop up afterwards.
+        useUi.getState().setFocusedRouteId(existingSameMode.id);
         setOrigin(null);
         setDest(null);
         setLaunchOpen(false);
       } else {
+        // No matching-mode route → launch the new-route flow. The
+        // launch bar (RouteLaunchBar) lets the player toggle pax/cargo
+        // before committing.
         setLaunchOpen(true);
       }
       return;

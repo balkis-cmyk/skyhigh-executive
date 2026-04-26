@@ -816,8 +816,12 @@ function RouteDetailModal({
                 : route.quarterlyFuelCost + route.quarterlySlotCost;
             return (
               <>
-                <MiniStat label="Load" value={fmtPct(route.avgOccupancy * 100, 0)}
-                  tone={route.avgOccupancy > 0.7 ? "pos" : route.avgOccupancy > 0 && route.avgOccupancy < 0.5 ? "neg" : undefined} />
+                <MiniStat
+                  label={route.isCargo ? "Cargo load" : "Load"}
+                  value={fmtPct(route.avgOccupancy * 100, 0)}
+                  tone={route.avgOccupancy > 0.7 ? "pos" : route.avgOccupancy > 0 && route.avgOccupancy < 0.5 ? "neg" : undefined}
+                  sub={route.isCargo ? "tonnes shipped / capacity" : "pax / seats"}
+                />
                 <MiniStat label="Q revenue" value={fmtMoney(route.quarterlyRevenue)} />
                 <MiniStat label="Q costs" value={fmtMoney(fullyLoadedCosts)} tone="neg"
                   sub={`fuel ${fmtMoney(route.quarterlyFuelCost)} + share of overhead`} />

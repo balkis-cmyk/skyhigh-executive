@@ -242,20 +242,48 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   }, [econFare, busFare, firstFare, isCargo, hasBusiness, hasFirst,
       econRange?.base, busRange?.base, firstRange?.base]);
 
-  // Projected occupancy preview
+  // Projected demand vs capacity preview — passenger uses pax/day,
+  // cargo uses tonnes/day. Earlier the cargo path skipped this preview
+  // entirely so the player set up cargo routes blind. Now both modes
+  // get the same projection block in their own units.
   const projection = (() => {
     if (specIds.length === 0 || weeklyFreq === 0) return null;
-    // Keep fractional daily frequency so 10/wk really means 10/wk
-    // (~1.43 daily) rather than snapping to 14/wk. The cruise-time
-    // physics cap is integer-daily; player intent below that cap can
-    // be any whole-week value.
     const dailyFreq = Math.max(1 / 7, weeklyFreq / 7);
+    if (isCargo) {
+      // Cargo: capacity = tonnes/flight × daily freq.
+      // Demand = min(origin business, dest business) tonnes/day, with
+      // per-city cargo modifiers folded in (matches the engine).
+      const tonnesPerFlight = selectedPlaneIds.reduce((sum, id) => {
+        const p = player.fleet.find((f) => f.id === id);
+        if (!p) return sum;
+        const spec = AIRCRAFT_BY_ID[p.specId];
+        return sum + (spec?.cargoTonnes ?? 0);
+      }, 0);
+      const dailyCapacity = tonnesPerFlight * dailyFreq;
+      if (dailyCapacity === 0) return null;
+      const o = CITIES_BY_CODE[origin!];
+      const d = CITIES_BY_CODE[dest!];
+      if (!o || !d) return null;
+      // Same shape as engine cargo demand: min of two cities' business demand.
+      // (Quick approximation — the engine adds news modifiers + market focus
+      // bonus on top; this is a "before-modifier" baseline preview.)
+      const dailyBusinessO = o.business * Math.pow(1 + o.businessGrowth / 100 / 4, s.currentQuarter - 1);
+      const dailyBusinessD = d.business * Math.pow(1 + d.businessGrowth / 100 / 4, s.currentQuarter - 1);
+      const demand = Math.min(dailyBusinessO, dailyBusinessD);
+      const occ = demand > 0 ? Math.min(1, demand / dailyCapacity) : 0;
+      return {
+        kind: "cargo" as const,
+        demand,
+        capacity: dailyCapacity,
+        occupancy: occ,
+        tone: (occ < 0.25 ? "neg" : occ < 0.55 ? "warn" : "pos") as "neg" | "warn" | "pos",
+      };
+    }
     const demand = routeDemandPerDay(origin!, dest!, s.currentQuarter).total;
     const totalSeats = selectedPlaneIds.reduce((sum, id) => {
       const p = player.fleet.find((f) => f.id === id);
       if (!p) return sum;
       const spec = AIRCRAFT_BY_ID[p.specId];
-      // Use customSeats when set at purchase time; fall back to spec defaults.
       const seats = p.customSeats ?? spec?.seats;
       if (!seats) return sum;
       return sum + seats.first + seats.business + seats.economy;
@@ -264,11 +292,12 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     if (dailyCapacity === 0) return null;
     const occ = Math.min(1, demand / dailyCapacity);
     return {
+      kind: "passenger" as const,
       demand,
       capacity: dailyCapacity,
       occupancy: occ,
-      tone: occ < 0.25 ? "neg" : occ < 0.55 ? "warn" : "pos",
-    } as const;
+      tone: (occ < 0.25 ? "neg" : occ < 0.55 ? "warn" : "pos") as "neg" | "warn" | "pos",
+    };
   })();
 
   const hasAircraft = selectedPlaneIds.length > 0;
@@ -595,11 +624,20 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
 
         {isCargo && (
           <Section step={3} title="Cargo" disabled={!hasAircraft}>
-            <div className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[0.8125rem] text-ink-2">
-              Cargo route · revenue is based on the lower of the origin
-              and destination business-demand levels (treated as daily
-              tonnes). Storage fees replace slot fees. Rate per tonne is
-              set automatically by distance band.
+            <div className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[0.8125rem] text-ink-2 space-y-1.5">
+              <p>
+                <strong className="text-ink">Cargo route.</strong> Daily demand
+                = the lower of origin and destination business demand (in
+                tonnes), adjusted by news cargo modifiers and your market-focus
+                doctrine.
+              </p>
+              <p>
+                Cost stack: <strong className="text-ink">airport slot fees</strong>{" "}
+                (same auction system as passenger — cargo flights occupy slots)
+                <strong className="text-ink"> + warehousing storage fees</strong>{" "}
+                at both endpoints. Rate per tonne scales by haul distance and
+                Pricing Tier; you can override per route below.
+              </p>
             </div>
           </Section>
         )}
@@ -675,7 +713,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
           </Section>
         )}
 
-        {/* Live projection */}
+        {/* Live projection — passenger uses pax/seats, cargo uses tonnes. */}
         {projection && (
           <div className={cn(
             "rounded-md border px-3 py-2.5 text-[0.8125rem]",
@@ -684,10 +722,12 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
             projection.tone === "pos" && "border-positive bg-[var(--positive-soft)] text-positive",
           )}>
             <div className="font-semibold uppercase tracking-wider text-[0.6875rem] mb-0.5">
-              Projected occupancy · {(projection.occupancy * 100).toFixed(0)}%
+              Projected {projection.kind === "cargo" ? "load" : "occupancy"} · {(projection.occupancy * 100).toFixed(0)}%
             </div>
             <div className="text-ink-2 text-[0.75rem]">
-              Daily demand {Math.round(projection.demand)} pax vs capacity {projection.capacity} seats.
+              {projection.kind === "cargo"
+                ? `Daily demand ${Math.round(projection.demand)} T vs capacity ${Math.round(projection.capacity)} T (before market-focus + news modifiers).`
+                : `Daily demand ${Math.round(projection.demand)} pax vs capacity ${Math.round(projection.capacity)} seats.`}
               {projection.tone === "neg" && " Route is unlikely to be profitable at this configuration."}
               {projection.tone === "warn" && " Consider lowering frequency or adjusting fares."}
               {projection.tone === "pos" && " Strong load factor."}
