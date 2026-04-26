@@ -19,21 +19,29 @@ export function LeaderboardPanel() {
         Competitor finances stay private — only the rank, brand grade,
         and fleet size are shown.
       </div>
-      <div className="space-y-1.5">
+      {/* Ordered list for proper ranking semantics — screen readers
+          announce "list item N of M" with the rank built in. */}
+      <ol className="space-y-1.5 list-none p-0">
         {ranked.map((t, i) => {
           const isPlayer = t.isPlayer;
           const rankIcon = i === 0 ? Crown : i === 1 || i === 2 ? Trophy : null;
           const RankIcon = rankIcon;
+          const av = computeAirlineValue(t);
+          const fc = fleetCount(t.fleet);
+          const ariaLabel = isPlayer
+            ? `Rank ${i + 1}: ${t.name} (you), Brand ${brandRating(t).grade}, airline value ${fmtMoney(av)}, ${fc} aircraft`
+            : `Rank ${i + 1}: ${t.name}, Brand ${brandRating(t).grade}, airline value ${fmtMoney(av)}, ${fc} aircraft`;
           return (
-            <div
+            <li
               key={t.id}
+              aria-label={ariaLabel}
               className={`flex items-center gap-3 rounded-md border p-3 transition-colors ${
                 isPlayer
                   ? "border-primary bg-[rgba(20,53,94,0.04)]"
                   : "border-line bg-surface hover:bg-surface-hover"
               }`}
             >
-              <span className="font-mono text-ink-muted w-5 tabular text-center flex items-center justify-center">
+              <span aria-hidden="true" className="font-mono text-ink-muted w-5 tabular text-center flex items-center justify-center">
                 {RankIcon ? (
                   <RankIcon
                     size={14}
@@ -50,6 +58,7 @@ export function LeaderboardPanel() {
                 )}
               </span>
               <span
+                aria-hidden="true"
                 className="inline-block w-8 h-8 rounded flex items-center justify-center font-mono text-[0.6875rem] font-semibold text-primary-fg shrink-0"
                 style={{ background: t.color }}
               >
@@ -66,27 +75,27 @@ export function LeaderboardPanel() {
               </div>
               <div className="text-right shrink-0">
                 <div className="tabular font-display text-[1.25rem] text-ink leading-none">
-                  {fmtMoney(computeAirlineValue(t))}
+                  {fmtMoney(av)}
                 </div>
                 <div className="text-[0.6875rem] text-ink-muted mt-0.5 flex items-center justify-end gap-1.5">
                   <span>Brand {brandRating(t).grade}</span>
                   {isPlayer && (
                     <>
-                      <span>·</span>
+                      <span aria-hidden="true">·</span>
                       <span>{t.routes.filter((r) => r.status === "active").length} routes</span>
                     </>
                   )}
-                  <span>·</span>
+                  <span aria-hidden="true">·</span>
                   <span className="inline-flex items-center gap-0.5">
-                    <Plane size={11} className="text-ink-muted" />
-                    {fleetCount(t.fleet)}
+                    <Plane size={11} aria-hidden="true" className="text-ink-muted" />
+                    {fc}
                   </span>
                 </div>
               </div>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
     </div>
   );
 }
