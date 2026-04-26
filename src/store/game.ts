@@ -29,7 +29,7 @@ import {
   loadSnapshot as snapLoad,
   deleteSnapshot as snapDelete,
 } from "@/lib/snapshots";
-import { newsFuelIndexHint } from "@/lib/engine";
+import { FUEL_BASELINE_USD_PER_L, newsFuelIndexHint } from "@/lib/engine";
 import {
   PREORDER_DEPOSIT_PCT,
   PREORDER_CANCEL_PENALTY_PCT,
@@ -2317,7 +2317,31 @@ export const useGame = create<GameStore>()(
             passengerRevenue: result.passengerRevenue,
             cargoRevenue: result.cargoRevenue,
             costs: result.revenue - result.netProfit,
+            // Per-line operating cost breakdown so the Financials tab
+            // can render a real income statement (not just a single
+            // "Costs" total). Sliders broken out into Marketing /
+            // Service / Operations / Customer-Service so the player
+            // can see what's inside the Other Slider Spend bucket.
+            fuelCost: result.fuelCost,
+            slotCost: result.slotCost,
+            staffCost: result.staffCost,
+            otherSliderCost: result.otherSliderCost,
+            marketingCost: result.marketingCost,
+            serviceCost: result.serviceCost,
+            operationsCost: result.operationsCost,
+            customerServiceCost: result.customerServiceCost,
+            maintenanceCost: result.maintenanceCost,
             insuranceCost: result.insuranceCost,
+            depreciation: result.depreciation,
+            interest: result.interest,
+            // Taxes & Government Levies bucket = corp tax + carbon
+            // levy + passenger departure tax + fuel excise + S5
+            // route-obligation fines. UI rolls these up into one row.
+            taxesAndLevies:
+              result.tax + result.carbonLevy +
+              result.passengerTax + result.fuelExcise +
+              result.obligationFinesUsd,
+            obligationFinesUsd: result.obligationFinesUsd,
             netProfit: result.netProfit,
             brandPts: result.newBrandPts,
             opsPts: result.newOpsPts,
@@ -3291,7 +3315,7 @@ export const useGame = create<GameStore>()(
           player.fuelTanks.large * specs.large.capacity;
         const room = capL - player.fuelStorageLevelL;
         if (litres > room) return { ok: false, error: `Only ${(room / 1_000_000).toFixed(1)}M L free` };
-        const bulkPrice = (s.fuelIndex / 100) * 0.18 * 0.75; // 25% discount
+        const bulkPrice = (s.fuelIndex / 100) * FUEL_BASELINE_USD_PER_L * 0.75; // 25% discount
         const cost = litres * bulkPrice;
         if (player.cashUsd < cost) return { ok: false, error: `Need $${(cost / 1_000_000).toFixed(1)}M` };
         const newTotal = player.fuelStorageLevelL + litres;
@@ -3319,7 +3343,7 @@ export const useGame = create<GameStore>()(
         if (!player) return { ok: false, error: "No player" };
         if (litres > player.fuelStorageLevelL)
           return { ok: false, error: `Only ${(player.fuelStorageLevelL / 1_000_000).toFixed(1)}M L in storage` };
-        const sellPrice = (s.fuelIndex / 100) * 0.18 * 0.75;
+        const sellPrice = (s.fuelIndex / 100) * FUEL_BASELINE_USD_PER_L * 0.75;
         const proceeds = litres * sellPrice;
         const newTotal = player.fuelStorageLevelL - litres;
         set({

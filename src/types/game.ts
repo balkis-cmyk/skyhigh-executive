@@ -388,17 +388,41 @@ export interface Team {
     quarterSubmitted: number;
   }>;
 
-  // History
+  // History — full P&L line items per closed quarter so the
+  // Financials tab can render a real income statement (not just the
+  // projected next quarter) and so charts have real series to plot.
   financialsByQuarter: Array<{
     quarter: number;
     cash: number;
     debt: number;
     revenue: number;
-    /** Optional split — older saves may not have these. */
     passengerRevenue?: number;
     cargoRevenue?: number;
     costs: number;
+    /** Operating cost breakdown (optional — older saves may omit). */
+    fuelCost?: number;
+    slotCost?: number;
+    staffCost?: number;
+    otherSliderCost?: number;
+    /** Operating cost split — Marketing / Service / Operations / Customer-Service
+     *  sliders broken out so the Financials tab can show what's inside the
+     *  "Other slider spend" line. Older saves may omit; UI must fall back. */
+    marketingCost?: number;
+    serviceCost?: number;
+    operationsCost?: number;
+    customerServiceCost?: number;
+    maintenanceCost?: number;
     insuranceCost?: number;
+    depreciation?: number;
+    interest?: number;
+    /** Taxes & Government Levies bucket. Combines income tax + carbon
+     *  levy + passenger departure tax + fuel excise + service-route
+     *  obligation fines (S5 etc). One row in the P&L UI. */
+    taxesAndLevies?: number;
+    /** Subset of taxesAndLevies — the regulatory fines specifically,
+     *  surfaced as a sub-line so the player can see WHY their tax bill
+     *  spiked (S5 obligation, future regulatory penalties, etc.). */
+    obligationFinesUsd?: number;
     netProfit: number;
     brandPts: number;
     opsPts: number;

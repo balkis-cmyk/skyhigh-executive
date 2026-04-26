@@ -29,6 +29,14 @@ import type {
 
 const M = 1_000_000;
 
+/** Real-world Jet A1 sits in the $0.55–$0.85 / L range over the
+ *  campaign's 2015–2024 window. The simulator uses $0.65/L at
+ *  fuelIndex=100 (baseline). Earlier the passenger path was at $0.18/L
+ *  while the cargo path was at $0.55/L — passenger fuel landed ~3×
+ *  too cheap, which is why a 16-widebody fleet showed only $22.5M in
+ *  fuel against $1.7B revenue. Both paths now share this constant. */
+export const FUEL_BASELINE_USD_PER_L = 0.65;
+
 // ─── Global Travel Index (PRD E6) — master demand multiplier ──
 /**
  * Per-round macro demand multiplier across the 40-round game.
@@ -759,8 +767,9 @@ export function computeRouteEconomics(
       (storageCostByTier[origin.tier] ?? 150_000) +
       (storageCostByTier[dest.tier] ?? 150_000);
 
-    // Fuel
-    const fuelPricePerL = (fuelIndex / 100) * 0.55;
+    // Fuel — see FUEL_BASELINE_USD_PER_L docstring; cargo + passenger
+    // paths now share the same baseline.
+    const fuelPricePerL = (fuelIndex / 100) * FUEL_BASELINE_USD_PER_L;
     const totalFuelBurnPerFlight = planes.reduce((sum, p) => {
       const spec = AIRCRAFT_BY_ID[p.specId];
       if (!spec) return sum;
@@ -920,8 +929,13 @@ export function computeRouteEconomics(
     quarterlyBusPax * busFare +
     quarterlyEconPax * econFare;
 
-  // Fuel
-  const fuelPricePerL = (fuelIndex / 100) * 0.18;
+  // Fuel — calibrated to real-world Jet A1 ($0.55–$0.85/L). At
+  // fuelIndex=100 (baseline) the price is FUEL_BASELINE_USD_PER_L.
+  // Earlier passenger path used $0.18/L which made fuel a footnote
+  // in the P&L; the cargo path was already at $0.55/L. Both paths
+  // now share FUEL_BASELINE_USD_PER_L so a 10kL Atlantic crossing
+  // shows a real $5,500 fuel bill instead of $1,800.
+  const fuelPricePerL = (fuelIndex / 100) * FUEL_BASELINE_USD_PER_L;
   const totalFuelBurnPerFlight = planes.reduce((sum, p) => {
     const spec = AIRCRAFT_BY_ID[p.specId];
     if (!spec) return sum;
@@ -1366,6 +1380,19 @@ export interface QuarterCloseResult {
   slotCost: number;
   staffCost: number;
   otherSliderCost: number;
+  /** Sub-components of `otherSliderCost` so the P&L UI can break out
+   *  Marketing vs In-flight Service vs Operations vs Customer-Service
+   *  spend (each a slider × revenue %). Earlier the four were merged
+   *  into one opaque line. */
+  marketingCost: number;
+  serviceCost: number;
+  operationsCost: number;
+  customerServiceCost: number;
+  /** Service-route obligation fine charged this quarter (e.g. S5
+   *  Government Lifeline). Sums every active obligation × every missed
+   *  city for the quarter. Surfaced as a sub-line under Taxes &
+   *  Government Levies. Was previously folded into slotCost. */
+  obligationFinesUsd: number;
   maintenanceCost: number;
   /** Aircraft insurance premium for the quarter (PRD §E5). */
   insuranceCost: number;
@@ -1564,15 +1591,17 @@ export function runQuarterClose(
 
   // ─ Route service obligations (S5 Government Lifeline) ─────
   // For every active obligation city the team isn't serving via any
-  // route endpoint this quarter, charge the per-city per-quarter fine
-  // and surface a note. Lasts only while ctx.quarter is within the
-  // obligation's [activeFrom, activeUntil] window.
+  // route endpoint this quarter, charge the per-city per-quarter fine.
+  // The fine lands in `obligationFinesUsd` and rolls up into Taxes &
+  // Government Levies in the P&L (NOT into slotCost — was a bug:
+  // earlier the fine was added to slot fees which made the slot line
+  // look inflated and hid where the cash actually went).
   const obligationFines = computeObligationFines(next, ctx.quarter);
-  if (obligationFines.totalFineUsd > 0) {
-    slotCost += obligationFines.totalFineUsd;
+  const obligationFinesUsd = obligationFines.totalFineUsd;
+  if (obligationFinesUsd > 0) {
     const cityList = obligationFines.missed.map((m) => m.city).join(" + ");
     notes.push(
-      `Service-obligation fine: −$${(obligationFines.totalFineUsd / 1e6).toFixed(1)}M ` +
+      `Service-obligation fine: −$${(obligationFinesUsd / 1e6).toFixed(1)}M ` +
       `· not serving ${cityList} this quarter`,
     );
   }
@@ -1597,7 +1626,7 @@ export function runQuarterClose(
   // ─ Fuel Storage reconciliation (PRD E2) ────────────────
   // Route economics computed fuel at market; draw from storage first if any.
   if ((next.fuelStorageLevelL ?? 0) > 0 && fuelCost > 0) {
-    const marketPricePerL = (ctx.fuelIndex / 100) * 0.55;
+    const marketPricePerL = (ctx.fuelIndex / 100) * FUEL_BASELINE_USD_PER_L;
     if (marketPricePerL > 0) {
       const litresBurned = fuelCost / marketPricePerL;
       const fromStorage = Math.min(next.fuelStorageLevelL, litresBurned);
@@ -1623,17 +1652,20 @@ export function runQuarterClose(
   const staffBase = baselineStaffCostUsd(next);
   const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff];
 
-  // ─ Other sliders as % of revenue (A2) ──────────────────
+  // ─ Other sliders as % of revenue (A2) — broken out ──────
   // Per-slider caps (user spec):
   //   Marketing       0-15% (was 0-20%)
   //   In-flight       1.5-8%
   //   Operations      2-10%
   //   Office Capacity 1.5-7% (customerService key)
+  // Each is now reported separately so the P&L UI can label them
+  // explicitly instead of bundling under "Other slider spend".
+  const marketingCost = revenue * MARKETING_PCT_REVENUE[next.sliders.marketing];
+  const serviceCost = revenue * SERVICE_PCT_REVENUE[next.sliders.service];
+  const operationsCost = revenue * OPS_PCT_REVENUE[next.sliders.operations];
+  const customerServiceCost = revenue * CS_PCT_REVENUE[next.sliders.customerService];
   const otherSliderCost =
-    revenue * MARKETING_PCT_REVENUE[next.sliders.marketing] +
-    revenue * SERVICE_PCT_REVENUE[next.sliders.service] +
-    revenue * OPS_PCT_REVENUE[next.sliders.operations] +
-    revenue * CS_PCT_REVENUE[next.sliders.customerService];
+    marketingCost + serviceCost + operationsCost + customerServiceCost;
 
   // ─ Maintenance (PRD §5.3 age bands, scaled to 20-round lifespan) ──
   // PRD bands assume an 80Q lifespan with bands at 0-5/5-10/10-15/15-20
@@ -1775,7 +1807,7 @@ export function runQuarterClose(
     next.flags.has("sustainability_signal");
   // PRD §5.11 / S17 — carbon levy active from PRD-Q17 = round 33 onward.
   if (ctx.quarter >= 33 && levyActive) {
-    const pricePerL = (ctx.fuelIndex / 100) * 0.18;
+    const pricePerL = (ctx.fuelIndex / 100) * FUEL_BASELINE_USD_PER_L;
     const totalLiters = pricePerL > 0 ? fuelCost / pricePerL : 0;
     const tonnesCO2 = (totalLiters * 0.12) / 1000;
     carbonLevy = tonnesCO2 * 45;
@@ -1797,7 +1829,8 @@ export function runQuarterClose(
     revenue - fuelCost - slotCost - staffCost - otherSliderCost -
     maintenanceCost - insurancePremium - depreciation -
     interest - rcfInterest -
-    passengerTax - fuelExcise - carbonLevy;
+    passengerTax - fuelExcise - carbonLevy -
+    obligationFinesUsd;
 
   // ─ Tax loss carry-forward (PRD B5): 5-quarter expiry ───
   // Clean expired entries (older than 5 quarters)
@@ -2256,6 +2289,11 @@ export function runQuarterClose(
     slotCost,
     staffCost,
     otherSliderCost,
+    marketingCost,
+    serviceCost,
+    operationsCost,
+    customerServiceCost,
+    obligationFinesUsd,
     maintenanceCost,
     insuranceCost: insurancePremium,
     depreciation,
