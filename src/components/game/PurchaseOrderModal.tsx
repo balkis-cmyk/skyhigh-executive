@@ -12,7 +12,6 @@ import {
 import { fmtMoney } from "@/lib/format";
 import { planeImagePath } from "@/lib/aircraft-images";
 import { cn } from "@/lib/cn";
-import { useGame, selectPlayer } from "@/store/game";
 import type { AircraftSpec } from "@/types/game";
 
 /**
@@ -445,7 +444,6 @@ function PurchaseOrderBody({
               Reset to factory default
             </button>
 
-            <CabinDemandPreview customSeats={customSeats} />
           </Section>
         )}
 
@@ -671,162 +669,5 @@ function BellyOption({
         {cost > 0 ? `+${fmtMoney(cost)}` : "free"}
       </div>
     </button>
-  );
-}
-
-/**
- * Cabin demand preview — overhauled.
- *
- * Old version: three boxes with abstract scores like "58.0" / "47.0"
- * compared against a hard-coded "mid-market peer", with a paragraph
- * explaining how to read it. Players couldn't translate the numbers
- * into action. Most of the time the score didn't even use the
- * player's real brand/loyalty — it was a baseline-vs-baseline
- * tautology.
- *
- * New version: each cabin gets a verdict + delta vs a peer. Reads
- * "Economy · Strong · +6 vs peer" or "First · Behind · −12 vs peer".
- * If a cabin will struggle, the card surfaces the SPECIFIC fix
- * (boost Brand for premium cabins, sharpen pricing for Economy)
- * inline — not in a separate paragraph.
- *
- * Math is the same per-class weights from PRD §6.7, but now uses
- * the player's REAL brandPts / customerLoyaltyPct / service slider
- * vs a true mid-market peer (Brand 60 · Loyalty 50 · Service 60).
- */
-function CabinDemandPreview({
-  customSeats,
-}: {
-  customSeats: { first: number; business: number; economy: number };
-}) {
-  const player = useGame(selectPlayer);
-  const totalSeats = customSeats.first + customSeats.business + customSeats.economy;
-  if (totalSeats === 0 || !player) return null;
-
-  // Service slider 0-5 → 0-100 score for parity with brand/loyalty scale.
-  const serviceLevel = player.sliders.service ?? 2;
-  const serviceScore = serviceLevel * 20; // 0,20,40,60,80,100
-  // brandPts is stored as 0-200 in the engine; halve to 0-100 for the
-  // weighted formula (matches engine's attractiveness math).
-  const playerBrandScore = Math.min(100, (player.brandPts ?? 0) / 2);
-  const playerLoyalty = player.customerLoyaltyPct ?? 0;
-  // Pricing is treated as "Standard tier = 70" since the player hasn't
-  // committed to a route's pricing yet.
-  const playerPriceScore = 70;
-
-  // True mid-market peer to compare against.
-  const peerBrandScore = 30; // 60/2
-  const peerLoyalty = 50;
-  const peerService = 60;
-  const peerPriceScore = 70;
-
-  function score(
-    cls: "econ" | "bus" | "first",
-    args: { p: number; b: number; l: number; s: number },
-  ): number {
-    const w =
-      cls === "econ"  ? { p: 0.55, b: 0.20, l: 0.15, s: 0.10 } :
-      cls === "bus"   ? { p: 0.35, b: 0.35, l: 0.20, s: 0.10 } :
-                        { p: 0.25, b: 0.45, l: 0.20, s: 0.10 };
-    return args.p * w.p + args.b * w.b + args.l * w.l + args.s * w.s;
-  }
-
-  const playerArgs = {
-    p: playerPriceScore,
-    b: playerBrandScore,
-    l: playerLoyalty,
-    s: serviceScore,
-  };
-  const peerArgs = {
-    p: peerPriceScore,
-    b: peerBrandScore,
-    l: peerLoyalty,
-    s: peerService,
-  };
-
-  type Verdict = {
-    label: string;
-    seats: number;
-    delta: number;
-    tone: "strong" | "even" | "behind";
-    fix: string | null;
-  };
-
-  function classify(cls: "econ" | "bus" | "first", seats: number): Verdict {
-    const playerScore = score(cls, playerArgs);
-    const peerScore = score(cls, peerArgs);
-    const delta = playerScore - peerScore;
-    const tone: Verdict["tone"] =
-      delta >= 5 ? "strong" : delta >= -3 ? "even" : "behind";
-    // Per-class actionable fix when behind. Pulls from the dominant
-    // weight in that cabin's formula.
-    let fix: string | null = null;
-    if (tone === "behind") {
-      if (cls === "econ") fix = "Sharpen pricing or build loyalty to win Economy.";
-      else if (cls === "bus") fix = "Brand and loyalty win Business — boost both.";
-      else fix = "First class is brand-led — invest in brand growth.";
-    }
-    const label = cls === "econ" ? "Economy" : cls === "bus" ? "Business" : "First";
-    return { label, seats, delta, tone, fix };
-  }
-
-  const cards: Verdict[] = [];
-  if (customSeats.economy > 0) cards.push(classify("econ", customSeats.economy));
-  if (customSeats.business > 0) cards.push(classify("bus", customSeats.business));
-  if (customSeats.first > 0) cards.push(classify("first", customSeats.first));
-
-  return (
-    <div className="mt-3 rounded-md border border-line bg-surface p-3">
-      <div className="flex items-baseline justify-between mb-2">
-        <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
-          Will this cabin sell?
-        </span>
-        <span className="text-[0.625rem] text-ink-muted">
-          you (Brand {player.brandPts.toFixed(0)} · Loyalty {Math.round(player.customerLoyaltyPct)}% · Service L{serviceLevel}) vs mid-market peer
-        </span>
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {cards.map((c) => (
-          <div
-            key={c.label}
-            className={cn(
-              "rounded-md border p-2.5",
-              c.tone === "strong" && "border-positive bg-[var(--positive-soft)]",
-              c.tone === "even" && "border-line bg-surface-2/40",
-              c.tone === "behind" && "border-negative bg-[var(--negative-soft)]",
-            )}
-          >
-            <div className="flex items-baseline justify-between mb-0.5">
-              <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
-                {c.label}
-              </span>
-              <span className="text-[0.6875rem] text-ink-muted tabular">
-                {c.seats} seats
-              </span>
-            </div>
-            <div
-              className={cn(
-                "text-[0.8125rem] font-semibold",
-                c.tone === "strong" && "text-positive",
-                c.tone === "even" && "text-ink",
-                c.tone === "behind" && "text-negative",
-              )}
-            >
-              {c.tone === "strong" && "Strong"}
-              {c.tone === "even" && "Mid-pack"}
-              {c.tone === "behind" && "Behind peer"}
-            </div>
-            <div className="text-[0.6875rem] tabular font-mono text-ink-muted mt-0.5">
-              {c.delta >= 0 ? "+" : ""}{c.delta.toFixed(1)} vs peer
-            </div>
-            {c.fix && (
-              <div className="text-[0.6875rem] text-ink-2 mt-1.5 leading-snug">
-                {c.fix}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
