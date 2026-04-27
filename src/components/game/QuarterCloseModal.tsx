@@ -45,10 +45,16 @@ export function QuarterCloseModal() {
   // bad after overhead allocation.
   const { topWinners, topLosers } = useMemo(() => {
     if (!result) return { topWinners: [], topLosers: [] };
-    const withDirect = result.routeBreakdown.map((r) => ({
-      ...r,
-      direct: r.revenue - r.fuelCost - r.slotCost,
-    }));
+    // Skip dormant routes (no operating aircraft) — they aren't really
+    // losing money in a "fix this route" sense, they just need
+    // aircraft assigned. Surfacing them in the Top Losers list
+    // distracts from genuine triage signals (real money-losing routes).
+    const withDirect = result.routeBreakdown
+      .filter((r) => !r.noOperatingAircraft)
+      .map((r) => ({
+        ...r,
+        direct: r.revenue - r.fuelCost - r.slotCost,
+      }));
     const sorted = [...withDirect].sort((a, b) => b.direct - a.direct);
     return {
       // Winners ranked by direct contribution (covers fuel + slot AND
@@ -246,6 +252,23 @@ export function QuarterCloseModal() {
                 Revolving Credit Facility drawn: <span className="tabular font-mono font-semibold">{fmtMoney(result.newRcfBalance)}</span>. Interest at 2× base rate applies next quarter.
               </div>
             )}
+
+            {/* Dormant routes warning — slots leased but no aircraft
+                assigned, so the route is silently doing nothing. We
+                surface this on the headline tab so it can't be missed
+                buried in the All Routes table. */}
+            {(() => {
+              const dormantCount = result.routeBreakdown.filter((r) => r.noOperatingAircraft).length;
+              if (dormantCount === 0) return null;
+              return (
+                <div className="text-[0.8125rem] rounded-md border border-[var(--warning-soft)] bg-[var(--warning-soft)] text-warning px-3 py-2">
+                  <span className="font-semibold">⚠ {dormantCount} active route{dormantCount === 1 ? "" : "s"} with no aircraft assigned.</span>{" "}
+                  Slots are leased but no flights are operating. Either
+                  assign aircraft from the Routes panel or close the route
+                  to stop paying for unused slots.
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -363,16 +386,48 @@ export function QuarterCloseModal() {
                 <tbody>
                   {result.routeBreakdown.map((r) => {
                     const route = player.routes.find((x) => x.id === r.routeId);
+                    const dormant = r.noOperatingAircraft;
                     return (
-                      <tr key={r.routeId} className="border-t border-line">
+                      <tr
+                        key={r.routeId}
+                        className={cn(
+                          "border-t border-line",
+                          dormant && "bg-[var(--warning-soft)]/30",
+                        )}
+                      >
                         <td className="py-2 px-3 text-ink font-mono">
-                          {route ? `${route.originCode} → ${route.destCode}` : r.routeId}
+                          <div className="flex items-baseline gap-2">
+                            <span>
+                              {route ? `${route.originCode} → ${route.destCode}` : r.routeId}
+                            </span>
+                            {dormant && (
+                              <span
+                                className="text-[0.5625rem] uppercase tracking-wider font-bold text-warning"
+                                title="Active route with no operating aircraft assigned. Slots are leased but no flights are scheduled. Assign aircraft from Routes panel or close the route."
+                              >
+                                no aircraft
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2 px-3 text-right tabular">
-                          {fmtPct(r.occupancy * 100, 0)}
+                          {dormant ? (
+                            <span className="text-ink-muted">—</span>
+                          ) : (
+                            fmtPct(r.occupancy * 100, 0)
+                          )}
                         </td>
-                        <td className={`py-2 px-3 text-right tabular font-medium ${r.profit >= 0 ? "text-positive" : "text-negative"}`}>
-                          {fmtMoney(r.profit)}
+                        <td
+                          className={cn(
+                            "py-2 px-3 text-right tabular font-medium",
+                            dormant
+                              ? "text-ink-muted"
+                              : r.profit >= 0
+                                ? "text-positive"
+                                : "text-negative",
+                          )}
+                        >
+                          {dormant ? "—" : fmtMoney(r.profit)}
                         </td>
                       </tr>
                     );

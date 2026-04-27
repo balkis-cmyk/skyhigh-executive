@@ -355,26 +355,37 @@ export function routeDemandPerDay(
   // Seasonal multiplier (PRD D5)
   const season = seasonalMultiplier(quarter);
 
-  // Clamp the per-city event multiplier to never go below zero. News
-  // modifiers stack additively (e.g. -82% global lockdown + -60% Tokyo
-  // delay → -142% on NRT) and a naive `1 + (-1.42)` = -0.42 was producing
-  // NEGATIVE demand, which then propagated through `dailyPax` and
-  // `occupancy` to give the player a "-257% load" surprise on the
-  // quarter-close screen. Demand floors at zero — passengers simply
-  // don't fly when conditions collapse, they don't "anti-fly".
-  const tourismMultA = Math.max(0, 1 + tourismEventA);
-  const tourismMultB = Math.max(0, 1 + tourismEventB);
-  const businessMultA = Math.max(0, 1 + businessEventA);
-  const businessMultB = Math.max(0, 1 + businessEventB);
+  // Demand floor — even the worst stacked news shocks should leave
+  // SOME baseline demand. Per-city event multiplier floors at 15% of
+  // baseline (essential business travel, repatriation, freight bookings,
+  // etc continue at minimum levels even in catastrophic shocks). The
+  // global travel index floors at 20%. Compound minimum is ~3% of
+  // baseline city demand — small but non-zero so the route load never
+  // shows a flat 0% on a route that has aircraft assigned.
+  //
+  // Real-world calibration: at peak COVID lockdown (Apr 2020), global
+  // air passenger volumes hit ~5-8% of pre-pandemic. Hub-to-hub cargo
+  // never dropped below ~30% of normal even with all passenger travel
+  // banned. Our floors are deliberately a touch higher than reality
+  // because the simulation can't model freighter conversions or
+  // cargo-only flights, so the "passenger demand" floor includes
+  // unmodeled cargo-by-belly proxy demand.
+  const DEMAND_FLOOR = 0.15;
+  const TRAVEL_INDEX_FLOOR = 0.20;
+  const tourismMultA = Math.max(DEMAND_FLOOR, 1 + tourismEventA);
+  const tourismMultB = Math.max(DEMAND_FLOOR, 1 + tourismEventB);
+  const businessMultA = Math.max(DEMAND_FLOOR, 1 + businessEventA);
+  const businessMultB = Math.max(DEMAND_FLOOR, 1 + businessEventB);
+  const travelIdxFloored = Math.max(TRAVEL_INDEX_FLOOR, travelIdx);
 
   const tourism =
     (cityTourismAtQuarter(a, quarter) * tourismMultA +
      cityTourismAtQuarter(b, quarter) * tourismMultB) *
-    amplifier * Math.max(0, travelIdx) * season.tourism;
+    amplifier * travelIdxFloored * season.tourism;
   const business =
     (cityBusinessAtQuarter(a, quarter) * businessMultA +
      cityBusinessAtQuarter(b, quarter) * businessMultB) *
-    amplifier * Math.max(0, travelIdx) * season.business;
+    amplifier * travelIdxFloored * season.business;
   return { tourism, business, total: tourism + business, amplifier };
 }
 
@@ -861,11 +872,14 @@ export function computeRouteEconomics(
     const cargoFocusBonus = team.marketFocus === "cargo" ? 1.15 : 1.0;
     const cargoEventA = cityEventImpact(route.originCode, quarter).cargo / 100;
     const cargoEventB = cityEventImpact(route.destCode, quarter).cargo / 100;
-    // Same clamp as passenger: stacked negative cargo modifiers
-    // (port closures, lockdowns) can push the per-city multiplier
-    // below 0, which would yield negative cargo demand. Clamp to zero.
-    const cargoMultA = Math.max(0, 1 + cargoEventA);
-    const cargoMultB = Math.max(0, 1 + cargoEventB);
+    // Cargo demand floor — same logic as passenger but slightly higher
+    // (25% vs 15%) because freight is more resilient to shocks: parts
+    // pipelines, medical supply, e-commerce orders all continue when
+    // passenger travel craters. Real Q2 2020 cargo only hit ~70% of
+    // normal at the worst, and snapped back fastest.
+    const CARGO_DEMAND_FLOOR = 0.25;
+    const cargoMultA = Math.max(CARGO_DEMAND_FLOOR, 1 + cargoEventA);
+    const cargoMultB = Math.max(CARGO_DEMAND_FLOOR, 1 + cargoEventB);
     const cargoDemandT = Math.max(
       0,
       Math.min(
@@ -1599,6 +1613,13 @@ export interface QuarterCloseResult {
     slotCost: number;
     profit: number;
     occupancy: number;
+    /** Set to true when the route is `active` but has no operating
+     *  aircraft assigned — `dailyCapacity` is therefore 0 and all
+     *  per-route metrics roll up to $0/0%. The player sees this as
+     *  a "no aircraft" marker in the close digest, distinct from a
+     *  route that's flying empty (which has positive fuel cost and
+     *  shows up as a real loss). */
+    noOperatingAircraft?: boolean;
   }>;
   /** City pairs of routes that ACTIVATED this quarter — i.e. went
    *  from `pending` to `active`. Surfaced in the close modal's
@@ -1713,6 +1734,15 @@ export function runQuarterClose(
       fuelCost += econ.quarterlyFuelCost;
       slotCost += econ.quarterlySlotCost;
       totalPassengers += econ.dailyPax * QUARTER_DAYS;
+      // A route can be `active` but have no operating aircraft — the
+      // player won the slots but never assigned planes (or the
+      // assigned planes were retired/sold/grounded). dailyCapacity
+      // collapses to 0 and the per-route P&L flat-lines at $0. Tag
+      // these so the digest can show "no aircraft" rather than a
+      // misleading $0 profit row.
+      const hasOperatingAircraft = (r.aircraftIds ?? [])
+        .map((id) => next.fleet.find((f) => f.id === id))
+        .some((f) => f && f.status === "active");
       routeBreakdown.push({
         routeId: r.id,
         revenue: boostedRevenue,
@@ -1720,6 +1750,7 @@ export function runQuarterClose(
         slotCost: econ.quarterlySlotCost,
         profit: boostedRevenue - econ.quarterlyFuelCost - econ.quarterlySlotCost,
         occupancy: econ.occupancy,
+        noOperatingAircraft: !hasOperatingAircraft,
       });
       r.avgOccupancy = econ.occupancy;
       r.quarterlyRevenue = boostedRevenue;
