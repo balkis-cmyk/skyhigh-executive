@@ -407,15 +407,77 @@ function AirportOwnership({ cityCode }: { cityCode: string }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <Stat label="Q slot revenue" value={fmtMoney(qRevenue)} hint="Across all tenants" />
-            <Stat label="Q opex (30%)" value={fmtMoney(opex)} hint="Crew + ATC + upkeep" />
-            <Stat
-              label="Q net to you"
-              value={fmtMoney(netOwnerProfit)}
-              hint="Surfaces in 'Subsidiary revenue'"
-            />
-          </div>
+          {/* Revenue breakdown — clarified. The previous 3-stat row
+              showed Q SLOT REVENUE = $156M (gross, includes your own
+              contribution), Q OPEX = $46.8M, Q NET TO YOU = -$46.8M
+              which left players asking "where did the $156M go?"
+              The new layout walks the math top-to-bottom:
+                Gross collections - your own fees = External revenue
+                External revenue - 30% opex = Net to you
+              So sole-tenant case (you're the only payer) reads as
+              -opex without looking like the engine ate your money. */}
+          {(() => {
+            const externalCollections = qRevenue - ownSlotFees;
+            return (
+              <div className="rounded-md border border-line bg-surface px-3 py-2.5 space-y-1.5">
+                <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1">
+                  Quarterly revenue · how the math works
+                </div>
+                <div className="flex items-baseline justify-between text-[0.8125rem]">
+                  <span className="text-ink-2">
+                    Gross collections
+                    <span className="text-ink-muted ml-1.5 text-[0.6875rem]">(all tenants × rate × 13)</span>
+                  </span>
+                  <span className="tabular font-mono text-ink">{fmtMoney(qRevenue)}</span>
+                </div>
+                {ownSlotFees > 0 && (
+                  <div className="flex items-baseline justify-between text-[0.8125rem]">
+                    <span className="text-ink-2">
+                      − Your own slot fees
+                      <span className="text-ink-muted ml-1.5 text-[0.6875rem]">(refunded — paid to yourself)</span>
+                    </span>
+                    <span className="tabular font-mono text-ink-muted">−{fmtMoney(ownSlotFees)}</span>
+                  </div>
+                )}
+                <div className="flex items-baseline justify-between text-[0.8125rem] border-t border-line pt-1.5">
+                  <span className="text-ink-2 font-medium">External revenue</span>
+                  <span
+                    className={cn(
+                      "tabular font-mono font-semibold",
+                      externalCollections > 0 ? "text-ink" : "text-ink-muted",
+                    )}
+                  >
+                    {fmtMoney(externalCollections)}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between text-[0.8125rem]">
+                  <span className="text-ink-2">
+                    − Opex
+                    <span className="text-ink-muted ml-1.5 text-[0.6875rem]">(30% of gross · crew + ATC + upkeep)</span>
+                  </span>
+                  <span className="tabular font-mono text-ink-muted">−{fmtMoney(opex)}</span>
+                </div>
+                <div className="flex items-baseline justify-between text-[0.875rem] border-t border-line pt-1.5">
+                  <span className="text-ink font-semibold">Net to you / Q</span>
+                  <span
+                    className={cn(
+                      "tabular font-mono font-semibold",
+                      netOwnerProfit >= 0 ? "text-positive" : "text-negative",
+                    )}
+                  >
+                    {netOwnerProfit >= 0 ? "+" : ""}{fmtMoney(netOwnerProfit)}
+                  </span>
+                </div>
+                {externalCollections === 0 && (
+                  <div className="text-[0.6875rem] text-ink-muted leading-snug pt-1 border-t border-line">
+                    You&apos;re the only tenant — opex still applies even
+                    when no rivals are paying. Net flips positive once
+                    other airlines lease slots here.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Tenant breakdown — proves the rate IS being charged. */}
           {tenants.length > 0 && (
