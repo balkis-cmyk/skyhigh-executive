@@ -200,23 +200,31 @@ function PurchaseOrderBody({
       <ModalBody className="space-y-4 max-h-[68vh] overflow-y-auto">
         {/* 1 — Quantity */}
         <Section title="Quantity">
-          <div className="flex items-center gap-3">
+          <div role="group" aria-label="Aircraft order quantity" className="flex items-center gap-3">
             <button
+              type="button"
               onClick={() => setQuantity(Math.max(1, quantity - 1))}
-              className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40"
+              aria-label="Decrease quantity"
+              className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
               disabled={quantity <= 1}
             >
-              −
+              <span aria-hidden="true">−</span>
             </button>
-            <span className="tabular font-mono text-[1.5rem] text-ink font-bold w-16 text-center">
+            <span
+              aria-live="polite"
+              aria-atomic="true"
+              className="tabular font-mono text-[1.5rem] text-ink font-bold w-16 text-center"
+            >
               {quantity}
             </span>
             <button
+              type="button"
               onClick={() => setQuantity(Math.min(20, quantity + 1))}
-              className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40"
+              aria-label="Increase quantity"
+              className="w-9 h-9 rounded-md border border-line hover:bg-surface-hover text-[1.125rem] font-semibold disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
               disabled={quantity >= 20}
             >
-              +
+              <span aria-hidden="true">+</span>
             </button>
             <div className="flex-1 text-[0.75rem] text-ink-muted leading-relaxed">
               All aircraft in this order are configured identically. Max 20 per order.

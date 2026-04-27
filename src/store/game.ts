@@ -1587,6 +1587,8 @@ export const useGame = create<GameStore>()(
           purchaseCostUsd: bid.bidPriceUsd,
         };
 
+        const bidder = s.teams.find((t) => t.id === bid.bidderTeamId);
+
         set({
           // Cash already deducted at bid-submit time; approval just
           // commits the escrow (no further movement of bidder's cash).
@@ -1597,9 +1599,12 @@ export const useGame = create<GameStore>()(
           ),
           airportSlots: { ...s.airportSlots, [bid.airportCode]: newSlotState },
         });
+        // Tailored notification: name the bidder explicitly so when the
+        // toast is read back later in the notification center the
+        // facilitator can tell which approval this was.
         toast.success(
-          `Bid approved · ${city.name} (${bid.airportCode})`,
-          `${fmtMoneyPlain(bid.bidPriceUsd)} committed. Ownership transferred. Slot fees now flow to the new owner.`,
+          `Approved · ${city.name} (${bid.airportCode})`,
+          `${bidder?.name ?? "Bidder"} acquires ${city.name} for ${fmtMoneyPlain(bid.bidPriceUsd)}. Slot fees now flow to the new owner from next quarter.`,
         );
         return { ok: true };
       },
@@ -1612,6 +1617,7 @@ export const useGame = create<GameStore>()(
           return { ok: false, error: `Bid is already ${bid.status}` };
         }
         const city = CITIES_BY_CODE[bid.airportCode];
+        const bidder = s.teams.find((t) => t.id === bid.bidderTeamId);
 
         set({
           // Refund the escrowed cash to the bidder.
@@ -1630,8 +1636,8 @@ export const useGame = create<GameStore>()(
           ),
         });
         toast.warning(
-          `Bid rejected · ${city?.name ?? bid.airportCode}`,
-          `${fmtMoneyPlain(bid.bidPriceUsd)} refunded${reason ? ` — ${reason}` : ""}.`,
+          `Rejected · ${city?.name ?? bid.airportCode}`,
+          `${bidder?.name ?? "Bidder"}'s bid declined. ${fmtMoneyPlain(bid.bidPriceUsd)} refunded${reason ? ` — ${reason}` : ""}.`,
         );
         return { ok: true };
       },
