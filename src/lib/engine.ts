@@ -208,16 +208,30 @@ export function effectiveBaseRatePct(quarter: number): number {
   return 3.5;
 }
 
-/** Seasonal multipliers (PRD D5) indexed by quarter-within-game-year. */
+/** Seasonal multipliers (PRD D5) indexed by quarter-within-game-year.
+ *
+ *  Amplitude rebalanced: real airline seasonality runs 25-35% peak-to-
+ *  trough at the network level; previous values gave only ~15% so player
+ *  reports of "revenue too steady" were correct. Q3 tourism now spikes
+ *  to 1.32 and Q1 tourism dips to 0.74 — half the spread comes from
+ *  travelers, the other half from the global Travel Index curve. Cargo
+ *  now has its own seasonality (Q4 holiday peak dominates; Q1 post-
+ *  holiday slump) — previously cargo was treated as flat year-round
+ *  which was technically wrong (Black Friday/December peak is the
+ *  biggest single signal in air freight).
+ */
 export function seasonalMultiplier(
   quarter: number,
-): { tourism: number; business: number } {
+): { tourism: number; business: number; cargo: number } {
   const qInYear = ((quarter - 1) % 4) + 1;
-  // Q1 winter, Q2 spring/summer, Q3 peak summer, Q4 holiday
-  if (qInYear === 1) return { tourism: 0.85, business: 1.05 };
-  if (qInYear === 2) return { tourism: 1.10, business: 1.00 };
-  if (qInYear === 3) return { tourism: 1.20, business: 0.90 };
-  return { tourism: 1.05, business: 1.05 };
+  // Q1 winter post-holiday slump
+  // Q2 spring/early-summer pickup
+  // Q3 peak-summer travel, business slows (vacation)
+  // Q4 holiday + return-to-office + freight peak
+  if (qInYear === 1) return { tourism: 0.74, business: 1.06, cargo: 0.90 };
+  if (qInYear === 2) return { tourism: 1.12, business: 1.02, cargo: 0.96 };
+  if (qInYear === 3) return { tourism: 1.32, business: 0.85, cargo: 1.00 };
+  return { tourism: 1.05, business: 1.07, cargo: 1.18 };
 }
 
 // ─── Physics-based flight frequency (PRD D1/F2) ────────────
@@ -509,7 +523,10 @@ export function cityEffectiveDemand(
     return {
       t: tourismBase * tMult * travelIdx * season.tourism,
       b: businessBase * bMult * travelIdx * season.business,
-      c: businessBase * cMult * travelIdx,  // cargo doesn't use seasonality
+      // Cargo seasonality NOW applied — previously skipped, but Q4
+      // holiday freight is the largest single seasonal pulse in real
+      // air-cargo. season.cargo: Q4 1.18 / Q3 1.00 / Q2 0.96 / Q1 0.90.
+      c: businessBase * cMult * travelIdx * season.cargo,
     };
   }
   const now = compute(quarter);
@@ -1083,12 +1100,17 @@ export function computeRouteEconomics(
     // (25% vs 15%) because freight is more resilient to shocks.
     const cargoMultA = Math.max(DEMAND_FLOOR_CARGO, 1 + cargoEventA);
     const cargoMultB = Math.max(DEMAND_FLOOR_CARGO, 1 + cargoEventB);
+    // Cargo seasonality (NEW): Q4 holiday peak +18%, Q1 post-holiday
+    // -10%. Previously cargo was treated as flat year-round which
+    // suppressed Q4 freight visibility — Black Friday/December peak
+    // is the largest single seasonal pulse in real air freight.
+    const cargoSeasonal = seasonalMultiplier(quarter).cargo;
     const cargoDemandT = Math.max(
       0,
       Math.min(
         cityBusinessAtQuarter(origin, quarter) * cargoMultA,
         cityBusinessAtQuarter(dest, quarter) * cargoMultB,
-      ) * cargoFocusBonus * cargoNetworkBonus * cargoShockBonus,
+      ) * cargoFocusBonus * cargoNetworkBonus * cargoShockBonus * cargoSeasonal,
     );
     const dailyTonnes = Math.max(0, Math.min(dailyCapacityT, cargoDemandT));
     const occupancy = dailyCapacityT > 0 ? Math.max(0, Math.min(1.0, dailyTonnes / dailyCapacityT)) : 0;
@@ -1369,11 +1391,15 @@ export function computeRouteEconomics(
     // Belly demand is a fraction (~30%) of full-cargo demand because
     // belly cargo competes with dedicated freighters and most
     // shipments need pallet-sized doors. We treat belly as a side
-    // market that won't cannibalize a full freighter.
+    // market that won't cannibalize a full freighter. Cargo
+    // seasonality is now layered on the same as the dedicated
+    // freighter path (Q4 +18%, Q1 -10%) so belly freight surges in
+    // line with the holiday peak.
+    const bellySeasonal = seasonalMultiplier(quarter).cargo;
     const cargoDemandT = Math.min(
       cityBusinessAtQuarter(origin, quarter) * bellyMultA,
       cityBusinessAtQuarter(dest, quarter) * bellyMultB,
-    ) * 0.30 *
+    ) * 0.30 * bellySeasonal *
       (isDoctrine(team, "cargo-dominance") ? 1 + connectedCityDemandBonus(team, route) : 1) *
       shockAdjustmentMultiplier(team, route, quarter, "cargo");
     const dailyTonnesUsed = Math.max(0, Math.min(bellyDailyCapacity, cargoDemandT));
@@ -1898,13 +1924,17 @@ export function computeObligationFines(
 /**
  * Estimate the team's CURRENT quarterly staff cost — used to scale
  * staffSavingsPct effects without re-running the full quarter close.
- * Mirrors the formula used at quarter-close (baselineStaffCostUsd ×
- * STAFF_MULTIPLIER[slider.staff]).
+ * Mirrors the quarter-close payroll base including doctrine and
+ * recurring staff surcharges.
  */
 export function quarterlyStaffCost(team: Team): number {
   const base = baselineStaffCostUsd(team);
   const mult = STAFF_MULTIPLIER[team.sliders.staff] ?? 1.0;
-  return base * mult;
+  let doctrineMult = 1.0;
+  if (isDoctrine(team, "budget-expansion")) doctrineMult *= 0.80;
+  if (isDoctrine(team, "premium-service")) doctrineMult *= 1.15;
+  const surchargeMult = 1 + Math.max(0, team.recurringStaffSurchargePct ?? 0);
+  return base * mult * doctrineMult * surchargeMult;
 }
 
 /** Serialize an effect for queue persistence. */
@@ -1985,6 +2015,17 @@ export interface QuarterCloseResult {
   newOpsPts: number;
   newLoyalty: number;
   newBrandValue: number;
+  newFlags: string[];
+  newDeferredEvents: DeferredEvent[];
+  newRouteObligations: Team["routeObligations"];
+  newTimedModifiers: NonNullable<Team["timedModifiers"]>;
+  newHubInvestments: Team["hubInvestments"];
+  newLabourRelationsScore: number;
+  newMilestones: string[];
+  newTaxLossCarryForward: Team["taxLossCarryForward"];
+  newFuelStorageLevelL: number;
+  newFuelStorageAvgCostPerL: number;
+  newSubsidiaries: Team["subsidiaries"];
   /** Pre-close team metrics so the digest can show deltas without bookkeeping. */
   prevCashUsd: number;
   prevBrandPts: number;
@@ -3135,6 +3176,17 @@ export function runQuarterClose(
     newOpsPts,
     newLoyalty,
     newBrandValue,
+    newFlags: Array.from(next.flags),
+    newDeferredEvents: next.deferredEvents,
+    newRouteObligations: next.routeObligations ?? [],
+    newTimedModifiers: (next.timedModifiers ?? []).filter((m) => ctx.quarter <= m.activeUntilQuarter),
+    newHubInvestments: next.hubInvestments,
+    newLabourRelationsScore: next.labourRelationsScore,
+    newMilestones: next.milestones ?? [],
+    newTaxLossCarryForward: next.taxLossCarryForward,
+    newFuelStorageLevelL: next.fuelStorageLevelL,
+    newFuelStorageAvgCostPerL: next.fuelStorageAvgCostPerL,
+    newSubsidiaries: next.subsidiaries,
     prevCashUsd,
     prevBrandPts,
     prevOpsPts,

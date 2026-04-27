@@ -11,6 +11,7 @@ import type { Team } from "@/types/game";
 import { fmtMoney, fmtQuarter } from "@/lib/format";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
+import { quarterlyStaffCost, scaledCashAmount } from "@/lib/engine";
 
 /**
  * Per PRD update: only show FINANCIAL tags on decision cards. Strategic-
@@ -38,6 +39,8 @@ function isPositiveFinancial(tag: string): boolean {
   return (
     lower.includes("savings") ||
     lower.includes("revenue") ||
+    lower.includes("slots +") ||
+    lower.includes("slot +") ||
     lower.includes("+$") ||
     lower.includes("+ $")
   );
@@ -65,6 +68,7 @@ export function DecisionsPanel() {
             <ScenarioCard
               key={sc.id}
               scenario={sc}
+              player={player}
               submittedOptionId={submitted?.optionId ?? null}
               flags={player.flags}
               cargoFleetCount={player.fleet.filter((f) => {
@@ -105,9 +109,10 @@ export function DecisionsPanel() {
 }
 
 function ScenarioCard({
-  scenario, submittedOptionId, onSubmit, flags, cargoFleetCount,
+  scenario, player, submittedOptionId, onSubmit, flags, cargoFleetCount,
 }: {
   scenario: (typeof SCENARIOS)[number];
+  player: Team;
   submittedOptionId: string | null;
   flags: Team["flags"];
   cargoFleetCount: number;
@@ -197,7 +202,7 @@ function ScenarioCard({
           // Only financial tags surface in the player-facing UI. The first
           // financial tag is treated as the headline cost and shown on the
           // right; any extras (rare) appear under it on the right column.
-          const financialTags = (opt.effectTags ?? []).filter(isFinancialTag);
+          const financialTags = financialTagsFor(player, opt);
           const headline = financialTags[0];
           const extras = financialTags.slice(1);
           return (
@@ -297,10 +302,45 @@ function ScenarioCard({
       {locked && (() => {
         const submittedOption = scenario.options.find((o) => o.id === submittedOptionId);
         if (!submittedOption) return null;
-        return <ConsequenceCard option={submittedOption} />;
+        return <ConsequenceCard option={submittedOption} player={player} />;
       })()}
     </div>
   );
+}
+
+function signedMoney(n: number): string {
+  return `${n >= 0 ? "+" : ""}${fmtMoney(n)}`;
+}
+
+function financialTagsFor(player: Team, opt: ScenarioOption): string[] {
+  const e = opt.effect;
+  const dynamic: string[] = [];
+  if (e.scaledCash) {
+    dynamic.push(`${signedMoney(scaledCashAmount(player, e.scaledCash))} now`);
+  }
+  if (e.staffSavingsPct && e.staffSavingsPct > 0) {
+    dynamic.push(`Savings ≈ ${fmtMoney(quarterlyStaffCost(player) * 2 * e.staffSavingsPct)}`);
+  }
+  if (e.refinanceDebt) {
+    const totalDebt = player.loans.reduce(
+      (sum, l) => sum + Math.max(0, l.remainingPrincipal),
+      0,
+    ) || Math.max(0, player.totalDebtUsd);
+    const fee = totalDebt * Math.max(0, Math.min(1, e.refinanceDebt.portion)) * e.refinanceDebt.breakFeePct;
+    dynamic.push(`${e.refinanceDebt.successProbability ? "Success fee" : "Fee"} ≈ ${fmtMoney(fee)}`);
+  }
+  if (e.opsExpansionSlots && e.opsExpansionSlots > 0) {
+    dynamic.push(`Slots +${e.opsExpansionSlots}/wk`);
+  }
+  if (e.deferred?.effect.scaledCash) {
+    const cash = scaledCashAmount(player, e.deferred.effect.scaledCash);
+    const chance = e.deferred.probability !== undefined && e.deferred.probability < 1
+      ? `${(e.deferred.probability * 100).toFixed(0)}% chance `
+      : "";
+    dynamic.push(`${chance}${signedMoney(cash)} later`);
+  }
+  const staticFinancial = (opt.effectTags ?? []).filter(isFinancialTag);
+  return dynamic.length > 0 ? [...dynamic, ...staticFinancial] : staticFinancial;
 }
 
 /**
@@ -308,10 +348,11 @@ function ScenarioCard({
  * sees the boardroom consequences of the choice they just locked in. Tied to
  * the existing `OptionEffect` schema in src/data/scenarios.ts.
  */
-function ConsequenceCard({ option }: { option: ScenarioOption }) {
+function ConsequenceCard({ option, player }: { option: ScenarioOption; player: Team }) {
   const e = option.effect;
   const hasImmediate = !!(
-    e.cash || e.brandPts || e.opsPts || e.loyaltyDelta ||
+    e.cash || e.scaledCash || e.staffSavingsPct || e.refinanceDebt ||
+    e.opsExpansionSlots || e.brandPts || e.opsPts || e.loyaltyDelta ||
     (e.setFlags && e.setFlags.length > 0)
   );
   const deferred = e.deferred;
@@ -329,6 +370,26 @@ function ConsequenceCard({ option }: { option: ScenarioOption }) {
             {e.cash !== undefined && e.cash !== 0 && (
               <Pill tone={e.cash >= 0 ? "positive" : "negative"}>
                 Cash {e.cash >= 0 ? "+" : ""}{fmtMoney(e.cash)}
+              </Pill>
+            )}
+            {e.scaledCash && (
+              <Pill tone={scaledCashAmount(player, e.scaledCash) >= 0 ? "positive" : "negative"}>
+                Cash {signedMoney(scaledCashAmount(player, e.scaledCash))}
+              </Pill>
+            )}
+            {e.staffSavingsPct !== undefined && e.staffSavingsPct > 0 && (
+              <Pill tone="positive">
+                Savings +{fmtMoney(quarterlyStaffCost(player) * 2 * e.staffSavingsPct)}
+              </Pill>
+            )}
+            {e.refinanceDebt && (
+              <Pill tone="info">
+                Debt rates repriced
+              </Pill>
+            )}
+            {e.opsExpansionSlots !== undefined && e.opsExpansionSlots !== 0 && (
+              <Pill tone="positive">
+                Slots +{e.opsExpansionSlots}/wk
               </Pill>
             )}
             {e.brandPts !== undefined && e.brandPts !== 0 && (
@@ -362,7 +423,7 @@ function ConsequenceCard({ option }: { option: ScenarioOption }) {
                 {(deferred.probability * 100).toFixed(0)}% chance
               </span>
             )}
-            <DeferredEffectSummary effect={deferred.effect} />
+            <DeferredEffectSummary effect={deferred.effect} player={player} />
           </div>
         </div>
       )}
@@ -370,12 +431,20 @@ function ConsequenceCard({ option }: { option: ScenarioOption }) {
   );
 }
 
-function DeferredEffectSummary({ effect }: { effect: OptionEffect }) {
+function DeferredEffectSummary({ effect, player }: { effect: OptionEffect; player: Team }) {
   const parts: React.ReactNode[] = [];
   if (effect.cash) {
     parts.push(
       <Pill key="cash" tone={effect.cash >= 0 ? "positive" : "negative"}>
         Cash {effect.cash >= 0 ? "+" : ""}{fmtMoney(effect.cash)}
+      </Pill>,
+    );
+  }
+  if (effect.scaledCash) {
+    const cash = scaledCashAmount(player, effect.scaledCash);
+    parts.push(
+      <Pill key="scaled-cash" tone={cash >= 0 ? "positive" : "negative"}>
+        Cash {signedMoney(cash)}
       </Pill>,
     );
   }

@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { AIRCRAFT, AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CITIES, CITIES_BY_CODE } from "@/data/cities";
-import { SCENARIOS, SCENARIOS_BY_QUARTER, type OptionEffect } from "@/data/scenarios";
+import { SCENARIOS, SCENARIOS_BY_QUARTER } from "@/data/scenarios";
 import {
   applyOptionEffect,
   computeAirlineValue,
@@ -2709,6 +2709,49 @@ export const useGame = create<GameStore>()(
           );
         }
 
+        // S6 Rate Window — debt refinancing has to touch real loan
+        // instruments, so it lives in the store rather than the pure
+        // OptionEffect cash/flag helper. The half-refi option applies
+        // half of the rate benefit across the debt stack, which avoids
+        // having to split persisted loan rows.
+        if (option.effect.refinanceDebt) {
+          const refi = option.effect.refinanceDebt;
+          const totalDebt = updated.loans.reduce(
+            (sum, l) => sum + Math.max(0, l.remainingPrincipal),
+            0,
+          ) || Math.max(0, updated.totalDebtUsd);
+          const portion = Math.max(0, Math.min(1, refi.portion));
+          const principal = totalDebt * portion;
+          if (principal <= 0) {
+            toast.warning("No debt to refinance", "The team has no outstanding loan principal.");
+          } else {
+            const success =
+              refi.successProbability === undefined ||
+              Math.random() <= refi.successProbability;
+            if (success) {
+              const fee = principal * Math.max(0, refi.breakFeePct);
+              const rateBenefit = 1 - (1 - refi.rateMultiplier) * portion;
+              updated.cashUsd -= fee;
+              updated.loans = updated.loans.map((loan) => ({
+                ...loan,
+                ratePct: Math.max(0.1, loan.ratePct * rateBenefit),
+              }));
+              updated.flags.add("efficient_capital");
+              toast.success(
+                "Debt refinanced",
+                `${fmtMoneyPlain(fee)} break fee · loan rates multiplied by ${rateBenefit.toFixed(3)}.`,
+              );
+            } else {
+              const diligenceFee = Math.min(8_000_000, Math.max(1_000_000, totalDebt * 0.005));
+              updated.cashUsd -= diligenceFee;
+              toast.warning(
+                "Counter-offer failed",
+                `${fmtMoneyPlain(diligenceFee)} advisory cost charged; existing loan rates remain unchanged.`,
+              );
+            }
+          }
+        }
+
         // S7 Hungry Neighbour — fleet acquisition presets. Materialize
         // aircraft into the player's fleet at favourable terms (already
         // depreciated, ~8 quarters of useful life remaining). Routes are
@@ -3421,6 +3464,17 @@ export const useGame = create<GameStore>()(
           opsPts: result.newOpsPts,
           customerLoyaltyPct: result.newLoyalty,
           brandValue: result.newBrandValue,
+          flags: new Set(result.newFlags),
+          deferredEvents: result.newDeferredEvents,
+          routeObligations: result.newRouteObligations,
+          timedModifiers: result.newTimedModifiers,
+          hubInvestments: result.newHubInvestments,
+          labourRelationsScore: result.newLabourRelationsScore,
+          milestones: result.newMilestones,
+          taxLossCarryForward: result.newTaxLossCarryForward,
+          fuelStorageLevelL: result.newFuelStorageLevelL,
+          fuelStorageAvgCostPerL: result.newFuelStorageAvgCostPerL,
+          subsidiaries: result.newSubsidiaries,
           // Dedupe-on-push: drop any existing row for this quarter
           // before appending the fresh one. Earlier the array could
           // accumulate duplicates if the player restored a snapshot

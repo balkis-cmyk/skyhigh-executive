@@ -11,6 +11,7 @@ import {
   runQuarterClose,
 } from "@/lib/engine";
 import { loanDisplayName } from "@/lib/bank-names";
+import { cn } from "@/lib/cn";
 
 /**
  * Financials report — three blocks:
@@ -260,6 +261,21 @@ export function FinancialsPanel() {
           <ProjectedPLCard />
         </div>
       </section>
+
+      {/* ── 3.5 Cash-flow statement — last 4 quarters of operating /
+          investing / financing activity. Investing CF is derived as
+          the residual that reconciles cash delta against operating +
+          financing, so it absorbs CapEx, M&A, and any non-trivial
+          one-off cash movements without needing per-line storage. */}
+      {player.financialsByQuarter.length > 0 && (
+        <section>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+            Cash flow · last {Math.min(4, player.financialsByQuarter.length)} quarter
+            {Math.min(4, player.financialsByQuarter.length) === 1 ? "" : "s"}
+          </div>
+          <CashflowCard rows={player.financialsByQuarter} />
+        </section>
+      )}
 
       {/* ── 4. P&L history (expandable) ── */}
       {player.financialsByQuarter.length > 0 && (
@@ -658,6 +674,227 @@ function PLHistoryTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Cash flow statement — last 4 closed quarters as columns, classic
+ * three-section layout (Operating · Investing · Financing → Net
+ * change in cash → cash end of period).
+ *
+ * Operating CF is built from line items on the financialsByQuarter
+ * row (revenue minus operating costs minus taxes). Financing CF
+ * shows the debt delta minus interest paid. Investing is the
+ * residual: cashDelta − operatingCF − financingCF — anything not
+ * accounted for elsewhere is by definition CapEx + M&A + other
+ * non-operating cash movements.
+ *
+ * Older saves can omit cost breakdowns (everything was bundled into
+ * `costs`). For those rows we approximate operating CF from
+ * netProfit + interest (interest is reclassified to Financing).
+ */
+function CashflowCard({
+  rows,
+}: {
+  rows: Array<{
+    quarter: number;
+    cash: number;
+    debt: number;
+    revenue: number;
+    costs: number;
+    fuelCost?: number;
+    slotCost?: number;
+    staffCost?: number;
+    leaseFeesUsd?: number;
+    otherSliderCost?: number;
+    marketingCost?: number;
+    serviceCost?: number;
+    operationsCost?: number;
+    customerServiceCost?: number;
+    maintenanceCost?: number;
+    insuranceCost?: number;
+    depreciation?: number;
+    interest?: number;
+    taxesAndLevies?: number;
+    netProfit: number;
+  }>;
+}) {
+  // Last 4 closed quarters, oldest → newest left to right.
+  const visible = rows.slice(-4);
+  if (visible.length === 0) return null;
+
+  type CFColumn = {
+    quarter: number;
+    operatingCF: number;
+    financingCF: number;
+    investingCF: number;
+    netChange: number;
+    endingCash: number;
+    // Reusable subtotals so the rows below render their own breakdown.
+    revenue: number;
+    operatingOutflows: number;
+    interest: number;
+    debtDelta: number;
+  };
+
+  const cols: CFColumn[] = visible.map((r, i) => {
+    // Operating outflows: every cost EXCEPT depreciation (non-cash) and
+    // interest (financing). Falls back to (costs - depreciation) when
+    // breakdown fields are missing on older rows. Interest is broken
+    // out separately so the financing section can deduct it.
+    const breakdown =
+      (r.fuelCost ?? 0) +
+      (r.slotCost ?? 0) +
+      (r.staffCost ?? 0) +
+      (r.leaseFeesUsd ?? 0) +
+      (r.marketingCost ?? r.otherSliderCost ?? 0) +
+      (r.serviceCost ?? 0) +
+      (r.operationsCost ?? 0) +
+      (r.customerServiceCost ?? 0) +
+      (r.maintenanceCost ?? 0) +
+      (r.insuranceCost ?? 0) +
+      (r.taxesAndLevies ?? 0);
+    const interest = r.interest ?? 0;
+    // If no breakdown was persisted, fall back to (costs - depreciation
+    // - interest) which still excludes the two non-operating items.
+    const operatingOutflows = breakdown > 0
+      ? breakdown
+      : Math.max(0, r.costs - (r.depreciation ?? 0) - interest);
+    const operatingCF = r.revenue - operatingOutflows;
+
+    // Financing CF: net new debt this quarter minus interest paid.
+    // Prior row (or 0 for the first visible) gives the debt baseline.
+    const prevDebt = i === 0
+      ? rows[rows.length - visible.length - 1]?.debt ?? 0
+      : visible[i - 1].debt;
+    const debtDelta = r.debt - prevDebt;
+    const financingCF = debtDelta - interest;
+
+    // Investing CF as residual against the cash change. Earlier rows
+    // never tracked CapEx separately, so this is the cleanest way to
+    // surface "where else did cash go" without retroactive ledger work.
+    const prevCash = i === 0
+      ? rows[rows.length - visible.length - 1]?.cash ?? r.cash - r.netProfit
+      : visible[i - 1].cash;
+    const netChange = r.cash - prevCash;
+    const investingCF = netChange - operatingCF - financingCF;
+
+    return {
+      quarter: r.quarter,
+      operatingCF,
+      financingCF,
+      investingCF,
+      netChange,
+      endingCash: r.cash,
+      revenue: r.revenue,
+      operatingOutflows,
+      interest,
+      debtDelta,
+    };
+  });
+
+  return (
+    <div className="rounded-md border border-line overflow-hidden text-[0.75rem]">
+      <table className="w-full">
+        <thead>
+          <tr className="bg-surface-2 border-b border-line">
+            <Th className="w-[35%]">Cash flow line</Th>
+            {cols.map((c) => (
+              <Th key={c.quarter} className="text-right">
+                {fmtQuarter(c.quarter)}
+              </Th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {/* Operating section */}
+          <tr className="border-t border-line">
+            <td colSpan={cols.length + 1} className="px-2 py-1 bg-surface-2/40 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">
+              Operating activities
+            </td>
+          </tr>
+          <CashflowRow label="Revenue collected" values={cols.map((c) => c.revenue)} indent />
+          <CashflowRow label="Operating outflows" values={cols.map((c) => -c.operatingOutflows)} indent />
+          <CashflowRow label="Cash from operations" values={cols.map((c) => c.operatingCF)} bold />
+
+          {/* Investing section */}
+          <tr className="border-t border-line">
+            <td colSpan={cols.length + 1} className="px-2 py-1 bg-surface-2/40 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">
+              Investing activities
+            </td>
+          </tr>
+          <CashflowRow
+            label="CapEx · M&A · other (residual)"
+            values={cols.map((c) => c.investingCF)}
+            indent
+            hint="Aircraft purchases, airport buys, asset sales, and any one-off cash movements not in operating or financing."
+          />
+          <CashflowRow label="Cash used in investing" values={cols.map((c) => c.investingCF)} bold />
+
+          {/* Financing section */}
+          <tr className="border-t border-line">
+            <td colSpan={cols.length + 1} className="px-2 py-1 bg-surface-2/40 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">
+              Financing activities
+            </td>
+          </tr>
+          <CashflowRow label="Net debt change" values={cols.map((c) => c.debtDelta)} indent />
+          <CashflowRow label="Interest paid" values={cols.map((c) => -c.interest)} indent />
+          <CashflowRow label="Cash from financing" values={cols.map((c) => c.financingCF)} bold />
+
+          {/* Reconciliation footer */}
+          <tr className="border-t-2 border-line">
+            <td colSpan={cols.length + 1} className="px-2 py-1 bg-surface-2/40 text-[0.625rem] uppercase tracking-wider font-semibold text-ink-muted">
+              Reconciliation
+            </td>
+          </tr>
+          <CashflowRow label="Net change in cash" values={cols.map((c) => c.netChange)} bold />
+          <CashflowRow label="Cash, end of quarter" values={cols.map((c) => c.endingCash)} bold />
+        </tbody>
+      </table>
+      <div className="px-3 py-2 bg-surface-2/30 border-t border-line text-[0.625rem] text-ink-muted leading-snug">
+        Operating &amp; financing built from P&amp;L line items + debt
+        delta. Investing is the residual that reconciles cash, so it
+        captures CapEx and any one-off movements without needing a
+        separate ledger.
+      </div>
+    </div>
+  );
+}
+
+/** A single row in the cash-flow table. Renders the label on the
+ *  left and one money column per visible quarter, signed and tone-
+ *  coloured. `bold` rows are subtotals; `indent` rows are line items
+ *  inside a section. */
+function CashflowRow({
+  label, values, bold, indent, hint,
+}: {
+  label: string;
+  values: number[];
+  bold?: boolean;
+  indent?: boolean;
+  hint?: string;
+}) {
+  return (
+    <tr className={cn("border-b border-line/50 last:border-0", bold && "bg-surface-2/20")}>
+      <td className={cn("px-2 py-1.5", indent && "pl-5", bold && "font-semibold text-ink")}>
+        <span className={cn(bold ? "text-ink" : "text-ink-2")}>{label}</span>
+        {hint && (
+          <span className="ml-1 text-[0.625rem] text-ink-muted" title={hint}>ⓘ</span>
+        )}
+      </td>
+      {values.map((v, i) => (
+        <td
+          key={i}
+          className={cn(
+            "px-2 py-1.5 text-right tabular font-mono",
+            v > 0 ? "text-positive" : v < 0 ? "text-negative" : "text-ink-muted",
+            bold && "font-semibold",
+          )}
+        >
+          {v >= 0 && bold ? "+" : ""}{fmtMoney(v)}
+        </td>
+      ))}
+    </tr>
   );
 }
 
