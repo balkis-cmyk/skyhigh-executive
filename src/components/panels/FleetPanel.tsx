@@ -21,7 +21,10 @@ import { engineUpgradeCostUsd, fuselageUpgradeCostUsd } from "@/lib/aircraft-upg
 import { PREORDER_CANCEL_PENALTY_PCT } from "@/lib/pre-orders";
 
 /** Group aircraft by spec id, count quantity, and aggregate utilisation. */
-function groupByType(player: ReturnType<typeof selectPlayer>) {
+function groupByType(
+  player: ReturnType<typeof selectPlayer>,
+  currentQuarter: number,
+) {
   if (!player) return [];
   const map: Record<string, {
     specId: string;
@@ -31,6 +34,7 @@ function groupByType(player: ReturnType<typeof selectPlayer>) {
     grounded: number;
     retired: number;
     onRoutes: number;        // # planes assigned to a route
+    aging: number;           // active planes with ≤4Q retirement runway
     bookValue: number;       // sum
     avgAgeQ: number;         // average plane age in quarters
     quarterlyProfit: number; // sum of profit across routes carrying these planes
@@ -42,12 +46,11 @@ function groupByType(player: ReturnType<typeof selectPlayer>) {
     routeProfit[r.id] = r.quarterlyRevenue - r.quarterlyFuelCost - r.quarterlySlotCost;
   }
 
-  let now = 0;
   for (const f of player.fleet) {
     if (!map[f.specId]) {
       map[f.specId] = {
         specId: f.specId, total: 0, active: 0, ordered: 0, grounded: 0, retired: 0,
-        onRoutes: 0, bookValue: 0, avgAgeQ: 0, quarterlyProfit: 0,
+        onRoutes: 0, aging: 0, bookValue: 0, avgAgeQ: 0, quarterlyProfit: 0,
       };
     }
     const g = map[f.specId];
@@ -58,14 +61,19 @@ function groupByType(player: ReturnType<typeof selectPlayer>) {
       g.quarterlyProfit += (routeProfit[f.routeId] ?? 0)
         / Math.max(1, player.fleet.filter((x) => x.routeId === f.routeId).length);
     }
-    if (f.status === "active") g.active += 1;
+    if (f.status === "active") {
+      g.active += 1;
+      // Aging = active and within 4 quarters of mandatory retirement.
+      // Same threshold the top-of-panel "Aging" card uses so the
+      // numbers reconcile.
+      const q = (f.retirementQuarter ?? 0) - currentQuarter;
+      if (q > 0 && q <= 4) g.aging += 1;
+    }
     else if (f.status === "ordered") g.ordered += 1;
     else if (f.status === "grounded") g.grounded += 1;
     else if (f.status === "retired") g.retired += 1;
     g.avgAgeQ += f.purchaseQuarter;
-    now += 1;
   }
-  void now;
   // Convert avgAgeQ from sum-of-purchase-quarters to mean
   for (const g of Object.values(map)) {
     g.avgAgeQ = g.avgAgeQ / g.total; // this is actually "avg purchase quarter"
@@ -154,9 +162,14 @@ export function FleetPanel() {
   >(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedSpecId, setExpandedSpecId] = useState<string | null>(null);
+  /** When true, opens the Aging fleet modal — a per-plane list of
+   *  active aircraft with ≤4Q retirement runway, with one-click
+   *  Replace actions that route into the buy flow pre-targeted at
+   *  the same spec. */
+  const [agingOpen, setAgingOpen] = useState(false);
   const [marketQuery, setMarketQuery] = useState("");
 
-  const groups = useMemo(() => groupByType(player), [player]);
+  const groups = useMemo(() => groupByType(player, s.currentQuarter), [player, s.currentQuarter]);
 
   if (!player) return null;
 
@@ -266,7 +279,8 @@ export function FleetPanel() {
             label="Aging"
             count={opsBuckets.aging}
             tone={opsBuckets.aging > 0 ? "warn" : "default"}
-            sub={opsBuckets.aging > 0 ? "≤4Q left — plan replacement" : "Fleet is fresh"}
+            sub={opsBuckets.aging > 0 ? "Click to retrofit or replace" : "Fleet is fresh"}
+            onClick={opsBuckets.aging > 0 ? () => setAgingOpen(true) : undefined}
           />
         </div>
       )}
@@ -339,11 +353,12 @@ export function FleetPanel() {
           <table className="w-full text-[0.8125rem]">
             <thead>
               <tr className="bg-surface-2 border-b border-line">
-                <Th className="w-[40%]">Model</Th>
+                <Th className="w-[36%]">Model</Th>
                 <Th className="text-right w-[70px]">Total</Th>
                 <Th className="text-right w-[70px]">Used</Th>
                 <Th className="text-right w-[80px]">Unused</Th>
                 <Th className="text-right w-[70px]">Order</Th>
+                <Th className="text-right w-[80px]">Aging</Th>
                 <Th className="text-right">Q profit</Th>
               </tr>
             </thead>
@@ -409,6 +424,17 @@ export function FleetPanel() {
                       g.ordered > 0 ? "text-info font-semibold" : "text-ink-muted",
                     )}>
                       {g.ordered}
+                    </td>
+                    <td
+                      className={cn(
+                        "py-2.5 px-3 text-right tabular font-mono",
+                        g.aging > 0 ? "text-warning font-semibold" : "text-ink-muted",
+                      )}
+                      title={g.aging > 0
+                        ? `${g.aging} of ${g.active} active planes have ≤4Q before mandatory retirement`
+                        : undefined}
+                    >
+                      {g.aging}
                     </td>
                     <td
                       className={cn(
@@ -877,6 +903,23 @@ export function FleetPanel() {
         }}
       />
 
+      {/* ── Aging fleet modal ─────────────────────────────────────── */}
+      <AgingFleetModal
+        open={agingOpen}
+        onClose={() => setAgingOpen(false)}
+        onReplaceWithSameSpec={(specId) => {
+          // Pre-prime the market modal's search query to the spec
+          // name so the player lands on the same model. We close the
+          // aging modal, then open the market modal — the market
+          // modal honours the marketQuery state, which we set before
+          // opening it.
+          const spec = AIRCRAFT_BY_ID[specId];
+          if (spec) setMarketQuery(spec.name);
+          setAgingOpen(false);
+          setBuyOpen(true);
+        }}
+      />
+
       {/* Purchase order modal — quantity, engine retrofit, fuselage,
           and seat configuration. Replaces the old single-button confirm. */}
       <PurchaseOrderModal
@@ -1253,24 +1296,37 @@ function RetiredHistory() {
 /** Status-bucket card for the top-of-panel operational summary.
  *  Recommendation #B8: scan five buckets and know the next move. */
 function FleetStateCard({
-  label, count, tone, sub,
+  label, count, tone, sub, onClick,
 }: {
   label: string;
   count: number;
   tone: "positive" | "info" | "warn" | "default";
   sub: string;
+  /** Optional click handler — when provided, the card renders as a
+   *  button with hover affordance + a chevron hint. Used by the
+   *  "Aging" card to drill into a per-plane replacement modal. */
+  onClick?: () => void;
 }) {
+  const interactive = !!onClick;
   return (
-    <div
+    <button
+      type={interactive ? "button" : undefined}
+      onClick={onClick}
+      disabled={!interactive}
       className={cn(
-        "rounded-md border p-2.5",
+        "rounded-md border p-2.5 text-left w-full",
         tone === "positive" && "border-positive/40 bg-[var(--positive-soft)]/30",
         tone === "warn" && "border-warning/40 bg-[var(--warning-soft)]/30",
         tone === "info" && "border-line bg-[rgba(20,53,94,0.04)]",
         tone === "default" && "border-line bg-surface",
+        interactive && "cursor-pointer hover:shadow-[var(--shadow-1)] hover:border-warning transition-shadow",
+        !interactive && "cursor-default",
       )}
     >
-      <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">{label}</div>
+      <div className="flex items-center justify-between text-[0.625rem] uppercase tracking-wider text-ink-muted">
+        <span>{label}</span>
+        {interactive && <span className="text-ink-muted">→</span>}
+      </div>
       <div
         className={cn(
           "font-display text-[1.5rem] tabular leading-none mt-0.5",
@@ -1283,6 +1339,188 @@ function FleetStateCard({
         {count}
       </div>
       <div className="text-[0.625rem] text-ink-muted mt-1 leading-snug">{sub}</div>
+    </button>
+  );
+}
+
+/**
+ * Aging fleet modal.
+ *
+ * Per-plane list of every active aircraft within 4 quarters of
+ * mandatory retirement. Each row offers two routes forward:
+ *
+ *   1. **Retrofit lifespan** — pay 30% of the original purchase
+ *      price, gain +14Q operational life (50% of base 28Q lifespan).
+ *      One per airframe so it's a real decision, not an indefinite
+ *      escape hatch.
+ *
+ *   2. **Replace** — close this modal and open the aircraft market
+ *      modal, pre-primed with the same model in the search query.
+ *      Player can then buy or lease a fresh airframe of the same
+ *      type (or browse to a different model).
+ *
+ * Why this exists: previously the player had no in-flow way to act
+ * on the "Aging" stat card. They had to memorise which planes were
+ * aging, scroll the fleet list, find the right model, and order
+ * a replacement separately. This modal collapses that workflow
+ * into two clicks.
+ */
+function AgingFleetModal({
+  open, onClose, onReplaceWithSameSpec,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onReplaceWithSameSpec: (specId: string) => void;
+}) {
+  const s = useGame();
+  const player = selectPlayer(s);
+  const retrofitLifespan = useGame((g) => g.retrofitLifespan);
+
+  if (!player) return null;
+
+  // Aging = active and within 4 quarters of mandatory retirement.
+  const agingPlanes = player.fleet
+    .filter((f) => {
+      if (f.status !== "active") return false;
+      const q = (f.retirementQuarter ?? 0) - s.currentQuarter;
+      return q > 0 && q <= 4;
+    })
+    .sort((a, b) => a.retirementQuarter - b.retirementQuarter);
+
+  return (
+    <Modal open={open} onClose={onClose} className="w-[min(720px,calc(100vw-2rem))]">
+      <ModalHeader>
+        <div className="flex items-center gap-2 mb-1">
+          <Badge tone="warning">Aging fleet</Badge>
+          <span className="text-[0.6875rem] text-ink-muted">
+            {agingPlanes.length} aircraft within 4 quarters of retirement
+          </span>
+        </div>
+        <h2 className="font-display text-[1.5rem] text-ink leading-tight">
+          Plan replacements
+        </h2>
+        <p className="text-[0.8125rem] text-ink-muted mt-1">
+          Each aircraft can be retrofitted once for +14Q of life, or replaced
+          via a fresh order from the same model line. Routes stay assigned
+          either way until the original airframe retires.
+        </p>
+      </ModalHeader>
+
+      <ModalBody className="space-y-2 max-h-[60vh] overflow-auto">
+        {agingPlanes.length === 0 ? (
+          <div className="rounded-md border border-line bg-surface-2/40 px-3 py-6 text-center text-[0.8125rem] text-ink-muted">
+            No aging aircraft right now. The "Aging" card lights up when a
+            plane has 4 quarters or fewer of mandatory life remaining.
+          </div>
+        ) : (
+          agingPlanes.map((f) => (
+            <AgingFleetRow
+              key={f.id}
+              plane={f}
+              currentQuarter={s.currentQuarter}
+              playerCash={player.cashUsd}
+              routeAssignment={
+                f.routeId
+                  ? player.routes.find((r) => r.id === f.routeId)
+                  : undefined
+              }
+              onRetrofit={() => {
+                const r = retrofitLifespan(f.id);
+                if (!r.ok) toast.negative("Retrofit failed", r.error ?? "");
+              }}
+              onReplace={() => onReplaceWithSameSpec(f.specId)}
+            />
+          ))
+        )}
+      </ModalBody>
+
+      <ModalFooter>
+        <Button variant="ghost" onClick={onClose}>Close</Button>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+function AgingFleetRow({
+  plane, currentQuarter, playerCash, routeAssignment, onRetrofit, onReplace,
+}: {
+  plane: import("@/types/game").FleetAircraft;
+  currentQuarter: number;
+  playerCash: number;
+  routeAssignment?: import("@/types/game").Route;
+  onRetrofit: () => void;
+  onReplace: () => void;
+}) {
+  const spec = AIRCRAFT_BY_ID[plane.specId];
+  if (!spec) return null;
+  const quartersLeft = (plane.retirementQuarter ?? 0) - currentQuarter;
+  const ageQ = currentQuarter - plane.purchaseQuarter;
+  const baselinePrice = plane.purchasePrice > 0
+    ? plane.purchasePrice
+    : (spec.buyPriceUsd ?? 0);
+  const retrofitCost = Math.round(baselinePrice * 0.30);
+  const canAffordRetrofit = playerCash >= retrofitCost;
+  const alreadyExtended = !!plane.lifespanExtended;
+  const tail = plane.id.slice(-4).toUpperCase();
+  return (
+    <div className="rounded-md border border-line bg-surface px-3 py-2.5">
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="font-semibold text-ink text-[0.9375rem]">
+              {spec.name}
+            </span>
+            <span className="font-mono text-[0.6875rem] text-ink-muted">
+              · #{tail}
+            </span>
+            {routeAssignment && routeAssignment.status !== "closed" && (
+              <span className="font-mono text-[0.6875rem] text-accent">
+                {routeAssignment.originCode} → {routeAssignment.destCode}
+              </span>
+            )}
+            {alreadyExtended && (
+              <span className="text-[0.5625rem] uppercase tracking-wider font-semibold text-positive bg-[var(--positive-soft)] px-1.5 py-0.5 rounded">
+                Already retrofitted
+              </span>
+            )}
+          </div>
+          <div className="text-[0.6875rem] text-ink-muted mt-0.5 font-mono">
+            Age {ageQ}Q · retires in <strong className="text-warning">{quartersLeft}Q</strong>
+            {" · "}book {fmtMoney(plane.bookValue ?? 0)}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 text-[0.75rem]">
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={alreadyExtended || !canAffordRetrofit}
+          title={
+            alreadyExtended
+              ? "This airframe has already been retrofitted once"
+              : !canAffordRetrofit
+                ? `Need ${fmtMoney(retrofitCost)} cash for retrofit`
+                : `Pay ${fmtMoney(retrofitCost)} (30% of original purchase) for +14Q lifespan`
+          }
+          onClick={onRetrofit}
+        >
+          Retrofit · {fmtMoney(retrofitCost)} → +14Q
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onReplace}
+          title={`Open the market filtered to ${spec.name} for replacement orders`}
+        >
+          Replace with new →
+        </Button>
+        <span className="text-[0.625rem] text-ink-muted ml-auto leading-snug">
+          {alreadyExtended
+            ? "Replacement is the only option — already retrofitted once."
+            : "Pick one — retrofit defers the decision, replace lets you choose a newer model."}
+        </span>
+      </div>
     </div>
   );
 }

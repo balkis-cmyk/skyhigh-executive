@@ -287,6 +287,12 @@ export interface GameStore extends GameState {
   /** Retrofit fuselage coating on an existing aircraft. */
   retrofitFuselage(aircraftId: string): { ok: boolean; error?: string };
 
+  /** Major lifespan retrofit for an aging aircraft. Pay 30% of the
+   *  original purchase price; gain +14 quarters of operational life
+   *  (50% of the base 28Q lifespan). One retrofit per airframe — the
+   *  plane still retires eventually, just later. */
+  retrofitLifespan(aircraftId: string): { ok: boolean; error?: string };
+
   decommissionAircraft(aircraftId: string): void;
 
   renovateAircraft(aircraftId: string, newCabin: CabinConfig):
@@ -1944,6 +1950,65 @@ export const useGame = create<GameStore>()(
         toast.success(
           `Engine retrofit installed`,
           `${AIRCRAFT_BY_ID[plane.specId]?.name} · ${kind} · −${fmtMoneyPlain(cost)}`,
+        );
+        return { ok: true };
+      },
+
+      retrofitLifespan: (aircraftId) => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        const plane = player.fleet.find((f) => f.id === aircraftId);
+        if (!plane) return { ok: false, error: "Aircraft not found" };
+        if (plane.status !== "active" && plane.status !== "grounded") {
+          return { ok: false, error: `Cannot retrofit ${plane.status} aircraft` };
+        }
+        if (plane.lifespanExtended) {
+          return {
+            ok: false,
+            error: "This airframe has already had its lifespan retrofit. One per plane — replacement is the only option now.",
+          };
+        }
+        // Cost = 30% of original purchase price (the actual cash paid
+        // when this airframe was acquired). Falls back to spec
+        // buyPriceUsd if a legacy save is missing purchasePrice.
+        const spec = AIRCRAFT_BY_ID[plane.specId];
+        const baselinePrice = plane.purchasePrice > 0
+          ? plane.purchasePrice
+          : (spec?.buyPriceUsd ?? 0);
+        const cost = Math.round(baselinePrice * 0.30);
+        if (player.cashUsd < cost) {
+          return { ok: false, error: `Need ${fmtMoneyPlain(cost)} cash for retrofit` };
+        }
+        // +14 quarters = 50% of the base 28Q lifespan. Capped at 38Q
+        // total beyond the original delivery so the plane can't run
+        // forever even after the retrofit.
+        const extension = 14;
+        set({
+          teams: s.teams.map((t) =>
+            t.id !== s.playerTeamId ? t : {
+              ...t,
+              cashUsd: t.cashUsd - cost,
+              fleet: t.fleet.map((f) =>
+                f.id === aircraftId
+                  ? {
+                      ...f,
+                      retirementQuarter: f.retirementQuarter + extension,
+                      lifespanExtended: true,
+                      // Renovation + maintenance bump because a major
+                      // retrofit also refreshes the cabin. Adds a
+                      // small satisfaction bump back so the player
+                      // sees an immediate quality dividend.
+                      satisfactionPct: Math.min(100, (f.satisfactionPct ?? 75) + 12),
+                    }
+                  : f,
+              ),
+            },
+          ),
+        });
+        toast.success(
+          `Lifespan retrofit applied`,
+          `${spec?.name ?? "Aircraft"} · +${extension}Q operational life · −${fmtMoneyPlain(cost)}`,
         );
         return { ok: true };
       },

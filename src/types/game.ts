@@ -123,6 +123,13 @@ export interface FleetAircraft {
    *  flies. Cargo planes (`spec.family === "cargo"`) ignore this
    *  field — they use `spec.cargoTonnes` directly. */
   cargoBelly?: CargoBellyTier;
+  /** Lifespan retrofit flag. When the player pays 30% of the original
+   *  purchase price on an aging plane (≤4Q from retirement), this is
+   *  set true and `retirementQuarter` jumps +14Q (50% of the base
+   *  28Q lifespan). One retrofit per airframe so it's a real
+   *  decision, not an indefinite escape hatch — the plane still
+   *  retires eventually. */
+  lifespanExtended?: boolean;
 }
 
 /** Optional cabin amenities a player can toggle at purchase order.
