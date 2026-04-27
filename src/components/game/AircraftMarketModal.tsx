@@ -12,8 +12,9 @@ import {
 } from "@/lib/pre-orders";
 import { useGame } from "@/store/game";
 import { cn } from "@/lib/cn";
-import { Plane, ChevronDown, ChevronUp } from "lucide-react";
+import { Plane, ChevronDown, ChevronUp, GitCompare, X } from "lucide-react";
 import type { AircraftSpec, SecondHandListing } from "@/types/game";
+import { AircraftCompareModal } from "@/components/game/AircraftCompareModal";
 
 type EngineKind = "none" | "fuel" | "power" | "super";
 
@@ -122,6 +123,25 @@ export function AircraftMarketModal({
    *  at a time so the modal scroll doesn't get unwieldy. */
   const [expandedSpecId, setExpandedSpecId] = useState<string | null>(null);
 
+  /** Compare-mode: when active, each AircraftRow gets a checkbox.
+   *  Up to 4 specs can be selected; a sticky footer surfaces a
+   *  "Compare N →" CTA that opens AircraftCompareModal for
+   *  side-by-side review. */
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareSpecIds, setCompareSpecIds] = useState<string[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
+  function toggleCompare(specId: string) {
+    setCompareSpecIds((cur) => {
+      if (cur.includes(specId)) return cur.filter((x) => x !== specId);
+      // Cap at 4 — past that the cells get cramped and the value drops.
+      if (cur.length >= 4) return cur;
+      return [...cur, specId];
+    });
+  }
+  const compareSpecs = compareSpecIds
+    .map((id) => AIRCRAFT_BY_ID[id])
+    .filter((s): s is AircraftSpec => !!s);
+
   // Reset the expansion when the player switches Boeing↔Airbus or
   // Passenger↔Cargo so a previously-expanded spec doesn't stay open in
   // a tab where it no longer appears.
@@ -213,24 +233,49 @@ export function AircraftMarketModal({
               New-build orders by manufacturer, plus a secondary market for used aircraft.
             </p>
           </div>
-          {/* Secondary-market toggle pinned top-right so it doesn't
-              compete for tab-strip space with the six manufacturer
-              tabs. Active state matches the manufacturer tab styling
-              for visual consistency. */}
-          <button
-            onClick={() => changeTab(tab === "secondary" ? "boeing" : "secondary")}
-            className={cn(
-              "shrink-0 rounded-md px-3 py-1.5 text-[0.75rem] font-medium border transition-colors flex items-center gap-1.5",
-              tab === "secondary"
-                ? "border-accent text-accent bg-[var(--accent-soft)]"
-                : "border-line text-ink-muted hover:bg-surface-hover",
+          {/* Compare + secondary toggles pinned top-right. Compare is a
+              modal-stay action (lets the player tick boxes inline);
+              secondary swaps the entire list. */}
+          <div className="shrink-0 flex items-center gap-2">
+            {tab !== "secondary" && (
+              <button
+                onClick={() => {
+                  setCompareMode((on) => !on);
+                  if (compareMode) setCompareSpecIds([]); // clear on exit
+                }}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-[0.75rem] font-medium border transition-colors flex items-center gap-1.5",
+                  compareMode
+                    ? "border-accent text-accent bg-[var(--accent-soft)]"
+                    : "border-line text-ink-muted hover:bg-surface-hover",
+                )}
+                aria-pressed={compareMode}
+                title="Pick 2-4 aircraft to view a side-by-side spec sheet"
+              >
+                <GitCompare size={13} />
+                {compareMode ? "Exit compare" : "Compare"}
+                {compareMode && compareSpecIds.length > 0 && (
+                  <span className="text-[0.6875rem] tabular font-mono">
+                    {compareSpecIds.length}
+                  </span>
+                )}
+              </button>
             )}
-          >
-            Secondary market
-            <span className="text-[0.6875rem] tabular font-mono opacity-80">
-              {secondHandListings.length}
-            </span>
-          </button>
+            <button
+              onClick={() => changeTab(tab === "secondary" ? "boeing" : "secondary")}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-[0.75rem] font-medium border transition-colors flex items-center gap-1.5",
+                tab === "secondary"
+                  ? "border-accent text-accent bg-[var(--accent-soft)]"
+                  : "border-line text-ink-muted hover:bg-surface-hover",
+              )}
+            >
+              Secondary market
+              <span className="text-[0.6875rem] tabular font-mono opacity-80">
+                {secondHandListings.length}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Manufacturer tab strip — only shown when not on secondary. */}
@@ -363,6 +408,9 @@ export function AircraftMarketModal({
                     setExpandedSpecId((cur) => (cur === a.id ? null : a.id))
                   }
                   onOrder={(type, prefill) => onOrder(a.id, type, prefill)}
+                  compareMode={compareMode}
+                  compareSelected={compareSpecIds.includes(a.id)}
+                  onToggleCompare={() => toggleCompare(a.id)}
                 />
               ))
             )}
@@ -376,19 +424,80 @@ export function AircraftMarketModal({
             currentQuarter={currentQuarter}
           />
         )}
+
+        {/* Sticky compare-bar — sits at the bottom of the scroll region
+            when the player has 1+ specs selected. Light enough not to
+            compete with content; clear CTA to launch the compare modal. */}
+        {compareMode && compareSpecIds.length > 0 && (
+          <div className="sticky bottom-0 left-0 right-0 mt-2 -mx-1 rounded-md border border-accent bg-surface/95 backdrop-blur-md shadow-[var(--shadow-3)] p-2 flex items-center gap-2 z-10">
+            <span className="text-[0.75rem] text-ink-2 px-1">
+              <strong className="text-ink">{compareSpecIds.length}</strong> selected
+              {compareSpecIds.length < 2 && (
+                <span className="text-ink-muted ml-1">· pick at least 2 to compare</span>
+              )}
+              {compareSpecIds.length >= 4 && (
+                <span className="text-ink-muted ml-1">· max 4</span>
+              )}
+            </span>
+            <div className="flex-1 flex items-center gap-1 flex-wrap">
+              {compareSpecs.map((s) => (
+                <span
+                  key={s.id}
+                  className="inline-flex items-center gap-1 rounded-md bg-[var(--accent-soft)] text-accent px-2 py-0.5 text-[0.6875rem] font-medium"
+                >
+                  {s.name}
+                  <button
+                    onClick={() => toggleCompare(s.id)}
+                    className="hover:text-ink"
+                    aria-label={`Remove ${s.name} from compare`}
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => setCompareOpen(true)}
+              disabled={compareSpecIds.length < 2}
+            >
+              Compare {compareSpecIds.length} →
+            </Button>
+          </div>
+        )}
       </ModalBody>
+
+      {/* Compare modal — opens on top of this modal. Picking "Configure
+          & buy" closes both and routes the player back into the order
+          flow for that spec. */}
+      <AircraftCompareModal
+        open={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        specs={compareSpecs}
+        onPick={(specId) => {
+          setCompareOpen(false);
+          setCompareSpecIds([]);
+          setCompareMode(false);
+          onOrder(specId, "buy");
+        }}
+      />
     </Modal>
   );
 }
 
 function AircraftRow({
   spec, currentQuarter, expanded, onToggleExpand, onOrder,
+  compareMode, compareSelected, onToggleCompare,
 }: {
   spec: AircraftSpec;
   currentQuarter: number;
   expanded: boolean;
   onToggleExpand: () => void;
   onOrder: (type: "buy" | "lease", prefill?: OrderPrefill) => void;
+  compareMode: boolean;
+  compareSelected: boolean;
+  onToggleCompare: () => void;
 }) {
   const seats = spec.seats.first + spec.seats.business + spec.seats.economy;
   const imgSrc = planeImagePath(spec.id);
@@ -418,12 +527,32 @@ function AircraftRow({
   return (
     <div
       className={cn(
-        "rounded-md border bg-surface transition-all",
+        "rounded-md border bg-surface transition-all relative",
         expanded
           ? "border-primary shadow-[var(--shadow-1)]"
-          : "border-line hover:bg-surface-hover",
+          : compareSelected
+            ? "border-accent ring-1 ring-accent/30"
+            : "border-line hover:bg-surface-hover",
       )}
     >
+      {/* Compare checkbox — only renders in compare mode. Positioned in
+          the top-left so it doesn't get tangled with the row's
+          click-to-expand handler. */}
+      {compareMode && (
+        <label
+          className="absolute top-2 left-2 z-10 flex items-center gap-1.5 rounded-md bg-surface/90 backdrop-blur-sm border border-line px-1.5 py-1 cursor-pointer hover:bg-surface text-[0.6875rem]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={compareSelected}
+            onChange={onToggleCompare}
+            className="accent-accent w-3 h-3"
+            aria-label={`Add ${spec.name} to compare`}
+          />
+          <span className="text-ink-2 select-none">Compare</span>
+        </label>
+      )}
       {/* Collapsed-row header — always visible, click anywhere on it to
           toggle the expanded body below. The Lease button is exposed
           here as a one-click default-config purchase so light-touch

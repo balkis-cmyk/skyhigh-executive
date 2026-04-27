@@ -1618,17 +1618,27 @@ export interface BrandValueBreakdown {
 /** Returns the full breakdown of how Brand Value is constructed.
  *  Same arithmetic as computeBrandValue, exposed for the dashboard card. */
 export function computeBrandValueBreakdown(team: Team): BrandValueBreakdown {
-  const cashRatio =
-    team.cashUsd + team.totalDebtUsd > 0
-      ? team.cashUsd / (team.cashUsd + team.totalDebtUsd)
-      : 0.5;
+  const positiveCash = Math.max(0, team.cashUsd);
+  const positiveDebt = Math.max(0, team.totalDebtUsd);
+  const liquidityBase = positiveCash + positiveDebt;
+  const cashRatioScore = liquidityBase > 0
+    ? clamp(0, 100, (positiveCash / liquidityBase) * 100)
+    : 50;
   const airlineValue = computeAirlineValue(team);
-  const debtRatioScore =
-    100 - Math.min(100, airlineValue > 0 ? (team.totalDebtUsd / airlineValue) * 100 : 100);
+  const debtRatioScore = positiveDebt <= 0
+    ? 100
+    : clamp(
+        0,
+        100,
+        airlineValue > 0 ? 100 - (positiveDebt / airlineValue) * 100 : 0,
+      );
   const revGrowth = 50;
 
-  const financialHealth =
-    cashRatio * 100 * 0.3 + debtRatioScore * 0.35 + revGrowth * 0.35;
+  const financialHealth = clamp(
+    0,
+    120,
+    cashRatioScore * 0.3 + debtRatioScore * 0.35 + revGrowth * 0.35,
+  );
 
   const brandPtsScore = Math.min(100, team.brandPts / 2);
   const customerLoyalty = team.customerLoyaltyPct;
@@ -1639,8 +1649,11 @@ export function computeBrandValueBreakdown(team: Team): BrandValueBreakdown {
   if (team.flags.has("anti_environment")) reputationEvents -= 15;
   reputationEvents = Math.max(0, Math.min(120, reputationEvents));
 
-  const brandHealth =
-    brandPtsScore * 0.4 + customerLoyalty * 0.35 + reputationEvents * 0.25;
+  const brandHealth = clamp(
+    0,
+    120,
+    brandPtsScore * 0.4 + customerLoyalty * 0.35 + reputationEvents * 0.25,
+  );
 
   const opsPtsScore = Math.min(100, team.opsPts);
   const activeFleet = team.fleet.filter((f) => f.status === "active");
@@ -1652,14 +1665,20 @@ export function computeBrandValueBreakdown(team: Team): BrandValueBreakdown {
     activeFleet.length > 0 ? (modernFleetCount / activeFleet.length) * 100 : 0;
   const staffCommitment = Math.min(100, team.sliders.staff * 10 + 50);
 
-  const operationsHealth =
-    opsPtsScore * 0.4 + fleetEfficiency * 0.35 + staffCommitment * 0.25;
+  const operationsHealth = clamp(
+    0,
+    120,
+    opsPtsScore * 0.4 + fleetEfficiency * 0.35 + staffCommitment * 0.25,
+  );
 
-  const composite =
-    financialHealth * 0.35 + brandHealth * 0.5 + operationsHealth * 0.15;
+  const composite = clamp(
+    0,
+    120,
+    financialHealth * 0.35 + brandHealth * 0.5 + operationsHealth * 0.15,
+  );
 
   return {
-    cashRatio: cashRatio * 100,
+    cashRatio: cashRatioScore,
     debtRatioScore,
     revGrowth,
     financialHealth,
