@@ -8,7 +8,8 @@ import { useGame, selectPlayer } from "@/store/game";
 import { computeAirlineValue, fleetCount, resolveEndgameAwards, brandRating, computeBrandValueBreakdown } from "@/lib/engine";
 import { MILESTONES, MILESTONES_BY_ID } from "@/data/milestones";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
-import { Award, TrendingUp, TrendingDown, Trophy } from "lucide-react";
+import { Award, TrendingUp, TrendingDown, Trophy, Sparkles } from "lucide-react";
+import { cn } from "@/lib/cn";
 
 /** Legacy titles by final Brand Value band. */
 function legacyTitle(bv: number): { title: string; sub: string } {
@@ -82,6 +83,34 @@ export default function Endgame() {
       </header>
 
       <section className="flex-1 px-8 py-12 max-w-5xl mx-auto w-full">
+        {/* ── Podium — celebratory gold/silver/bronze for the top 3.
+            Renders only when there are 3+ teams (otherwise the
+            standings table below is enough). The player's tile gets
+            a "You" pill + thicker border so they spot themselves
+            at-a-glance even if they didn't medal. */}
+        {ranked.length >= 3 && (
+          <div className="grid grid-cols-3 gap-4 mb-10 items-end">
+            <PodiumStep
+              place={2}
+              team={ranked[1]}
+              isPlayer={ranked[1].id === player.id}
+              heightClass="h-44"
+            />
+            <PodiumStep
+              place={1}
+              team={ranked[0]}
+              isPlayer={ranked[0].id === player.id}
+              heightClass="h-56"
+            />
+            <PodiumStep
+              place={3}
+              team={ranked[2]}
+              isPlayer={ranked[2].id === player.id}
+              heightClass="h-36"
+            />
+          </div>
+        )}
+
         <Badge tone="accent">{finalRank === 1 ? "Winner" : `Finished #${finalRank} of ${s.teams.length}`}</Badge>
         <h1 className="font-display text-[clamp(3rem,7vw,5rem)] leading-[1.04] text-ink mt-4 mb-3">
           {title}.
@@ -368,6 +397,126 @@ export default function Endgame() {
           </Card>
         )}
 
+        {/* ── Quarter highlights timeline — pivotal moments across the
+            40-round arc. Combines biggest profit/loss quarters, peak
+            brand, decisions, milestones unlocked. Read like a history
+            of the airline. */}
+        {(() => {
+          type Highlight = {
+            quarter: number;
+            kind: "peak-bv" | "best-q" | "worst-q" | "milestone" | "first-route";
+            title: string;
+            detail: string;
+            tone: "pos" | "neg" | "info";
+          };
+          const highlights: Highlight[] = [];
+
+          // Best & worst quarter by net profit
+          const profitSeries = player.financialsByQuarter
+            .map((q) => ({ q: q.quarter, p: q.netProfit }));
+          if (profitSeries.length > 0) {
+            const best = profitSeries.reduce((acc, x) => x.p > acc.p ? x : acc, profitSeries[0]);
+            const worst = profitSeries.reduce((acc, x) => x.p < acc.p ? x : acc, profitSeries[0]);
+            if (best.p > 0) {
+              highlights.push({
+                quarter: best.q,
+                kind: "best-q",
+                title: "Best quarter",
+                detail: `Net profit ${fmtMoney(best.p)}`,
+                tone: "pos",
+              });
+            }
+            if (worst.p < 0) {
+              highlights.push({
+                quarter: worst.q,
+                kind: "worst-q",
+                title: "Worst quarter",
+                detail: `Net loss ${fmtMoney(worst.p)}`,
+                tone: "neg",
+              });
+            }
+          }
+
+          // Peak brand value quarter
+          const bvSeries = player.financialsByQuarter
+            .map((q) => ({ q: q.quarter, bv: q.brandValue }));
+          if (bvSeries.length > 0) {
+            const peak = bvSeries.reduce((acc, x) => x.bv > acc.bv ? x : acc, bvSeries[0]);
+            highlights.push({
+              quarter: peak.q,
+              kind: "peak-bv",
+              title: "Brand peak",
+              detail: `Brand value reached ${peak.bv.toFixed(1)}`,
+              tone: "info",
+            });
+          }
+
+          // Most-impactful decisions — first 3 by quarter
+          const earlyDecisions = [...player.decisions]
+            .sort((a, b) => a.quarter - b.quarter)
+            .slice(0, 3);
+          for (const d of earlyDecisions) {
+            const scenario = (SCENARIOS_BY_QUARTER[d.quarter] ?? [])
+              .find((sc) => sc.id === d.scenarioId);
+            if (!scenario) continue;
+            highlights.push({
+              quarter: d.quarter,
+              kind: "milestone",
+              title: scenario.title,
+              detail: `Chose ${d.optionId}: ${scenario.options.find((o) => o.id === d.optionId)?.label ?? ""}`,
+              tone: "info",
+            });
+          }
+
+          if (highlights.length === 0) return null;
+          highlights.sort((a, b) => a.quarter - b.quarter);
+
+          return (
+            <Card className="mb-6">
+              <CardBody>
+                <div className="flex items-baseline justify-between mb-3">
+                  <h2 className="font-display text-[1.5rem] text-ink flex items-center gap-2">
+                    <Sparkles size={20} /> Highlights
+                  </h2>
+                  <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+                    Pivotal moments
+                  </span>
+                </div>
+                <div className="relative">
+                  {/* Vertical timeline rail */}
+                  <div className="absolute top-0 bottom-0 left-[5.5rem] w-px bg-line" aria-hidden />
+                  <div className="space-y-3">
+                    {highlights.map((h, i) => (
+                      <div key={`${h.kind}-${h.quarter}-${i}`} className="relative flex items-baseline gap-3">
+                        <div className="font-mono tabular text-[0.6875rem] text-ink-muted w-20 text-right shrink-0 pt-1">
+                          {fmtQuarter(h.quarter)}
+                        </div>
+                        <div
+                          className={cn(
+                            "shrink-0 w-2.5 h-2.5 rounded-full ring-2 ring-surface",
+                            h.tone === "pos" ? "bg-positive" :
+                            h.tone === "neg" ? "bg-negative" :
+                            "bg-accent",
+                          )}
+                          aria-hidden
+                        />
+                        <div className="flex-1 min-w-0 pt-0.5">
+                          <div className="text-[0.875rem] text-ink font-medium">
+                            {h.title}
+                          </div>
+                          <div className="text-[0.75rem] text-ink-muted leading-snug">
+                            {h.detail}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          );
+        })()}
+
         {/* Decisions retrospective — every board call this team made */}
         {player.decisions.length > 0 && (
           <Card className="mb-6">
@@ -563,6 +712,72 @@ export default function Endgame() {
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * Podium step for the endgame top-3 visual. Gold/silver/bronze
+ * styling baked into the place prop. The "step" is a vertical bar
+ * sized by place (1st tallest) with the team's avatar + name + final
+ * value floating above it. The player's tile is double-bordered with
+ * a "You" pill so they can instantly find themselves.
+ */
+function PodiumStep({
+  place, team, isPlayer, heightClass,
+}: {
+  place: 1 | 2 | 3;
+  team: { id: string; name: string; code: string; color: string; finalAirlineValue: number };
+  isPlayer: boolean;
+  heightClass: string;
+}) {
+  const medal =
+    place === 1 ? { emoji: "🥇", label: "Gold", border: "border-[#d4a017]", bg: "bg-[#d4a017]/15" } :
+    place === 2 ? { emoji: "🥈", label: "Silver", border: "border-[#9ca3af]", bg: "bg-[#9ca3af]/15" } :
+    { emoji: "🥉", label: "Bronze", border: "border-[#a16207]", bg: "bg-[#a16207]/15" };
+  return (
+    <div className="flex flex-col items-center">
+      {/* Floating block above the step — avatar, name, final value */}
+      <div
+        className={cn(
+          "w-full rounded-md border-2 p-3 mb-2 text-center",
+          medal.border,
+          medal.bg,
+          isPlayer && "ring-2 ring-primary",
+        )}
+      >
+        <div className="text-2xl leading-none mb-1.5" aria-hidden>
+          {medal.emoji}
+        </div>
+        <div
+          className="inline-flex items-center justify-center w-9 h-9 rounded mb-1.5 font-mono text-[0.6875rem] font-semibold text-primary-fg shrink-0"
+          style={{ background: team.color }}
+        >
+          {team.code}
+        </div>
+        <div className="font-display text-[1rem] text-ink leading-tight">
+          {team.name}
+        </div>
+        {isPlayer && (
+          <div className="mt-1">
+            <Badge tone="primary">You</Badge>
+          </div>
+        )}
+        <div className="font-mono tabular text-[0.875rem] text-ink-2 mt-1.5">
+          {fmtMoney(team.finalAirlineValue)}
+        </div>
+      </div>
+      {/* The step itself — height encodes rank, place number stamped on. */}
+      <div
+        className={cn(
+          "w-full rounded-t-md border-x border-t-2 flex items-center justify-center font-display text-[2.25rem] text-ink-muted",
+          heightClass,
+          medal.border,
+          medal.bg,
+        )}
+      >
+        #{place}
+      </div>
+    </div>
   );
 }
 
