@@ -418,6 +418,13 @@ export interface Team {
   // Labour Relations Score (PRD E8.3)
   labourRelationsScore: number;          // 0..100
 
+  /** Recurring percent-point surcharge on quarterly staff cost.
+   *  Applied as `staffCost × (1 + pct)` every quarter for the rest of
+   *  the campaign. Set by the S14 talent-heist "Full Counter Offer"
+   *  option (default 10%); the facilitator can adjust it from the
+   *  AdminPanel staff-cost section. 0 = no surcharge. */
+  recurringStaffSurchargePct?: number;
+
   // Milestones earned (PRD E8.9)
   milestones: string[];
   /** Running count of consecutive profitable quarters; resets on a loss.

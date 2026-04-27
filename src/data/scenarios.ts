@@ -12,6 +12,15 @@ export interface OptionEffect {
   loyaltyDelta?: number;      // percentage points
   setFlags?: string[];
   /**
+   * Set the team's recurring quarterly staff-cost surcharge to this
+   * value (replaces, not adds). Used by S14 talent heist "Full
+   * Counter Offer" — committing to retain the executives at a
+   * permanent payroll premium. 0.10 = +10% staff cost every quarter
+   * for the rest of the campaign. The facilitator can later adjust
+   * the rate from the AdminPanel staff-cost section.
+   */
+  recurringStaffSurchargePct?: number;
+  /**
    * Variable cash bump computed at submission time as
    *   `staffSavingsPct × (current quarterly staff cost) × 2 quarters`.
    * Used by S15 Recession Gamble so that "mass redundancy" savings
@@ -457,10 +466,14 @@ export const SCENARIOS: Scenario[] = [
     context:
       "Your head of revenue, ops, and digital all received offers from a competitor. Counter-offers burn cash; doing nothing burns two quarters of productivity.",
     options: [
-      { id: "A", label: "Blank cheque protection",
-        description: "Match any offer. Cost revealed after poaching bid.",
-        effect: { cash: -3 * M, loyaltyDelta: 3 },
-        effectTags: ["Cost revealed at L2", "Crew +12", "Board +3"] },
+      { id: "A", label: "Full Counter Offer",
+        description: "Match every package and lock the team in. Permanent +10% on quarterly staff cost for the rest of the campaign — facilitator can adjust the rate.",
+        // The +10% recurring surcharge is the ongoing commitment. The
+        // loyalty bump captures the retained executives' visible
+        // gratitude. Facilitator can dial the surcharge from the
+        // AdminPanel if the table negotiates a different number.
+        effect: { recurringStaffSurchargePct: 0.10, loyaltyDelta: 4 },
+        effectTags: ["+10% staff cost / Q (admin tunable)", "Loyalty +4%"] },
       { id: "B", label: "Cap at 20%",
         description: "Measured counter. May lose if rival bids high.",
         effect: { cash: -1.5 * M, loyaltyDelta: 2 },
@@ -469,10 +482,13 @@ export const SCENARIOS: Scenario[] = [
         description: "Promote internal successors.",
         effect: { opsPts: 5, loyaltyDelta: 2 },
         effectTags: ["Ops +5", "Loyalty +2%"] },
-      { id: "D", label: "Counter + succession plan",
-        description: "Retain + invest in succession bench.",
-        effect: { opsPts: 10, loyaltyDelta: 4 },
-        effectTags: ["Ops +10", "Loyalty +4%"] },
+      { id: "D", label: "Conduct Executive Search",
+        description: "Current executives have been around for too long — it's time to source some of the best experts in the industry to join our team. Retain a top search firm and refresh the leadership bench with outside hires.",
+        // Cash outlay reflects search-firm fees + sign-on packages,
+        // ops bump from sharper outside-perspective talent, brand bump
+        // from the trade-press story of fresh leadership.
+        effect: { cash: -8 * M, opsPts: 12, brandPts: 6, loyaltyDelta: -2 },
+        effectTags: ["−$8M", "Ops +12", "Brand +6", "Loyalty −2%"] },
     ],
     autoSubmitOptionId: "B",
   },

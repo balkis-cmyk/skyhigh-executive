@@ -227,6 +227,15 @@ export interface GameStore extends GameState {
    *  audit. */
   rejectAirportBid(bidId: string, reason?: string): { ok: boolean; error?: string };
 
+  /** Facilitator/admin only: set a team's recurring quarterly staff-cost
+   *  surcharge. Used to dial in the "Full Counter Offer" rate after a
+   *  team picks S14 option A — default 10%, but the table may negotiate
+   *  a different number. Pass 0 to remove. */
+  setRecurringStaffSurcharge(args: {
+    teamId: string;
+    pct: number;
+  }): { ok: boolean; error?: string };
+
   /** Owner-only: change the weekly slot fee for an airport you own.
    *  Effective immediately — every team's lease at this airport is
    *  re-priced. Charges owner a small admin fee for changing rates. */
@@ -1605,6 +1614,25 @@ export const useGame = create<GameStore>()(
         toast.success(
           `Approved · ${city.name} (${bid.airportCode})`,
           `${bidder?.name ?? "Bidder"} acquires ${city.name} for ${fmtMoneyPlain(bid.bidPriceUsd)}. Slot fees now flow to the new owner from next quarter.`,
+        );
+        return { ok: true };
+      },
+
+      setRecurringStaffSurcharge: ({ teamId, pct }) => {
+        const s = get();
+        const team = s.teams.find((t) => t.id === teamId);
+        if (!team) return { ok: false, error: "Team not found" };
+        const clean = Math.max(0, pct);
+        set({
+          teams: s.teams.map((t) =>
+            t.id === teamId ? { ...t, recurringStaffSurchargePct: clean } : t,
+          ),
+        });
+        toast.info(
+          `${team.name}: staff surcharge set to ${(clean * 100).toFixed(1)}%`,
+          clean > 0
+            ? `Quarterly staff cost will be multiplied by ${(1 + clean).toFixed(2)} until adjusted again.`
+            : "Surcharge cleared. Staff cost returns to baseline next quarter close.",
         );
         return { ok: true };
       },

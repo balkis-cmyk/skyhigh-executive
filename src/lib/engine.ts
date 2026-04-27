@@ -1424,6 +1424,14 @@ export function applyOptionEffect(
       0, 100,
       team.customerLoyaltyPct + (effect.loyaltyDelta ?? 0),
     ),
+    // Recurring staff-cost surcharge — talent heist "Full Counter
+    // Offer" sets this to 0.10 (+10%). The engine reads it every
+    // quarter close (see staffCost computation). The facilitator can
+    // adjust it from the AdminPanel after submission.
+    recurringStaffSurchargePct:
+      effect.recurringStaffSurchargePct !== undefined
+        ? Math.max(0, effect.recurringStaffSurchargePct)
+        : team.recurringStaffSurchargePct,
     flags: new Set(team.flags),
     deferredEvents: [...(team.deferredEvents ?? [])],
     routeObligations: [...(team.routeObligations ?? [])],
@@ -1872,7 +1880,13 @@ export function runQuarterClose(
 
   // ─ Staff (A3) ───────────────────────────────────────────
   const staffBase = baselineStaffCostUsd(next);
-  const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff];
+  // Recurring surcharge — applied by S14 "Full Counter Offer" (talent
+  // heist) which commits the team to retaining executives at a
+  // permanent payroll premium for the rest of the campaign. The
+  // facilitator can adjust the rate from the AdminPanel; default 10%.
+  // Stored as a multiplier increment (0.10 = +10%).
+  const staffSurchargeMult = 1 + Math.max(0, next.recurringStaffSurchargePct ?? 0);
+  const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff] * staffSurchargeMult;
 
   // ─ Other sliders as % of revenue (A2) — broken out ──────
   // Per-slider caps (user spec):

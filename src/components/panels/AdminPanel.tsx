@@ -8,6 +8,7 @@ import { fmtMoney, fmtQuarter, TOTAL_GAME_ROUNDS } from "@/lib/format";
 import { CITIES } from "@/data/cities";
 import { runQuarterClose } from "@/lib/engine";
 import { toast } from "@/store/toasts";
+import { cn } from "@/lib/cn";
 
 export function AdminPanel() {
   const s = useGame();
@@ -572,6 +573,14 @@ export function AdminPanel() {
         </div>
       </section>
 
+      {/* Recurring staff-cost surcharge — set by S14 "Full Counter
+          Offer" (talent heist) and tunable by the facilitator. Shows
+          one row per team with the current rate and an editable
+          input. Keeping it on the AdminPanel (rather than buried in
+          per-team settings) lets the facilitator adjust mid-game when
+          the table negotiates a different number. */}
+      <StaffSurchargeAdmin />
+
       {/* Plot twists — fire deferred events NOW (PRD §10.7) */}
       {(player.deferredEvents ?? []).filter((e) => !e.resolved).length > 0 && (
         <section>
@@ -845,6 +854,97 @@ export function AdminPanel() {
         </ModalFooter>
       </Modal>
     </div>
+  );
+}
+
+/** Recurring staff-cost surcharge — facilitator-tunable rate per team.
+ *  Set by S14 "Full Counter Offer"; the facilitator can override here.
+ *  Default 10% if a team picked option A; 0 otherwise. */
+function StaffSurchargeAdmin() {
+  const teams = useGame((g) => g.teams);
+  const setRecurringStaffSurcharge = useGame((g) => g.setRecurringStaffSurcharge);
+  // Local edit buffers per team — players type a percentage like "10"
+  // and we convert to the 0..1 multiplier on apply. Pre-fill from
+  // the team's current value (or empty if 0/undefined).
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  // Only show teams with a non-zero surcharge OR allow setting one
+  // for any team. Keeping it always-visible means the facilitator
+  // can pre-emptively dial in a number before the option is picked.
+  const sorted = [...teams].sort((a, b) => {
+    const ap = a.recurringStaffSurchargePct ?? 0;
+    const bp = b.recurringStaffSurchargePct ?? 0;
+    if (ap !== bp) return bp - ap;
+    return a.name.localeCompare(b.name);
+  });
+
+  return (
+    <section>
+      <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+        Staff-cost surcharge · per team
+      </div>
+      <div className="text-[0.6875rem] text-ink-muted mb-2 leading-relaxed">
+        S14 &quot;Full Counter Offer&quot; sets a permanent +10% on quarterly
+        staff cost. Adjust the rate here if the table negotiated a
+        different number. 0 = baseline (no surcharge).
+      </div>
+      <div className="space-y-1.5">
+        {sorted.map((t) => {
+          const currentPct = (t.recurringStaffSurchargePct ?? 0) * 100;
+          const draft = drafts[t.id] ?? "";
+          return (
+            <div
+              key={t.id}
+              className="flex items-baseline gap-2 rounded-md border border-line bg-surface-2/40 px-2.5 py-2 text-[0.75rem]"
+            >
+              <span
+                className="inline-flex w-5 h-5 rounded items-center justify-center font-mono text-[0.5625rem] font-semibold text-primary-fg shrink-0"
+                style={{ background: t.color }}
+                aria-hidden="true"
+              >
+                {t.code}
+              </span>
+              <span className="text-ink font-medium flex-1 truncate">
+                {t.name}
+              </span>
+              <span className="text-ink-muted tabular font-mono shrink-0">
+                current{" "}
+                <span className={cn(
+                  currentPct > 0 ? "text-warning font-semibold" : "text-ink-muted",
+                )}>
+                  +{currentPct.toFixed(1)}%
+                </span>
+              </span>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                max="100"
+                placeholder="%"
+                value={draft}
+                onChange={(e) => setDrafts((d) => ({ ...d, [t.id]: e.target.value }))}
+                className="w-16 px-2 py-1 rounded-md border border-line bg-surface text-ink text-[0.75rem] tabular font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
+                aria-label={`New staff surcharge percent for ${t.name}`}
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={draft.trim() === "" || isNaN(Number(draft))}
+                onClick={() => {
+                  const v = Number(draft);
+                  if (isNaN(v)) return;
+                  const r = setRecurringStaffSurcharge({ teamId: t.id, pct: v / 100 });
+                  if (!r.ok) toast.negative("Set surcharge failed", r.error ?? "");
+                  setDrafts((d) => ({ ...d, [t.id]: "" }));
+                }}
+              >
+                Apply
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
