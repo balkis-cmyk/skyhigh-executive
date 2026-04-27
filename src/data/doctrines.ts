@@ -9,47 +9,80 @@ export interface Doctrine {
   effects: string[];
 }
 
-export const DOCTRINES: Doctrine[] = [
+type VisibleDoctrineId = Exclude<DoctrineId, "safety-first">;
+
+export const DOCTRINES: Array<Doctrine & { id: VisibleDoctrineId }> = [
   {
     id: "budget-expansion",
-    icon: "↗",
-    name: "Budget expansion",
-    tagline: "Volume is victory.",
+    icon: "↘",
+    name: "Budget Airline",
+    tagline: "Fast turns, lean costs, wider reach.",
     description:
-      "+20% demand, −15% fares. Build the biggest network fastest.",
-    effects: ["+20% demand ceiling", "−15% base fares", "+2% Brand/Q early game"],
+      "Build around access and efficiency. You reach more price-sensitive travelers through Tier 2 and Tier 3 airports, but downturns hit harder.",
+    effects: [
+      "+20% T2/T3 demand pool",
+      "-20% staff cost",
+      "-10% maintenance",
+      "Half ground time",
+      "Negative demand shocks hit 1.5x",
+    ],
   },
   {
     id: "premium-service",
     icon: "★",
-    name: "Premium service",
-    tagline: "Every flight a first-class experience.",
-    description: "+30% fares, +15% prestige growth. Charge what the brand is worth.",
-    effects: ["+30% premium fares", "+15% Brand growth", "−10% demand ceiling"],
+    name: "Premium Airline",
+    tagline: "Protect yield and loyalty.",
+    description:
+      "Compete on service, brand trust, and cabin quality. You can price above the market and recover loyalty faster, with a heavier people-cost base.",
+    effects: [
+      "+20% fare ceiling",
+      "1.5x positive loyalty gains",
+      "Negative demand shocks halved",
+      "+15% staff cost",
+    ],
   },
   {
     id: "cargo-dominance",
     icon: "☐",
-    name: "Cargo dominance",
-    tagline: "Cargo never sleeps.",
+    name: "Cargo Dominance",
+    tagline: "Make the network move freight.",
     description:
-      "+25% cargo revenue, crisis-hedge profile. Stable in downturns.",
-    effects: ["+25% cargo revenue", "−20% demand volatility", "−5 Board in recession"],
+      "Use every connection as a logistics corridor. Cargo capacity and cargo turnarounds improve, while connected cities compound freight demand.",
+    effects: [
+      "+20% cargo capacity",
+      "2h cargo-fleet ground time",
+      "No belly-cargo ground penalty",
+      "+5% cargo demand per connected city, cap +25%",
+    ],
   },
   {
-    id: "safety-first",
+    id: "global-network",
     icon: "◉",
-    name: "Safety first",
-    tagline: "Zero incidents. Zero compromises.",
-    description: "−20% crisis probability, +25% Safety Shield. Regulators trust you.",
-    effects: ["−20% crisis probability", "+25% Ops Shield", "+10% operating cost"],
+    name: "Global Network Airline",
+    tagline: "Connectivity compounds demand.",
+    description:
+      "Grow a connected international system. Passenger demand rises across linked cities and crises hurt less, but mixed fleet brands become more expensive to maintain.",
+    effects: [
+      "+5% passenger demand per connected city, cap +25%",
+      "-30% crisis impact",
+      "+20% Business/First preference",
+      "+10% maintenance per fleet brand, cap +20%",
+    ],
   },
 ];
 
-export const DOCTRINE_BY_ID: Record<DoctrineId, Doctrine> = DOCTRINES.reduce(
+const visibleDoctrines = DOCTRINES.reduce(
   (acc, d) => {
     acc[d.id] = d;
     return acc;
   },
-  {} as Record<DoctrineId, Doctrine>,
+  {} as Record<Exclude<DoctrineId, "safety-first">, Doctrine>,
 );
+
+export const DOCTRINE_BY_ID: Record<DoctrineId, Doctrine> = {
+  ...visibleDoctrines,
+  "safety-first": {
+    ...visibleDoctrines["global-network"],
+    id: "safety-first",
+  },
+};

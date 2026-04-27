@@ -303,6 +303,8 @@ export type DoctrineId =
   | "budget-expansion"
   | "premium-service"
   | "cargo-dominance"
+  | "global-network"
+  /** Legacy saves used this id before the network doctrine replaced it. */
   | "safety-first";
 
 export type TeamRole = "CEO" | "CFO" | "CMO" | "CHRO";

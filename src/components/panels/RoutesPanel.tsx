@@ -7,7 +7,7 @@ import { useUi } from "@/store/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { CITIES, CITIES_BY_CODE } from "@/data/cities";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
-import { classFareRange, distanceBetween, effectiveRangeKm, maxRouteDailyFrequency } from "@/lib/engine";
+import { classFareRangeForDoctrine, distanceBetween, effectiveRangeKm, maxRouteDailyFrequency } from "@/lib/engine";
 import type { PricingTier } from "@/types/game";
 import { cn } from "@/lib/cn";
 import { AlertTriangle, Pause, Play, Plus, X } from "lucide-react";
@@ -882,6 +882,7 @@ function RouteDetailModal({
         specId: f.specId,
         engineUpgrade: f.engineUpgrade ?? null,
         cargoBelly: f.cargoBelly,
+        doctrine: player?.doctrine,
       };
     })
     .filter((x): x is NonNullable<typeof x> => !!x);
@@ -905,9 +906,9 @@ function RouteDetailModal({
     route.quarterlyAllocatedCost !== undefined
       ? route.quarterlyRevenue - route.quarterlyAllocatedCost
       : route.quarterlyRevenue - route.quarterlyFuelCost - route.quarterlySlotCost;
-  const econRange = classFareRange(route.distanceKm, "econ");
-  const busRange = classFareRange(route.distanceKm, "bus");
-  const firstRange = classFareRange(route.distanceKm, "first");
+  const econRange = classFareRangeForDoctrine(route.distanceKm, "econ", player.doctrine);
+  const busRange = classFareRangeForDoctrine(route.distanceKm, "bus", player.doctrine);
+  const firstRange = classFareRangeForDoctrine(route.distanceKm, "first", player.doctrine);
 
   const hasBus = selectedPlaneIds.some((id) => {
     const p = player.fleet.find((f) => f.id === id);
@@ -1085,6 +1086,7 @@ function RouteDetailModal({
                   specId: f.specId,
                   engineUpgrade: f.engineUpgrade ?? null,
                   cargoBelly: f.cargoBelly,
+                  doctrine: player.doctrine,
                 };
               })
               .filter((x): x is NonNullable<typeof x> => !!x);

@@ -210,6 +210,7 @@ export function planBotRoutes(
         specId: p.aircraft.specId,
         engineUpgrade: p.aircraft.engineUpgrade ?? null,
         cargoBelly: p.aircraft.cargoBelly,
+        doctrine: team.doctrine,
       }]) * 7),
     );
     // Bot route schedules should use the same weekly unit players see.

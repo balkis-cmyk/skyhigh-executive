@@ -1,18 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Button, Metric, Sparkline } from "@/components/ui";
+import { Badge, Button, Metric, Modal, ModalBody, ModalFooter, ModalHeader, Sparkline } from "@/components/ui";
 import { fmtMoney, fmtPct } from "@/lib/format";
 import { useGame, selectPlayer } from "@/store/game";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
 import { computeAirlineValue, fleetCount, brandRating, computeBrandValueBreakdown } from "@/lib/engine";
-import { DOCTRINE_BY_ID } from "@/data/doctrines";
+import { DOCTRINES, DOCTRINE_BY_ID } from "@/data/doctrines";
 import { useUi, type PanelId } from "@/store/ui";
 import { SecondaryHubModal } from "@/components/game/SecondaryHubModal";
 import { HubInvestmentsModal } from "@/components/game/HubInvestmentsModal";
 import { Plus, MapPin, Award, Lock, Layers } from "lucide-react";
 import { MILESTONES } from "@/data/milestones";
 import { cn } from "@/lib/cn";
+import type { DoctrineId } from "@/types/game";
+
+function currentDoctrine(id: DoctrineId): DoctrineId {
+  return id === "safety-first" ? "global-network" : id;
+}
 
 export function OverviewPanel() {
   const s = useGame();
@@ -20,9 +25,15 @@ export function OverviewPanel() {
   const openPanel = useUi((u) => u.openPanel);
   const [hubModalOpen, setHubModalOpen] = useState(false);
   const [hubInvestmentsOpen, setHubInvestmentsOpen] = useState(false);
+  const [doctrineReviewOpen, setDoctrineReviewOpen] = useState(false);
+  const [draftDoctrine, setDraftDoctrine] = useState<DoctrineId>("premium-service");
+  const [doctrineError, setDoctrineError] = useState<string | null>(null);
 
   if (!player) return null;
 
+  const doctrineMeta = DOCTRINE_BY_ID[player.doctrine] ?? DOCTRINE_BY_ID["premium-service"];
+  const canReviewDoctrine =
+    s.currentQuarter === 20 && !player.flags.has("doctrine_revised_r20");
   const airlineValue = computeAirlineValue(player);
   const activeRoutes = player.routes.filter((r) => r.status === "active");
   const totalRevenueLast = player.financialsByQuarter.at(-1)?.revenue ?? 0;
@@ -155,9 +166,23 @@ export function OverviewPanel() {
               {player.name}
             </div>
             <div className="text-[0.8125rem] text-ink-muted">
-              {DOCTRINE_BY_ID[player.doctrine].name} · Hub {player.hubCode}
+              {doctrineMeta.name} · Hub {player.hubCode}
             </div>
           </div>
+          {canReviewDoctrine && (
+            <Button
+              size="sm"
+              variant="accent"
+              className="ml-auto"
+              onClick={() => {
+                setDraftDoctrine(currentDoctrine(player.doctrine));
+                setDoctrineError(null);
+                setDoctrineReviewOpen(true);
+              }}
+            >
+              Review doctrine
+            </Button>
+          )}
         </div>
       </div>
 
@@ -555,6 +580,87 @@ export function OverviewPanel() {
         open={hubInvestmentsOpen}
         onClose={() => setHubInvestmentsOpen(false)}
       />
+      <Modal
+        open={doctrineReviewOpen}
+        onClose={() => setDoctrineReviewOpen(false)}
+        className="w-[44rem]"
+      >
+        <ModalHeader>
+          <div className="text-[0.6875rem] uppercase tracking-wider text-accent mb-1">
+            Quarter 20 doctrine review
+          </div>
+          <h2 className="font-display text-2xl text-ink">Revise operating doctrine</h2>
+          <p className="text-[0.8125rem] text-ink-muted mt-1">
+            One strategic reset is available at the midpoint. The new doctrine applies immediately.
+          </p>
+        </ModalHeader>
+        <ModalBody
+          role="radiogroup"
+          aria-label="Doctrine review options"
+          className="space-y-3 max-h-[62vh] overflow-auto"
+        >
+          {DOCTRINES.map((d) => {
+            const active = draftDoctrine === d.id;
+            return (
+              <button
+                key={d.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setDraftDoctrine(d.id)}
+                className={cn(
+                  "w-full rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                  active ? "border-primary bg-[rgba(20,53,94,0.04)]" : "border-line hover:bg-surface-hover",
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  <span aria-hidden="true" className="font-display text-[1.375rem] text-primary">
+                    {d.icon}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="font-semibold text-ink">{d.name}</div>
+                    <div className="text-[0.75rem] italic text-ink-muted">{d.tagline}</div>
+                    <p className="mt-2 text-[0.8125rem] leading-relaxed text-ink-2">
+                      {d.description}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {d.effects.map((effect) => (
+                        <Badge key={effect} tone={active ? "primary" : "neutral"}>
+                          {effect}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+          {doctrineError && (
+            <div className="rounded-md border border-negative bg-[var(--negative-soft)] px-3 py-2 text-[0.8125rem] text-negative">
+              {doctrineError}
+            </div>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="ghost" onClick={() => setDoctrineReviewOpen(false)}>
+            Keep current
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              const res = s.reviseDoctrineAtR20(draftDoctrine);
+              if (!res.ok) {
+                setDoctrineError(res.error ?? "Doctrine could not be revised.");
+                return;
+              }
+              setDoctrineError(null);
+              setDoctrineReviewOpen(false);
+            }}
+          >
+            Confirm doctrine
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 }
@@ -884,4 +990,3 @@ function ExecCard({
     </div>
   );
 }
-

@@ -29,9 +29,21 @@ import type {
   Sliders,
   Team,
   CargoBellyTier,
+  DoctrineId,
 } from "@/types/game";
 
 const M = 1_000_000;
+
+type ActiveDoctrineId = Exclude<DoctrineId, "safety-first">;
+
+function activeDoctrineId(doctrine: DoctrineId | undefined): ActiveDoctrineId | null {
+  if (!doctrine) return null;
+  return doctrine === "safety-first" ? "global-network" : doctrine;
+}
+
+function isDoctrine(team: { doctrine?: DoctrineId }, doctrine: ActiveDoctrineId): boolean {
+  return activeDoctrineId(team.doctrine) === doctrine;
+}
 
 /** Real-world Jet A1 sits in the $0.55–$0.85 / L range over the
  *  campaign's 2015–2024 window. The simulator uses $0.65/L at
@@ -231,17 +243,25 @@ export function cruiseSpeedKmh(
 export function groundTurnaroundHours(
   specId: string,
   cargoBelly?: CargoBellyTier,
+  doctrine?: DoctrineId,
 ): number {
   const spec = AIRCRAFT_BY_ID[specId];
   const seats = spec
     ? spec.seats.first + spec.seats.business + spec.seats.economy
     : 0;
+  const activeDoctrine = activeDoctrineId(doctrine);
+  if (activeDoctrine === "cargo-dominance" && spec?.family === "cargo") {
+    return 2;
+  }
   const isWideOrHeavy =
     (spec?.family === "cargo" && (spec.cargoTonnes ?? 0) >= 45) ||
     seats >= 240 ||
     /^A330|^A340|^A350|^A380|^B747|^B767|^B777|^B787|^IL-96|^MD-11/.test(specId);
-  const bellyPenalty = cargoBelly && cargoBelly !== "none" ? 1 : 0;
-  return (isWideOrHeavy ? 4 : 3) + bellyPenalty;
+  const bellyPenalty =
+    activeDoctrine === "cargo-dominance" ? 0 :
+    cargoBelly && cargoBelly !== "none" ? 1 : 0;
+  const base = (isWideOrHeavy ? 4 : 3) + bellyPenalty;
+  return activeDoctrine === "budget-expansion" ? base * 0.5 : base;
 }
 
 /** Effective range after retrofits. The "fuel" and "super" engines
@@ -283,9 +303,10 @@ export function maxWeeklyRotations(
   routeDistanceKm: number,
   engineUpgrade?: "fuel" | "power" | "super" | null,
   cargoBelly?: CargoBellyTier,
+  doctrine?: DoctrineId,
 ): number {
   const oneWayHrs = routeDistanceKm / cruiseSpeedKmh(specId, engineUpgrade);
-  const turnaround = groundTurnaroundHours(specId, cargoBelly);
+  const turnaround = groundTurnaroundHours(specId, cargoBelly, doctrine);
   const roundTrip = oneWayHrs * 2 + turnaround * 2;
   return Math.max(1, Math.floor(168 / roundTrip));
 }
@@ -306,6 +327,7 @@ export function maxRouteDailyFrequency(
     specId: string;
     engineUpgrade?: "fuel" | "power" | "super" | null;
     cargoBelly?: CargoBellyTier;
+    doctrine?: DoctrineId;
   }>,
 ): number {
   if (aircraft && aircraft.length > 0) {
@@ -315,6 +337,7 @@ export function maxRouteDailyFrequency(
         routeDistanceKm,
         a.engineUpgrade,
         a.cargoBelly,
+        a.doctrine,
       ),
       0,
     );
@@ -337,6 +360,93 @@ export function hubAttractivenessBonus(
   if (team.secondaryHubCodes?.includes(origin) || team.secondaryHubCodes?.includes(dest))
     return 1.10;
   return 1.0;
+}
+
+function connectedCityDemandBonus(team: Team, route: Route): number {
+  const graph = new Map<string, Set<string>>();
+  const addEdge = (a: string, b: string) => {
+    if (!graph.has(a)) graph.set(a, new Set());
+    if (!graph.has(b)) graph.set(b, new Set());
+    graph.get(a)!.add(b);
+    graph.get(b)!.add(a);
+  };
+  for (const r of team.routes) {
+    if (r.status !== "active" && r.id !== route.id) continue;
+    addEdge(r.originCode, r.destCode);
+  }
+  addEdge(route.originCode, route.destCode);
+
+  const seen = new Set<string>();
+  const queue = [route.originCode];
+  while (queue.length > 0) {
+    const code = queue.shift()!;
+    if (seen.has(code)) continue;
+    seen.add(code);
+    for (const next of graph.get(code) ?? []) {
+      if (!seen.has(next)) queue.push(next);
+    }
+  }
+  return Math.min(0.25, seen.size * 0.05);
+}
+
+function negativeDemandShockShare(
+  originCode: string,
+  destCode: string,
+  quarter: number,
+  mode: "passenger" | "cargo",
+): number {
+  const travelDrop = Math.max(0, 1 - Math.max(TRAVEL_INDEX_FLOOR, effectiveTravelIndex(quarter) / 100));
+  const originImpact = cityEventImpact(originCode, quarter);
+  const destImpact = cityEventImpact(destCode, quarter);
+  const categories =
+    mode === "cargo"
+      ? [originImpact.cargo, destImpact.cargo]
+      : [
+          originImpact.tourism,
+          originImpact.business,
+          destImpact.tourism,
+          destImpact.business,
+        ];
+  const cityDrop = Math.max(
+    0,
+    ...categories.filter((pct) => pct < 0).map((pct) => Math.abs(pct) / 100),
+  );
+  return Math.min(0.8, travelDrop + cityDrop);
+}
+
+function shockAdjustmentMultiplier(
+  team: Team,
+  route: Route,
+  quarter: number,
+  mode: "passenger" | "cargo",
+): number {
+  const shock = negativeDemandShockShare(route.originCode, route.destCode, quarter, mode);
+  if (shock <= 0) return 1;
+
+  let targetDropFactor = 1;
+  if (isDoctrine(team, "budget-expansion")) targetDropFactor = 1.5;
+  else if (isDoctrine(team, "premium-service")) targetDropFactor = 0.5;
+  else if (isDoctrine(team, "global-network")) targetDropFactor = 0.7;
+
+  if (targetDropFactor === 1) return 1;
+  const baseMultiplier = Math.max(0.05, 1 - shock);
+  const targetMultiplier = Math.max(0.05, 1 - shock * targetDropFactor);
+  return targetMultiplier / baseMultiplier;
+}
+
+function tierTwoThreeDemandBonus(origin: City, dest: City): number {
+  const endpointBonus =
+    (origin.tier === 2 || origin.tier === 3 ? 0.10 : 0) +
+    (dest.tier === 2 || dest.tier === 3 ? 0.10 : 0);
+  return 1 + Math.min(0.20, endpointBonus);
+}
+
+function fleetBrandKey(specId: string): string {
+  if (/^A\d|^A3|^A2/.test(specId)) return "Airbus";
+  if (/^B\d|^B7/.test(specId)) return "Boeing";
+  if (/^E\d|^E-/.test(specId)) return "Embraer";
+  if (/^ATR/.test(specId)) return "ATR";
+  return specId.replace(/[-\d].*$/, "") || specId;
 }
 
 // ─── Distance (Haversine, PRD A1) ──────────────────────────
@@ -567,6 +677,19 @@ export function classFareRange(
     min: Math.round(base * 0.5),
     base,
     max: Math.round(base * 2.0),
+  };
+}
+
+export function classFareRangeForDoctrine(
+  km: number,
+  cls: "econ" | "bus" | "first",
+  doctrine?: DoctrineId,
+): FareRange {
+  const range = classFareRange(km, cls);
+  if (activeDoctrineId(doctrine) !== "premium-service") return range;
+  return {
+    ...range,
+    max: Math.round(range.max * 1.2),
   };
 }
 
@@ -939,16 +1062,20 @@ export function computeRouteEconomics(
 
   // ─ Cargo route (A4) ────────────────────────────────────
   if (route.isCargo) {
+    const cargoCapacityMultiplier = isDoctrine(team, "cargo-dominance") ? 1.20 : 1.0;
     const tonnesPerFlight = planes.reduce((sum, p) => {
       const spec = AIRCRAFT_BY_ID[p.specId];
-      return sum + (spec?.cargoTonnes ?? 0);
+      return sum + (spec?.cargoTonnes ?? 0) * cargoCapacityMultiplier;
     }, 0);
     const dailyCapacityT = tonnesPerFlight * route.dailyFrequency;
     // Cargo demand = min of the two cities' business demand (A4),
     // multiplied by per-city cargo-category event modifiers from the
     // structured news feed (e-commerce booms, port closures, etc.).
-    // Cargo-focused doctrine adds 15% on top.
     const cargoFocusBonus = team.marketFocus === "cargo" ? 1.15 : 1.0;
+    const cargoNetworkBonus = isDoctrine(team, "cargo-dominance")
+      ? 1 + connectedCityDemandBonus(team, route)
+      : 1.0;
+    const cargoShockBonus = shockAdjustmentMultiplier(team, route, quarter, "cargo");
     const cargoEventA = cityEventImpact(route.originCode, quarter).cargo / 100;
     const cargoEventB = cityEventImpact(route.destCode, quarter).cargo / 100;
     // Cargo demand floor — see DEMAND_FLOOR_CARGO export at the top
@@ -961,7 +1088,7 @@ export function computeRouteEconomics(
       Math.min(
         cityBusinessAtQuarter(origin, quarter) * cargoMultA,
         cityBusinessAtQuarter(dest, quarter) * cargoMultB,
-      ) * cargoFocusBonus,
+      ) * cargoFocusBonus * cargoNetworkBonus * cargoShockBonus,
     );
     const dailyTonnes = Math.max(0, Math.min(dailyCapacityT, cargoDemandT));
     const occupancy = dailyCapacityT > 0 ? Math.max(0, Math.min(1.0, dailyTonnes / dailyCapacityT)) : 0;
@@ -1061,6 +1188,18 @@ export function computeRouteEconomics(
     (team.geographicPriority === "middle-east" && (origin.region === "me" || origin.region === "mea") && (dest.region === "me" || dest.region === "mea"));
   if (geoMatch && team.geographicPriority !== "global") onboardingBonus *= 1.08;
 
+  let doctrineDemandBonus = shockAdjustmentMultiplier(team, route, quarter, "passenger");
+  if (isDoctrine(team, "budget-expansion")) {
+    doctrineDemandBonus *= tierTwoThreeDemandBonus(origin, dest);
+  }
+  if (isDoctrine(team, "global-network")) {
+    doctrineDemandBonus *= 1 + connectedCityDemandBonus(team, route);
+    const premiumCabinShare = totalSeatsPerFlight > 0
+      ? (seatsPerFlight.first + seatsPerFlight.bus) / totalSeatsPerFlight
+      : 0;
+    doctrineDemandBonus *= 1 + 0.20 * premiumCabinShare;
+  }
+
   // Cabin condition penalty (PRD update). If any plane on this route has
   // satisfactionPct < 30, knock 8% off demand. Below 50, knock 4%. Above 80
   // bonus 2%. Multiple planes pick the WORST condition (passengers
@@ -1104,7 +1243,8 @@ export function computeRouteEconomics(
   // future code that bypasses that helper.
   const effectiveDemand = Math.max(
     0,
-    demand.total * hubBonus * csMultiplier * loungeBonus * onboardingBonus * cabinPenalty,
+    demand.total * hubBonus * csMultiplier * loungeBonus * onboardingBonus *
+      doctrineDemandBonus * cabinPenalty,
   );
 
   const dailyPax = Math.max(0, Math.min(dailyCapacity, effectiveDemand));
@@ -1189,13 +1329,14 @@ export function computeRouteEconomics(
   // additional fuel cost since the airframes are already flying.
   let bellyCargoRevenue = 0;
   let bellyCargoTonnesUsed = 0;
+  const bellyCapacityMultiplier = isDoctrine(team, "cargo-dominance") ? 1.20 : 1.0;
   const totalBellyTonnesPerFlight = planes.reduce((sum, p) => {
     const spec = AIRCRAFT_BY_ID[p.specId];
     if (!spec || spec.family !== "passenger") return sum;
     const totalSeats = (p.customSeats?.first ?? spec.seats.first)
       + (p.customSeats?.business ?? spec.seats.business)
       + (p.customSeats?.economy ?? spec.seats.economy);
-    return sum + cargoBellyTonnes(totalSeats, p.cargoBelly);
+    return sum + cargoBellyTonnes(totalSeats, p.cargoBelly) * bellyCapacityMultiplier;
   }, 0);
   if (totalBellyTonnesPerFlight > 0) {
     const bellyDailyCapacity = totalBellyTonnesPerFlight * route.dailyFrequency;
@@ -1213,7 +1354,9 @@ export function computeRouteEconomics(
     const cargoDemandT = Math.min(
       cityBusinessAtQuarter(origin, quarter) * bellyMultA,
       cityBusinessAtQuarter(dest, quarter) * bellyMultB,
-    ) * 0.30;
+    ) * 0.30 *
+      (isDoctrine(team, "cargo-dominance") ? 1 + connectedCityDemandBonus(team, route) : 1) *
+      shockAdjustmentMultiplier(team, route, quarter, "cargo");
     const dailyTonnesUsed = Math.max(0, Math.min(bellyDailyCapacity, cargoDemandT));
     bellyCargoTonnesUsed = dailyTonnesUsed * QUARTER_DAYS;
     // Belly pricing: 80% of dedicated cargo rate (parcels/mail vs full
@@ -1271,7 +1414,7 @@ export function computeRouteEconomics(
 
   return {
     distanceKm,
-    dailyDemand: demand.total,
+    dailyDemand: effectiveDemand,
     dailyCapacity,
     occupancy,
     dailyPax,
@@ -2075,7 +2218,11 @@ export function runQuarterClose(
   // facilitator can adjust the rate from the AdminPanel; default 10%.
   // Stored as a multiplier increment (0.10 = +10%).
   const staffSurchargeMult = 1 + Math.max(0, next.recurringStaffSurchargePct ?? 0);
-  const staffCost = staffBase * STAFF_MULTIPLIER[next.sliders.staff] * staffSurchargeMult;
+  let doctrineStaffMult = 1.0;
+  if (isDoctrine(next, "budget-expansion")) doctrineStaffMult *= 0.80;
+  if (isDoctrine(next, "premium-service")) doctrineStaffMult *= 1.15;
+  const staffCost =
+    staffBase * STAFF_MULTIPLIER[next.sliders.staff] * staffSurchargeMult * doctrineStaffMult;
 
   // ─ Other sliders as % of revenue (A2) — broken out ──────
   // Per-slider caps (user spec):
@@ -2179,6 +2326,18 @@ export function runQuarterClose(
       notes.push("Fleet uniformity (80%+ one family): maintenance ×0.95, Ops +3/Q");
     } else {
       next.flags.delete("fleet_uniformity");
+    }
+  }
+
+  if (isDoctrine(next, "budget-expansion")) {
+    maintenanceCost *= 0.90;
+  }
+  if (isDoctrine(next, "global-network")) {
+    const brandCount = new Set(activeFleet.map((f) => fleetBrandKey(f.specId))).size;
+    const brandPenalty = Math.min(0.20, Math.max(0, brandCount - 1) * 0.10);
+    if (brandPenalty > 0) {
+      maintenanceCost *= 1 + brandPenalty;
+      notes.push(`Global network fleet mix: maintenance +${(brandPenalty * 100).toFixed(0)}%`);
     }
   }
 
@@ -2485,6 +2644,9 @@ export function runQuarterClose(
       streak.level === level
         ? { level, quarters: streak.quarters + 1 }
         : { level, quarters: 1 };
+  }
+  if (isDoctrine(next, "premium-service") && loyaltyDelta > 0) {
+    loyaltyDelta *= 1.5;
   }
 
   // Service dissonance penalty (PRD B6): Staff ↔ In-Flight Service gap ≥ 3 levels

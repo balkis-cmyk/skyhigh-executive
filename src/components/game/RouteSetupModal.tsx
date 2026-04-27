@@ -5,7 +5,7 @@ import { Badge, Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/com
 import { useGame, selectPlayer } from "@/store/game";
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import {
-  classFareRange,
+  classFareRangeForDoctrine,
   cruiseSpeedKmh,
   detectTierFromAverage,
   distanceBetween,
@@ -125,6 +125,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
           specId: p.specId,
           engineUpgrade: p.engineUpgrade ?? null,
           cargoBelly: p.cargoBelly,
+          doctrine: player?.doctrine,
         };
       })
       .filter((x): x is NonNullable<typeof x> => !!x),
@@ -190,9 +191,9 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   // Per-class fare ranges — needed for the bidirectional tier detector
   // hook below. Computed unconditionally (returns null when origin/dest
   // are missing) so the hook order stays stable across renders.
-  const econRange = origin && dest ? classFareRange(dist, "econ") : null;
-  const busRange = origin && dest ? classFareRange(dist, "bus") : null;
-  const firstRange = origin && dest ? classFareRange(dist, "first") : null;
+  const econRange = origin && dest ? classFareRangeForDoctrine(dist, "econ", player?.doctrine) : null;
+  const busRange = origin && dest ? classFareRangeForDoctrine(dist, "bus", player?.doctrine) : null;
+  const firstRange = origin && dest ? classFareRangeForDoctrine(dist, "first", player?.doctrine) : null;
 
   // Bidirectional binding: when the player nudges any per-class slider
   // away from the active tier preset, recompute which tier the AVERAGE
@@ -233,7 +234,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
     if (aircraftWithUpgrades.length === 0) return null;
     const fastestSpeed = Math.max(...aircraftWithUpgrades.map((a) => cruiseSpeedKmh(a.specId, a.engineUpgrade)));
     const slowestSpeed = Math.min(...aircraftWithUpgrades.map((a) => cruiseSpeedKmh(a.specId, a.engineUpgrade)));
-    const turnaround = Math.max(...aircraftWithUpgrades.map((a) => groundTurnaroundHours(a.specId, a.cargoBelly)));
+    const turnaround = Math.max(...aircraftWithUpgrades.map((a) => groundTurnaroundHours(a.specId, a.cargoBelly, a.doctrine)));
     const oneWayHrs = dist / slowestSpeed;
     const roundTripHrs = oneWayHrs * 2 + turnaround * 2;
     return {
@@ -434,12 +435,57 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
       <ModalBody className="space-y-5 max-h-[70vh] overflow-y-auto">
         {/* Step 1 — Assign aircraft (REQUIRED FIRST) */}
         <Section step={1} title="Assign aircraft">
-          {idlePlanes.length === 0 ? (
-            <div className="rounded-md border border-line bg-surface-2 px-3 py-3 text-[0.8125rem] text-ink-muted">
-              No idle aircraft available. Order or reassign in the Fleet panel
-              before opening this route.
-            </div>
-          ) : (
+          {idlePlanes.length === 0 ? (() => {
+            // Surface WHY there are no idle aircraft — earlier this just
+            // said "no idle, go to Fleet" which was misleading when the
+            // player had ordered planes that hadn't been delivered yet,
+            // or planes flying other routes. Now we count each bucket
+            // so the player sees what they actually have.
+            const orderedCount = player.fleet.filter((f) => f.status === "ordered").length;
+            const assignedCount = player.fleet.filter((f) => {
+              if (f.status !== "active") return false;
+              if (!f.routeId) return false;
+              const r = player.routes.find((rt) => rt.id === f.routeId);
+              return !!(r && r.status !== "closed");
+            }).length;
+            const groundedCount = player.fleet.filter((f) => f.status === "grounded").length;
+            const totalNonRetired = orderedCount + assignedCount + groundedCount;
+            return (
+              <div className="rounded-md border border-warning/40 bg-[var(--warning-soft)]/40 px-3 py-3 text-[0.8125rem] space-y-2">
+                <div className="font-semibold text-warning">
+                  No idle aircraft available
+                </div>
+                {totalNonRetired === 0 ? (
+                  <div className="text-ink-2">
+                    You have no aircraft in inventory. Order one from the Fleet panel — pre-orders open at announcement window for each model.
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-ink-2">
+                      Your aircraft are accounted for elsewhere:
+                    </div>
+                    <ul className="text-[0.75rem] text-ink-2 space-y-0.5 ml-3 list-disc">
+                      {orderedCount > 0 && (
+                        <li>
+                          <strong className="text-ink">{orderedCount}</strong> on order — arriving next quarter or queued for delivery
+                        </li>
+                      )}
+                      {assignedCount > 0 && (
+                        <li>
+                          <strong className="text-ink">{assignedCount}</strong> assigned to other routes — close one or reassign in Fleet
+                        </li>
+                      )}
+                      {groundedCount > 0 && (
+                        <li>
+                          <strong className="text-ink">{groundedCount}</strong> grounded — re-activate via maintenance, or wait out renovation downtime
+                        </li>
+                      )}
+                    </ul>
+                  </>
+                )}
+              </div>
+            );
+          })() : (
             <div className="space-y-1.5 max-h-44 overflow-auto">
               {/* Family lock: once the first aircraft is picked, the
                   route's family is set. Mixed cargo+passenger on a
@@ -449,7 +495,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
               {idlePlanes.map((p) => {
                 const spec = AIRCRAFT_BY_ID[p.specId];
                 if (!spec) return null;
-                const canReach = spec.rangeKm >= dist;
+                const canReach = effectiveRangeKm(spec, p.engineUpgrade ?? null) >= dist;
                 const selected = selectedPlaneIds.includes(p.id);
                 // Family lock — once first aircraft is picked, the rest
                 // must be the same family. Picking a passenger plane
@@ -462,7 +508,7 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                   : null;
                 const familyMismatch = !!lockedFamily && lockedFamily !== spec.family;
                 const planeMaxWeekly = canReach
-                  ? maxWeeklyRotations(p.specId, dist, p.engineUpgrade ?? null, p.cargoBelly)
+                  ? maxWeeklyRotations(p.specId, dist, p.engineUpgrade ?? null, p.cargoBelly, player.doctrine)
                   : 0;
                 const disabled = !canReach || familyMismatch;
                 return (

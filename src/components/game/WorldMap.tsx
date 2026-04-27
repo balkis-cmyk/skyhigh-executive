@@ -759,7 +759,7 @@ export function WorldMap({
       </MapContainer>
 
       {/* Legend */}
-      <div className="absolute bottom-3 left-3 z-[400] flex items-center gap-3 rounded-md border border-line bg-surface/90 backdrop-blur px-3 py-2 text-[0.75rem] pointer-events-none">
+      <div className="absolute bottom-3 left-3 z-[400] flex items-center gap-3 rounded-md border border-line bg-surface/90 backdrop-blur px-3 py-2 text-[0.75rem] pointer-events-none flex-wrap max-w-[calc(100vw-2rem)]">
         <span className="flex items-center gap-1.5">
           <span className="w-3 h-3 rounded-full border-2 border-white" style={{ background: team.color }} />
           <span className="text-ink font-medium">Hub</span>
@@ -771,6 +771,28 @@ export function WorldMap({
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" />
           <span className="text-ink-2">Cities</span>
+        </span>
+        {/* Route line colour key — explains why some routes turn green
+            and others red. Driven by avgOccupancy: ≥70% = profitable
+            (green pax, gold cargo); <50% = underloaded (red); rest =
+            airline brand colour (mid-range, no signal). Earlier the
+            colour mapping was invisible to the player and they
+            wondered why their lines varied. */}
+        <span className="flex items-center gap-1.5 border-l border-line pl-3">
+          <svg width="20" height="6" aria-hidden>
+            <line x1="0" y1="3" x2="20" y2="3" stroke="#1E6B5C" strokeWidth="2" />
+          </svg>
+          <span className="text-ink-2" title="Route occupancy ≥70% — profitable">
+            Strong route
+          </span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width="20" height="6" aria-hidden>
+            <line x1="0" y1="3" x2="20" y2="3" stroke="#C23B1F" strokeWidth="2" />
+          </svg>
+          <span className="text-ink-2" title="Route occupancy below 50% — underloaded, losing money">
+            Underloaded
+          </span>
         </span>
         {pendingRoutes.length > 0 && (
           <span className="flex items-center gap-1.5 border-l border-line pl-3">

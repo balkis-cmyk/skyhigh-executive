@@ -91,7 +91,7 @@ export default function Onboarding() {
       {/* overflow-y-auto here so tall steps (doctrine, hub list) are
           scrollable even though the body has overflow-hidden */}
       <div className="flex-1 overflow-y-auto">
-        <div className="min-h-full flex items-center justify-center px-8 py-12">
+        <div className="min-h-full flex items-center justify-center px-4 py-8 md:px-8 md:py-12">
         <div className="w-full max-w-3xl">
           {/* Real progressbar role so screen readers announce progress
               instead of just rendering 9 anonymous decorative bars. */}
@@ -149,7 +149,7 @@ export default function Onboarding() {
           )}
 
           {step === 1 && (
-            <Step title="Choose your doctrine" sub="Shapes bonuses across the entire simulation. Permanent.">
+            <Step title="Choose your doctrine" sub="Your starting operating model. You can revisit it once at Quarter 20.">
               {/* role=radiogroup + role=radio on each card so assistive
                   tech announces the cards as a single-select group with
                   the active option correctly checked. */}
@@ -475,7 +475,7 @@ export default function Onboarding() {
             </Step>
           )}
 
-          <div className="flex items-center justify-between mt-10">
+          <div className="sticky bottom-0 z-10 -mx-4 mt-10 flex items-center justify-between border-t border-line bg-bg/95 px-4 py-4 backdrop-blur md:-mx-8 md:px-8">
             <Button
               variant="ghost"
               onClick={() => (step === 0 ? router.push("/") : setStep(step - 1))}

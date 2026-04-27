@@ -130,6 +130,7 @@ export interface GameStore extends GameState {
   }): void;
 
   setSliders(sliders: Partial<Sliders>): void;
+  reviseDoctrineAtR20(doctrine: DoctrineId): { ok: boolean; error?: string };
 
   orderAircraft(args: {
     specId: string;
@@ -838,10 +839,10 @@ export const useGame = create<GameStore>()(
             : meta.hub;
           // Spread rival doctrines so the leaderboard has visible diversity
           // of strategies competing on revenue/margin/fuel sensitivity.
-          const rivalDoctrines: ("budget-expansion" | "premium-service" | "cargo-dominance" | "safety-first")[] = [
+          const rivalDoctrines: DoctrineId[] = [
             "premium-service", "budget-expansion", "cargo-dominance",
-            "safety-first", "premium-service", "budget-expansion",
-            "cargo-dominance", "safety-first", "premium-service",
+            "global-network", "premium-service", "budget-expansion",
+            "cargo-dominance", "global-network", "premium-service",
           ];
           const doctrine = rivalDoctrines[i % rivalDoctrines.length];
           const r = makeStartingTeam({
@@ -906,8 +907,20 @@ export const useGame = create<GameStore>()(
               retirementQuarter: 1 + 28,
               maintenanceDeficit: 0, satisfactionPct: 70,
             });
-            const dailyFreq = doctrine === "budget-expansion" ? 4
-              : doctrine === "premium-service" ? 2 : 3;
+            const plannedWeekly =
+              doctrine === "budget-expansion" ? 10 + (i % 4) * 2
+              : doctrine === "premium-service" ? 5 + (i % 3)
+              : doctrine === "cargo-dominance" ? 4 + (i % 4)
+              : 7 + (i % 5);
+            const physicsWeekly = Math.max(
+              1,
+              Math.round(maxRouteDailyFrequency([rivalSpec], dist, [{
+                specId: rivalSpec,
+                doctrine,
+              }]) * 7),
+            );
+            const weeklyFreq = Math.min(plannedWeekly, physicsWeekly);
+            const dailyFreq = weeklyFreq / 7;
             const tier = doctrine === "premium-service" ? "premium" as const
               : doctrine === "budget-expansion" ? "budget" as const
               : "standard" as const;
@@ -925,9 +938,9 @@ export const useGame = create<GameStore>()(
               status: "active" as const,
               openQuarter: 1,
               avgOccupancy: 0.55 + Math.random() * 0.25,
-              quarterlyRevenue: dailyFreq * 7 * (isCargo ? 100_000 : 250_000),
-              quarterlyFuelCost: dailyFreq * 7 * 30_000,
-              quarterlySlotCost: dailyFreq * 7 * 12_000,
+              quarterlyRevenue: weeklyFreq * (isCargo ? 100_000 : 250_000),
+              quarterlyFuelCost: weeklyFreq * 30_000,
+              quarterlySlotCost: weeklyFreq * 12_000,
               isCargo,
               consecutiveQuartersActive: 1,
               consecutiveLosingQuarters: 0,
@@ -1012,6 +1025,31 @@ export const useGame = create<GameStore>()(
               : t,
           ),
         });
+      },
+
+      reviseDoctrineAtR20: (doctrine) => {
+        const s = get();
+        if (!s.playerTeamId) return { ok: false, error: "No player team" };
+        if (s.currentQuarter !== 20) {
+          return { ok: false, error: "Doctrine review opens only in Quarter 20" };
+        }
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        if (player.flags.has("doctrine_revised_r20")) {
+          return { ok: false, error: "Doctrine already revised in Quarter 20" };
+        }
+        set({
+          teams: s.teams.map((t) => {
+            if (t.id !== player.id) return t;
+            return {
+              ...t,
+              doctrine,
+              flags: new Set([...(t.flags ?? []), "doctrine_revised_r20"]),
+            };
+          }),
+        });
+        toast.accent("Doctrine revised", "Your Quarter 20 operating model is now active.");
+        return { ok: true };
       },
 
       orderAircraft: ({
@@ -2134,6 +2172,7 @@ export const useGame = create<GameStore>()(
                 specId: f.specId,
                 engineUpgrade: f.engineUpgrade ?? null,
                 cargoBelly: f.cargoBelly,
+                doctrine: player.doctrine,
               };
             })
             .filter((x): x is NonNullable<typeof x> => !!x);
@@ -2525,6 +2564,7 @@ export const useGame = create<GameStore>()(
               specId: f.specId,
               engineUpgrade: f.engineUpgrade ?? null,
               cargoBelly: f.cargoBelly,
+              doctrine: player.doctrine,
             };
           })
           .filter((x): x is NonNullable<typeof x> => !!x);
@@ -3376,6 +3416,22 @@ export const useGame = create<GameStore>()(
           if (!t.botDifficulty) return t;
           let updated = { ...t };
 
+          // Transition bot aircraft from "ordered" → "active" once a
+          // quarter has passed since purchase. Earlier the bot ordered
+          // a plane (status: ordered), then `planBotRoutes` filtered
+          // for status: active and found nothing, so the plane sat
+          // perpetually ordered and the bot never opened a single
+          // route. Mirrors the player path at the close-quarter step
+          // where the same transition runs for the player team.
+          updated = {
+            ...updated,
+            fleet: updated.fleet.map((f) =>
+              f.status === "ordered" && f.purchaseQuarter < s.currentQuarter
+                ? { ...f, status: "active" as const }
+                : f,
+            ),
+          };
+
           // Aircraft order — bot may add a fresh purchase or lease.
           // Now goes through the same lease/buy plumbing as the player
           // so deposits, lease term/buy-out residual, production caps
@@ -3482,9 +3538,8 @@ export const useGame = create<GameStore>()(
         // Each rival has a doctrine that shapes their revenue model:
         //   budget-expansion → high-volume low-margin
         //   premium-service  → low-volume high-margin (bigger fuel sensitivity)
-        //   cargo-focus      → steady cargo revenue, low fuel sensitivity
-        //   hub-spoke        → balanced
-        //   alliance         → +10% revenue from network
+        //   cargo-dominance → steady cargo revenue, low fuel sensitivity
+        //   global-network  → connected passenger demand, balanced margin
         // Revenue/profit are generated procedurally so the leaderboard moves
         // believably without us simulating their full network.
         const fuelStress = Math.max(0, (s.fuelIndex - 100) / 100);  // 0 at index 100, 0.5 at 150
@@ -3505,8 +3560,10 @@ export const useGame = create<GameStore>()(
               baseRevenue = 42_000_000; marginPct = 0.05; fuelSensitivity = 1.1; break;
             case "cargo-dominance":
               baseRevenue = 32_000_000; marginPct = 0.10; fuelSensitivity = 0.6; break;
+            case "global-network":
+              baseRevenue = 36_000_000; marginPct = 0.095; fuelSensitivity = 0.85; break;
             case "safety-first":
-              baseRevenue = 33_000_000; marginPct = 0.09; fuelSensitivity = 0.95; break;
+              baseRevenue = 36_000_000; marginPct = 0.095; fuelSensitivity = 0.85; break;
             default:
               baseRevenue = 34_000_000; marginPct = 0.08; fuelSensitivity = 1.0; break;
           }
