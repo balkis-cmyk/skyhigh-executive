@@ -57,10 +57,79 @@ export function OpsPanel() {
     closePanel();
   }
 
+  // ─── Budget preview (recommendation #B9) ──────────────────────
+  // Shows projected total slider spend + brand/ops delta for the
+  // current set of slider levels vs the prior quarter's totals from
+  // financialsByQuarter. Lets the player see "this is what I'm
+  // committing to" before they hit Submit, instead of finding out
+  // after the close that they over-spent.
+  const lastClose = player.financialsByQuarter.at(-1);
+  // Total brand/ops delta = sum of effects across sliders. Honors the
+  // streak multiplier at the same level (1.2× at 3Q, 1.5× at 6Q).
+  let totalBrandPerQ = 0;
+  let totalOpsPerQ = 0;
+  for (const { key } of SLIDER_LIST) {
+    const lvl = player.sliders[key];
+    const e = SLIDER_EFFECTS[key][lvl];
+    const streak = player.sliderStreaks[key];
+    const mult = streak.level === lvl
+      ? (streak.quarters >= 6 ? 1.5 : streak.quarters >= 3 ? 1.2 : 1.0)
+      : 1.0;
+    totalBrandPerQ += (e.brandPts ?? 0) * mult;
+    totalOpsPerQ += (e.opsPts ?? 0) * mult;
+  }
+
   return (
     <div className="space-y-4">
       <div className="text-[0.8125rem] text-ink-2">
         Q{s.currentQuarter} spend levels. Compound every 3 and 6 quarters at the same level.
+      </div>
+
+      {/* Budget preview cards — committed-spend signals at-a-glance.
+          Brand + Ops projected deltas help the player calibrate slider
+          tradeoffs (push marketing high → +brand but cuts ops). */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-md border border-line bg-surface p-2.5">
+          <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">Brand Δ</div>
+          <div
+            className={cn(
+              "font-display text-[1.25rem] tabular leading-none mt-0.5",
+              totalBrandPerQ > 0 ? "text-positive" : totalBrandPerQ < 0 ? "text-negative" : "text-ink",
+            )}
+          >
+            {totalBrandPerQ > 0 ? "+" : ""}{totalBrandPerQ.toFixed(1)}/Q
+          </div>
+          <div className="text-[0.625rem] text-ink-muted mt-1 leading-snug">
+            Sum across slider effects + streak mults
+          </div>
+        </div>
+        <div className="rounded-md border border-line bg-surface p-2.5">
+          <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">Ops Δ</div>
+          <div
+            className={cn(
+              "font-display text-[1.25rem] tabular leading-none mt-0.5",
+              totalOpsPerQ > 0 ? "text-positive" : totalOpsPerQ < 0 ? "text-negative" : "text-ink",
+            )}
+          >
+            {totalOpsPerQ > 0 ? "+" : ""}{totalOpsPerQ.toFixed(1)}/Q
+          </div>
+          <div className="text-[0.625rem] text-ink-muted mt-1 leading-snug">
+            Maintenance + customer-service combined
+          </div>
+        </div>
+        <div className="rounded-md border border-line bg-surface p-2.5">
+          <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">Last close</div>
+          <div className="font-display text-[1.25rem] tabular leading-none mt-0.5 text-ink">
+            {lastClose
+              ? `Brand ${lastClose.brandPts.toFixed(0)}`
+              : "—"}
+          </div>
+          <div className="text-[0.625rem] text-ink-muted mt-1 leading-snug">
+            {lastClose
+              ? `Ops ${lastClose.opsPts.toFixed(0)} · revenue ${(lastClose.revenue / 1e6).toFixed(1)}M`
+              : "Submit a quarter to see comparisons"}
+          </div>
+        </div>
       </div>
 
       {SLIDER_LIST.map(({ key, label, sub }) => {

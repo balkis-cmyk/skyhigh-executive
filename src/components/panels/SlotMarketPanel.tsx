@@ -7,6 +7,7 @@ import { useUi } from "@/store/ui";
 import { CITIES } from "@/data/cities";
 import { fmtMoney, fmtQuarter } from "@/lib/format";
 import { BASE_SLOT_PRICE_BY_TIER } from "@/lib/slots";
+import { AIRPORT_DEFAULT_CAPACITY_BY_TIER } from "@/lib/airport-ownership";
 import { toast } from "@/store/toasts";
 import { cn } from "@/lib/cn";
 import type { CityTier } from "@/types/game";
@@ -237,11 +238,39 @@ export function SlotMarketPanel() {
                   )}
                 </div>
 
-                {/* Open */}
+                {/* Open + scarcity bar (recommendation #B11). Bar fills
+                    based on (totalCapacity - available) / totalCapacity —
+                    full bar = sold out, empty bar = wide open. Player
+                    sees scarcity at a glance without re-reading numbers. */}
                 <div className="col-span-1 text-right tabular font-mono">
-                  <span className={state?.available && state.available > 0 ? "text-ink" : "text-ink-muted"}>
-                    {state?.available ?? "—"}
-                  </span>
+                  {(() => {
+                    const cap = state?.totalCapacity ?? AIRPORT_DEFAULT_CAPACITY_BY_TIER[tier] ?? 0;
+                    const open = state?.available ?? 0;
+                    const filled = Math.max(0, cap - open);
+                    const filledPct = cap > 0 ? (filled / cap) * 100 : 0;
+                    const tone =
+                      filledPct >= 90 ? "bg-negative" :
+                      filledPct >= 70 ? "bg-warning" :
+                      "bg-positive";
+                    return (
+                      <div className="flex flex-col items-end gap-1">
+                        <span className={open > 0 ? "text-ink" : "text-ink-muted"}>
+                          {open}
+                        </span>
+                        {cap > 0 && (
+                          <div
+                            className="w-full max-w-12 h-1 rounded bg-line overflow-hidden"
+                            title={`${filled} of ${cap} slots held (${filledPct.toFixed(0)}%)`}
+                          >
+                            <div
+                              className={cn("h-full transition-all", tone)}
+                              style={{ width: `${filledPct}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Next Q — calendar quarter when next batch opens */}

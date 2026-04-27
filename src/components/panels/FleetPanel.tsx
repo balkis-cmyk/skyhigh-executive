@@ -207,8 +207,70 @@ export function FleetPanel() {
   };
   const insMeta = insuranceMeta[player.insurancePolicy];
 
+  // Operational state breakdown for the top-of-panel summary cards
+  // (recommendation #B8). Counts by status — every aircraft falls
+  // into exactly one bucket. "Aging" is a sub-bucket of active that
+  // surfaces planes with ≤4 quarters of life remaining so the player
+  // can plan replacement orders before they retire.
+  const opsBuckets = (() => {
+    const fleet = player.fleet;
+    const onOrder = fleet.filter((f) => f.status === "ordered").length;
+    const grounded = fleet.filter((f) => f.status === "grounded").length;
+    const active = fleet.filter((f) => f.status === "active");
+    const onRoutes = active.filter((f) => {
+      if (!f.routeId) return false;
+      const r = player.routes.find((rt) => rt.id === f.routeId);
+      return !!(r && r.status !== "closed");
+    }).length;
+    const idle = active.length - onRoutes;
+    const aging = active.filter((f) => {
+      const q = f.retirementQuarter - s.currentQuarter;
+      return q > 0 && q <= 4;
+    }).length;
+    return { onOrder, grounded, onRoutes, idle, aging, total: fleet.length };
+  })();
+
   return (
     <div className="space-y-3">
+      {/* Operational state cards — recommendation #B8. Five buckets
+          surface "what's the next action" at a glance: Available to
+          assign / On routes / On order / Grounded / Aging. Detailed
+          by-type list stays below. */}
+      {opsBuckets.total > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <FleetStateCard
+            label="Available"
+            count={opsBuckets.idle}
+            tone={opsBuckets.idle > 0 ? "info" : "default"}
+            sub={opsBuckets.idle > 0 ? "Idle, ready to assign" : "All assigned"}
+          />
+          <FleetStateCard
+            label="On routes"
+            count={opsBuckets.onRoutes}
+            tone="positive"
+            sub="Generating revenue"
+          />
+          <FleetStateCard
+            label="On order"
+            count={opsBuckets.onOrder}
+            tone={opsBuckets.onOrder > 0 ? "info" : "default"}
+            sub={opsBuckets.onOrder > 0 ? "Delivery next quarter" : "Nothing ordered"}
+          />
+          <FleetStateCard
+            label="Grounded"
+            count={opsBuckets.grounded}
+            tone={opsBuckets.grounded > 0 ? "warn" : "default"}
+            sub={opsBuckets.grounded > 0 ? "Maintenance / renovation" : "All flying"}
+          />
+          <FleetStateCard
+            label="Aging"
+            count={opsBuckets.aging}
+            tone={opsBuckets.aging > 0 ? "warn" : "default"}
+            sub={opsBuckets.aging > 0 ? "≤4Q left — plan replacement" : "Fleet is fresh"}
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="text-[0.8125rem] text-ink-2">
           {player.fleet.length} aircraft total · {groups.length} type{groups.length === 1 ? "" : "s"}
@@ -1184,6 +1246,43 @@ function RetiredHistory() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Status-bucket card for the top-of-panel operational summary.
+ *  Recommendation #B8: scan five buckets and know the next move. */
+function FleetStateCard({
+  label, count, tone, sub,
+}: {
+  label: string;
+  count: number;
+  tone: "positive" | "info" | "warn" | "default";
+  sub: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-md border p-2.5",
+        tone === "positive" && "border-positive/40 bg-[var(--positive-soft)]/30",
+        tone === "warn" && "border-warning/40 bg-[var(--warning-soft)]/30",
+        tone === "info" && "border-line bg-[rgba(20,53,94,0.04)]",
+        tone === "default" && "border-line bg-surface",
+      )}
+    >
+      <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">{label}</div>
+      <div
+        className={cn(
+          "font-display text-[1.5rem] tabular leading-none mt-0.5",
+          tone === "positive" && "text-positive",
+          tone === "warn" && "text-warning",
+          tone === "info" && "text-primary",
+          tone === "default" && "text-ink",
+        )}
+      >
+        {count}
+      </div>
+      <div className="text-[0.625rem] text-ink-muted mt-1 leading-snug">{sub}</div>
     </div>
   );
 }

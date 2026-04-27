@@ -132,23 +132,55 @@ function ScenarioCard({
   const severityTone =
     scenario.severity === "CATASTROPHIC" || scenario.severity === "HIGH" ? "negative"
       : scenario.severity === "MEDIUM" ? "warning" : "neutral";
+  // Severity color band on the left edge of the card. Recommendation
+  // #B10: decisions are one of the most memorable screens in the
+  // game — match the visual weight to the stakes. Critical gets a
+  // saturated red bar, high a warning amber, etc.
+  const severityBand =
+    scenario.severity === "CATASTROPHIC" ? "before:bg-negative"
+      : scenario.severity === "HIGH" ? "before:bg-warning"
+        : scenario.severity === "MEDIUM" ? "before:bg-accent"
+          : "before:bg-ink-muted";
 
   return (
-    <div className="rounded-lg border border-line bg-surface p-4 shadow-[var(--shadow-1)]">
-      <div className="flex items-center gap-2 mb-2">
-        <Badge tone={severityTone}>{scenario.severity}</Badge>
-        <span className="font-mono text-[0.75rem] text-primary">{scenario.id}</span>
-        <span className="text-[0.6875rem] uppercase tracking-wider text-ink-muted">
-          {fmtQuarter(scenario.quarter)} · {scenario.timeLimitMinutes}m
-        </span>
-        {locked
-          ? <Badge tone="primary">Submitted</Badge>
-          : <Badge tone="accent">Awaiting decision</Badge>}
+    <div
+      className={cn(
+        // Boardroom card — left-edge severity band, drop shadow,
+        // reserved padding so the band doesn't overlap content.
+        "relative rounded-lg border border-line bg-surface pl-5 pr-4 py-4 shadow-[var(--shadow-1)] overflow-hidden",
+        "before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1.5",
+        severityBand,
+      )}
+    >
+      {/* Boardroom header — small "Boardroom · Q3 2017" eyebrow plus
+          the severity stamp + countdown. Sets the dramatic tone the
+          recommendation called for. */}
+      <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[0.5625rem] uppercase tracking-[0.22em] text-accent font-bold">
+            Boardroom · {fmtQuarter(scenario.quarter)}
+          </span>
+          <span className="font-mono text-[0.625rem] text-ink-muted">{scenario.id}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Badge tone={severityTone}>{scenario.severity}</Badge>
+          <span className={cn(
+            "text-[0.6875rem] uppercase tracking-wider tabular font-mono font-semibold",
+            scenario.timeLimitMinutes <= 15 ? "text-warning" : "text-ink-muted",
+          )}>
+            {scenario.timeLimitMinutes}m to decide
+          </span>
+          {locked
+            ? <Badge tone="primary">Submitted</Badge>
+            : <Badge tone="accent">Awaiting decision</Badge>}
+        </div>
       </div>
-      <h3 className="font-display text-[1.375rem] text-ink leading-tight mb-2">
+      <h3 className="font-display text-[1.5rem] text-ink leading-tight mb-2">
         {scenario.title}
       </h3>
-      <p className="italic text-ink-2 text-[0.875rem] leading-relaxed mb-2">{scenario.teaser}</p>
+      <p className="italic text-ink-2 text-[0.9375rem] leading-relaxed mb-2 max-w-[60ch]">
+        {scenario.teaser}
+      </p>
       <p className="text-ink-2 text-[0.875rem] leading-relaxed mb-3">{scenario.context}</p>
       <HostCityCallout scenarioId={scenario.id} />
 
