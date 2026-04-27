@@ -447,7 +447,49 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
         )}
       </ModalHeader>
 
-      <ModalBody className="space-y-5 max-h-[70vh] overflow-y-auto">
+      {/* ── Decision cockpit — sticky summary rail wedged between
+          header and scroll body. Always visible as the player scrolls
+          through the configuration steps below, so the cause→effect
+          loop (tweak → projection updates) is right above the action.
+          Empty stats render as em-dashes until the prerequisite is set. */}
+      <div className="border-y border-line bg-surface-2/60 px-4 py-2 grid grid-cols-4 gap-3 text-[0.75rem]">
+        <CockpitStat
+          label="Aircraft"
+          value={
+            selectedPlaneIds.length > 0
+              ? `${selectedPlaneIds.length} selected`
+              : "—"
+          }
+          tone={selectedPlaneIds.length > 0 ? "ok" : "pending"}
+        />
+        <CockpitStat
+          label="Frequency"
+          value={hasAircraft && weeklyFreq > 0 ? `${weeklyFreq}/wk` : "—"}
+          tone={hasAircraft && weeklyFreq > 0 ? "ok" : "pending"}
+        />
+        <CockpitStat
+          label={isCargo ? "Cargo route" : "Pricing"}
+          value={isCargo ? "Cargo" : tier}
+          tone="ok"
+          mono={false}
+          capitalize
+        />
+        <CockpitStat
+          label="Occupancy"
+          value={projection ? `${(projection.occupancy * 100).toFixed(0)}%` : "—"}
+          tone={
+            !projection
+              ? "pending"
+              : projection.tone === "neg"
+                ? "neg"
+                : projection.tone === "warn"
+                  ? "warn"
+                  : "pos"
+          }
+        />
+      </div>
+
+      <ModalBody className="space-y-5 max-h-[60vh] overflow-y-auto">
         {/* Step 1 — Assign aircraft (REQUIRED FIRST) */}
         <Section step={1} title="Assign aircraft">
           {idlePlanes.length === 0 ? (() => {
@@ -1013,6 +1055,45 @@ function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * Compact cockpit stat for the sticky summary rail.
+ * Tone "pending" renders muted with em-dash placeholder semantics so
+ * the player can see at a glance which prerequisites are still open.
+ */
+function CockpitStat({
+  label, value, tone = "ok", mono = true, capitalize = false,
+}: {
+  label: string;
+  value: string;
+  tone?: "ok" | "pos" | "neg" | "warn" | "pending";
+  mono?: boolean;
+  capitalize?: boolean;
+}) {
+  const valueClass =
+    tone === "pos" ? "text-positive" :
+    tone === "neg" ? "text-negative" :
+    tone === "warn" ? "text-warning" :
+    tone === "pending" ? "text-ink-muted" :
+    "text-ink";
+  return (
+    <div className="min-w-0">
+      <div className="text-[0.5625rem] uppercase tracking-wider text-ink-muted leading-tight">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "tabular text-[0.875rem] font-semibold leading-tight mt-0.5 truncate",
+          mono && "font-mono",
+          capitalize && "capitalize",
+          valueClass,
+        )}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
 
