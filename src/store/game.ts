@@ -228,12 +228,22 @@ export interface GameStore extends GameState {
   rejectAirportBid(bidId: string, reason?: string): { ok: boolean; error?: string };
 
   /** Facilitator/admin only: set a team's recurring quarterly staff-cost
-   *  surcharge. Used to dial in the "Full Counter Offer" rate after a
-   *  team picks S14 option A — default 10%, but the table may negotiate
-   *  a different number. Pass 0 to remove. */
+   *  surcharge. Used to dial in the recurring rate after a team picks
+   *  S14 option B "Apply Incremental Salary Increase 10%" — default 10%,
+   *  but the table may negotiate a different number. Pass 0 to remove. */
   setRecurringStaffSurcharge(args: {
     teamId: string;
     pct: number;
+  }): { ok: boolean; error?: string };
+
+  /** Facilitator/admin only: settle the cost of an S14 "Full Counter
+   *  Offer" pick by charging a one-time cash hit to the team. Clears
+   *  the `talent_heist_pending_full_counter` flag so the admin sees the
+   *  pending list shrink. Used to capture what the rival's package
+   *  actually ended up at — table-negotiated number, no hard cap. */
+  applyFullCounterOfferCost(args: {
+    teamId: string;
+    costUsd: number;
   }): { ok: boolean; error?: string };
 
   /** Owner-only: change the weekly slot fee for an airport you own.
@@ -1633,6 +1643,36 @@ export const useGame = create<GameStore>()(
           clean > 0
             ? `Quarterly staff cost will be multiplied by ${(1 + clean).toFixed(2)} until adjusted again.`
             : "Surcharge cleared. Staff cost returns to baseline next quarter close.",
+        );
+        return { ok: true };
+      },
+
+      applyFullCounterOfferCost: ({ teamId, costUsd }) => {
+        const s = get();
+        const team = s.teams.find((t) => t.id === teamId);
+        if (!team) return { ok: false, error: "Team not found" };
+        if (!team.flags.has("talent_heist_pending_full_counter")) {
+          return {
+            ok: false,
+            error: `${team.name} has no pending Full Counter Offer to settle.`,
+          };
+        }
+        const clean = Math.max(0, Math.round(costUsd));
+        const nextFlags = new Set(team.flags);
+        nextFlags.delete("talent_heist_pending_full_counter");
+        // Track that we settled it so it doesn't re-appear or get
+        // double-settled. Useful audit trail in the team's flag set.
+        nextFlags.add("talent_heist_full_counter_settled");
+        set({
+          teams: s.teams.map((t) =>
+            t.id === teamId
+              ? { ...t, cashUsd: t.cashUsd - clean, flags: nextFlags }
+              : t,
+          ),
+        });
+        toast.warning(
+          `${team.name}: Full Counter Offer settled`,
+          `${fmtMoneyPlain(clean)} charged to cash. Executives retained.`,
         );
         return { ok: true };
       },

@@ -573,12 +573,15 @@ export function AdminPanel() {
         </div>
       </section>
 
-      {/* Recurring staff-cost surcharge — set by S14 "Full Counter
-          Offer" (talent heist) and tunable by the facilitator. Shows
-          one row per team with the current rate and an editable
-          input. Keeping it on the AdminPanel (rather than buried in
-          per-team settings) lets the facilitator adjust mid-game when
-          the table negotiates a different number. */}
+      {/* Talent heist (S14) — Option A "Full Counter Offer" leaves a
+          pending flag on the team because the cost isn't fixed by the
+          rule book; the facilitator captures whatever the table
+          negotiated and applies it as a cash hit here. */}
+      <FullCounterOfferAdmin />
+
+      {/* Recurring staff-cost surcharge — set by S14 "Apply Incremental
+          Salary Increase 10%" (option B) and tunable by the facilitator.
+          One row per team with the current rate and an editable input. */}
       <StaffSurchargeAdmin />
 
       {/* Plot twists — fire deferred events NOW (PRD §10.7) */}
@@ -857,9 +860,91 @@ export function AdminPanel() {
   );
 }
 
+/** Talent-heist Full Counter Offer settle screen. When a player picks
+ *  S14 option A the team gets flagged `talent_heist_pending_full_counter`
+ *  with no cash hit; the rival's actual package amount is whatever the
+ *  table negotiated, so the facilitator captures it here and applies
+ *  it as a cash hit. Section is hidden when no team is pending. */
+function FullCounterOfferAdmin() {
+  const teams = useGame((g) => g.teams);
+  const applyFullCounterOfferCost = useGame((g) => g.applyFullCounterOfferCost);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  const pending = teams.filter((t) =>
+    t.flags && Array.from(t.flags).includes("talent_heist_pending_full_counter"),
+  );
+  if (pending.length === 0) return null;
+
+  return (
+    <section>
+      <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2 flex items-baseline justify-between">
+        <span>Full Counter Offers · awaiting cost</span>
+        <span className="text-[0.625rem] text-warning font-semibold">
+          {pending.length} pending
+        </span>
+      </div>
+      <div className="text-[0.6875rem] text-ink-muted mb-2 leading-relaxed">
+        S14 option A picked — the team committed to match every rival
+        package. Capture the table-negotiated total and apply it as a
+        one-time cash hit. No cap; type any USD figure.
+      </div>
+      <div className="space-y-1.5">
+        {pending.map((t) => {
+          const draft = drafts[t.id] ?? "";
+          const draftN = Number(draft);
+          const valid = draft.trim() !== "" && !isNaN(draftN) && draftN >= 0;
+          return (
+            <div
+              key={t.id}
+              className="flex items-baseline gap-2 rounded-md border border-warning/40 bg-[var(--warning-soft)]/40 px-2.5 py-2 text-[0.75rem]"
+            >
+              <span
+                className="inline-flex w-5 h-5 rounded items-center justify-center font-mono text-[0.5625rem] font-semibold text-primary-fg shrink-0"
+                style={{ background: t.color }}
+                aria-hidden="true"
+              >
+                {t.code}
+              </span>
+              <span className="text-ink font-medium flex-1 truncate">
+                {t.name}
+              </span>
+              <span className="text-ink-muted shrink-0 text-[0.6875rem]">
+                cash {fmtMoney(t.cashUsd)}
+              </span>
+              <input
+                type="number"
+                step="100000"
+                min="0"
+                placeholder="cost USD"
+                value={draft}
+                onChange={(e) => setDrafts((d) => ({ ...d, [t.id]: e.target.value }))}
+                className="w-32 px-2 py-1 rounded-md border border-line bg-surface text-ink text-[0.75rem] tabular font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
+                aria-label={`Counter-offer cost in USD for ${t.name}`}
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!valid}
+                onClick={() => {
+                  const r = applyFullCounterOfferCost({ teamId: t.id, costUsd: draftN });
+                  if (!r.ok) toast.negative("Apply failed", r.error ?? "");
+                  setDrafts((d) => ({ ...d, [t.id]: "" }));
+                }}
+              >
+                Apply
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 /** Recurring staff-cost surcharge — facilitator-tunable rate per team.
- *  Set by S14 "Full Counter Offer"; the facilitator can override here.
- *  Default 10% if a team picked option A; 0 otherwise. */
+ *  Set by S14 "Apply Incremental Salary Increase 10%" (option B); the
+ *  facilitator can override here. Default 10% if a team picked option B;
+ *  0 otherwise. */
 function StaffSurchargeAdmin() {
   const teams = useGame((g) => g.teams);
   const setRecurringStaffSurcharge = useGame((g) => g.setRecurringStaffSurcharge);
@@ -884,9 +969,10 @@ function StaffSurchargeAdmin() {
         Staff-cost surcharge · per team
       </div>
       <div className="text-[0.6875rem] text-ink-muted mb-2 leading-relaxed">
-        S14 &quot;Full Counter Offer&quot; sets a permanent +10% on quarterly
-        staff cost. Adjust the rate here if the table negotiated a
-        different number. 0 = baseline (no surcharge).
+        S14 &quot;Apply Incremental Salary Increase 10%&quot; (option B) sets a
+        permanent +10% on quarterly staff cost. Adjust the rate here
+        if the table negotiated a different number. 0 = baseline (no
+        surcharge).
       </div>
       <div className="space-y-1.5">
         {sorted.map((t) => {
