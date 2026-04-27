@@ -60,6 +60,8 @@ export function AdminPanel() {
 
   return (
     <div className="space-y-5">
+      <GroupHeader title="Round control" subtitle="Game state · current quarter · fuel + rate context" />
+
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">Game state</div>
         <div className="space-y-1.5 text-[0.8125rem]">
@@ -399,6 +401,8 @@ export function AdminPanel() {
         </section>
       )}
 
+      <GroupHeader title="Team adjustments" subtitle="Cash · brand · ops · loyalty · trajectory" />
+
       {/* Brand Value trajectory across teams (PRD §10.10) */}
       {s.teams.some((t) => t.financialsByQuarter.length > 0) && (
         <section>
@@ -584,6 +588,8 @@ export function AdminPanel() {
           One row per team with the current rate and an editable input. */}
       <StaffSurchargeAdmin />
 
+      <GroupHeader title="Scenario tools" subtitle="Plot twists · talent heist · staff surcharge · deferred events" />
+
       {/* Plot twists — fire deferred events NOW (PRD §10.7) */}
       {(player.deferredEvents ?? []).filter((e) => !e.resolved).length > 0 && (
         <section>
@@ -745,6 +751,8 @@ export function AdminPanel() {
           {s.secondHandListings.length} active listing{s.secondHandListings.length === 1 ? "" : "s"}
         </div>
       </section>
+
+      <GroupHeader title="Reset / demo" subtitle="Destructive — wipes simulation state" tone="danger" />
 
       <section className="pt-3 border-t border-line grid grid-cols-2 gap-2">
         <Button
@@ -1105,6 +1113,44 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex items-baseline justify-between">
       <span className="text-ink-muted">{k}</span>
       <span className="tabular font-mono text-ink">{v}</span>
+    </div>
+  );
+}
+
+/** Group header for the AdminPanel. Visual divider that breaks the
+ *  long flat list of facilitator controls into named sections —
+ *  Round control, Team adjustments, Scenario tools, Reset/demo etc.
+ *  Recommendation #19: organise the facilitator console so
+ *  destructive actions sit visually apart from routine adjustments. */
+function GroupHeader({
+  title, subtitle, tone,
+}: {
+  title: string;
+  subtitle?: string;
+  tone?: "danger";
+}) {
+  return (
+    <div
+      className={cn(
+        "border-t pt-4 -mx-1 px-1 first:border-0 first:pt-0",
+        tone === "danger" ? "border-negative/40" : "border-line",
+      )}
+    >
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span
+          className={cn(
+            "text-[0.6875rem] uppercase tracking-[0.18em] font-bold",
+            tone === "danger" ? "text-negative" : "text-accent",
+          )}
+        >
+          {title}
+        </span>
+        {subtitle && (
+          <span className="text-[0.625rem] text-ink-muted leading-snug">
+            {subtitle}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -5,11 +5,12 @@ import { NEWS_BY_QUARTER, dynamicHostNews } from "@/data/world-news";
 import { CITIES_BY_CODE } from "@/data/cities";
 import { cityEventImpact } from "@/lib/city-events";
 import { useGame, selectPlayer } from "@/store/game";
+import { useUi } from "@/store/ui";
 import { getArticle } from "@/lib/news-articles";
 import { fmtQuarter } from "@/lib/format";
 import type { NewsItem } from "@/types/game";
 import { cn } from "@/lib/cn";
-import { Newspaper, ChevronDown, ChevronUp, LayoutList, BookOpen } from "lucide-react";
+import { Newspaper, ChevronDown, ChevronUp, LayoutList, BookOpen, Plane, Gavel, ArrowRight } from "lucide-react";
 
 /** Same fictional outlet pool used by the sidebar ticker — kept in sync via id-hash. */
 const OUTLETS: string[] = [
@@ -331,6 +332,13 @@ function NewspaperView({
                 Demand effect persists for {Math.max(...active.modifiers.map((m) => m.rounds))} quarters from when this news fired.
               </p>
             )}
+
+            {/* Act on this — recommendation #15. The player sees the
+                exposure; the next click is to a panel where they can
+                actually do something about it. Two universal CTAs:
+                Routes (cut frequency / re-price / suspend) and Slot
+                Market (claim or release slots at affected cities). */}
+            <ActOnThisRow />
           </div>
         )}
       </article>
@@ -511,6 +519,8 @@ function NewsCard({
                   Demand effect persists for {Math.max(...item.modifiers.map((m) => m.rounds))} rounds from when this news fired.
                 </p>
               )}
+              {/* Act on this — same CTA row as the newspaper view. */}
+              <ActOnThisRow />
             </div>
           ) : (
             <div className="pt-2 border-t border-line/60 text-[0.75rem] text-ink-muted italic">
@@ -520,5 +530,36 @@ function NewsCard({
         </div>
       )}
     </article>
+  );
+}
+
+/** Act-on-this CTA row — placed under the affected-cities sidebar in
+ *  the article view. Gives the player a one-click jump to the panels
+ *  where they can actually act on the story (cut routes, re-bid
+ *  slots). Recommendation #15: surface what to do, not just what
+ *  happened. */
+function ActOnThisRow() {
+  const openPanel = useUi((u) => u.openPanel);
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={() => openPanel("routes")}
+        className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 py-1.5 text-[0.75rem] text-ink hover:bg-surface-hover hover:border-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+      >
+        <Plane size={12} aria-hidden="true" />
+        <span>Review routes</span>
+        <ArrowRight size={11} aria-hidden="true" className="text-ink-muted" />
+      </button>
+      <button
+        type="button"
+        onClick={() => openPanel("slots")}
+        className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-2.5 py-1.5 text-[0.75rem] text-ink hover:bg-surface-hover hover:border-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+      >
+        <Gavel size={12} aria-hidden="true" />
+        <span>Open Slot Market</span>
+        <ArrowRight size={11} aria-hidden="true" className="text-ink-muted" />
+      </button>
+    </div>
   );
 }

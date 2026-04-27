@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { useGame, selectPlayer } from "@/store/game";
+import { useUi } from "@/store/ui";
 import { fmtMoney, fmtQuarter } from "@/lib/format";
 import { CITIES_BY_CODE } from "@/data/cities";
 import {
@@ -113,6 +114,13 @@ function InvestmentsPanelInner({ playerId }: { playerId: string }) {
 
   return (
     <div className="space-y-5">
+      {/* Consolidated Portfolio overview (recommendation #B7).
+          Surfaces owned airports + pending bids + slot leases + hub
+          investments at the TOP of the panel so the player has one
+          consolidated view of every asset they hold beyond aircraft
+          + routes. Subsidiaries (the existing flow) live below. */}
+      <PortfolioOverview />
+
       {/* Portfolio summary */}
       <section>
         <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
@@ -617,6 +625,211 @@ function SummaryCard({
         {value}
       </div>
       {sub && <div className="text-[0.625rem] text-ink-muted mt-1.5">{sub}</div>}
+    </div>
+  );
+}
+
+/** Portfolio overview — single consolidated view of every non-aircraft
+ *  asset the player holds. Recommendation #B7: airports + pending bids
+ *  + slot leases + hub investments + subsidiaries were scattered across
+ *  the SlotMarketPanel, AirportDetailModal, HubInvestmentsModal, and
+ *  this InvestmentsPanel. Now they live in one rolling summary the
+ *  player can scan at a glance. Each asset row links back to the
+ *  panel where it can be managed.
+ */
+function PortfolioOverview() {
+  const player = useGame(selectPlayer);
+  const airportSlots = useGame((s) => s.airportSlots);
+  const airportBids = useGame((s) => s.airportBids ?? []);
+  const setAirportDetailCode = useUi((u) => u.setAirportDetailCode);
+  const openPanel = useUi((u) => u.openPanel);
+
+  if (!player) return null;
+
+  // Owned airports (player.id matches airportSlots[code].ownerTeamId).
+  const ownedAirports = Object.entries(airportSlots ?? {})
+    .filter(([, st]) => st.ownerTeamId === player.id)
+    .map(([code, st]) => ({ code, state: st }));
+
+  // Pending airport bids submitted by this team, awaiting facilitator
+  // approval. Cash is escrowed; surface so the player knows what's tied up.
+  const myPendingBids = airportBids.filter(
+    (b) => b.bidderTeamId === player.id && b.status === "pending",
+  );
+
+  // Slot leases — every airport where the player holds at least one slot.
+  const slotLeases = Object.entries(player.airportLeases ?? {})
+    .filter(([, l]) => (l?.slots ?? 0) > 0)
+    .map(([code, l]) => ({ code, lease: l }));
+
+  // Hub investments — fuel reserve tanks, maintenance depots, premium
+  // lounges, ops expansion. Pull from team.hubInvestments.
+  const hubInv = player.hubInvestments;
+  const hubInvCount =
+    (hubInv?.fuelReserveTankHubs?.length ?? 0)
+    + (hubInv?.maintenanceDepotHubs?.length ?? 0)
+    + (hubInv?.premiumLoungeHubs?.length ?? 0)
+    + (hubInv?.opsExpansionSlots ?? 0 > 0 ? 1 : 0);
+
+  const subCount = (player.subsidiaries ?? []).length;
+
+  // Aggregate counts for the summary header — one number per asset
+  // class, plus a portfolio mark-to-market total where computable.
+  const totalSlotsHeld = slotLeases.reduce((s, x) => s + x.lease.slots, 0);
+  const escrowedBidsUsd = myPendingBids.reduce((s, b) => s + b.bidPriceUsd, 0);
+
+  // If the player has nothing in this panel yet (sub-Q5 fresh game)
+  // skip rendering rather than showing five "0" cards.
+  if (
+    ownedAirports.length === 0 &&
+    myPendingBids.length === 0 &&
+    slotLeases.length === 0 &&
+    hubInvCount === 0 &&
+    subCount === 0
+  ) {
+    return null;
+  }
+
+  return (
+    <section>
+      <div className="text-[0.6875rem] uppercase tracking-wider text-ink-muted mb-2">
+        Portfolio overview · all assets
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <PortfolioCount
+          label="Airports"
+          value={ownedAirports.length}
+          sub={ownedAirports.length === 0 ? "None owned" : "Full ownership"}
+          onClick={ownedAirports.length > 0 ? () => setAirportDetailCode(ownedAirports[0].code) : undefined}
+          ctaLabel={ownedAirports.length > 0 ? "Open first" : undefined}
+        />
+        <PortfolioCount
+          label="Pending bids"
+          value={myPendingBids.length}
+          sub={myPendingBids.length === 0 ? "No bids in review" : `${fmtMoney(escrowedBidsUsd)} in escrow`}
+          onClick={myPendingBids.length > 0 ? () => setAirportDetailCode(myPendingBids[0].airportCode) : undefined}
+          ctaLabel={myPendingBids.length > 0 ? "Open first" : undefined}
+          tone={myPendingBids.length > 0 ? "warn" : "default"}
+        />
+        <PortfolioCount
+          label="Slot leases"
+          value={slotLeases.length}
+          sub={slotLeases.length === 0 ? "None held" : `${totalSlotsHeld} slots across airports`}
+          onClick={() => openPanel("slots")}
+          ctaLabel="Slot Market"
+        />
+        <PortfolioCount
+          label="Hub upgrades"
+          value={hubInvCount}
+          sub={hubInvCount === 0 ? "None purchased" : "Tanks · depots · lounges"}
+        />
+        <PortfolioCount
+          label="Subsidiaries"
+          value={subCount}
+          sub={subCount === 0 ? "None built" : "Hotel · limo · catering · …"}
+        />
+      </div>
+
+      {/* Owned airports detail list — actionable rows (open detail) */}
+      {ownedAirports.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1.5">
+            Owned airports
+          </div>
+          <div className="space-y-1.5">
+            {ownedAirports.map(({ code, state }) => {
+              const city = CITIES_BY_CODE[code];
+              return (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => setAirportDetailCode(code)}
+                  className="w-full flex items-center justify-between rounded-md border border-line bg-surface px-3 py-2 hover:bg-surface-hover text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                >
+                  <span className="flex items-baseline gap-2 min-w-0">
+                    <span className="font-mono tabular text-ink text-[0.8125rem]">{code}</span>
+                    <span className="text-[0.8125rem] text-ink-2 truncate">{city?.name ?? code}</span>
+                  </span>
+                  <span className="text-[0.6875rem] text-ink-muted tabular font-mono shrink-0">
+                    {state.totalCapacity ?? "—"} cap · {fmtMoney(state.ownerSlotRatePerWeekUsd ?? 0)}/wk slot
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Pending bids detail list */}
+      {myPendingBids.length > 0 && (
+        <div className="mt-3">
+          <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted mb-1.5">
+            Pending airport bids · cash held in escrow
+          </div>
+          <div className="space-y-1.5">
+            {myPendingBids.map((b) => {
+              const city = CITIES_BY_CODE[b.airportCode];
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => setAirportDetailCode(b.airportCode)}
+                  className="w-full flex items-center justify-between rounded-md border border-warning/40 bg-[var(--warning-soft)]/30 px-3 py-2 hover:bg-[var(--warning-soft)]/50 text-left transition-colors"
+                >
+                  <span className="flex items-baseline gap-2 min-w-0">
+                    <span className="font-mono tabular text-ink text-[0.8125rem]">{b.airportCode}</span>
+                    <span className="text-[0.8125rem] text-ink-2 truncate">{city?.name ?? b.airportCode}</span>
+                    <span className="text-[0.625rem] uppercase tracking-wider text-warning shrink-0">
+                      submitted {fmtQuarter(b.submittedQuarter)}
+                    </span>
+                  </span>
+                  <span className="text-[0.75rem] tabular font-mono text-ink shrink-0">
+                    {fmtMoney(b.bidPriceUsd)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Compact count card for the portfolio overview row. */
+function PortfolioCount({
+  label, value, sub, tone, onClick, ctaLabel,
+}: {
+  label: string;
+  value: number;
+  sub?: string;
+  tone?: "warn" | "default";
+  onClick?: () => void;
+  ctaLabel?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-md border bg-surface p-2.5",
+        tone === "warn" ? "border-warning/40 bg-[var(--warning-soft)]/30" : "border-line",
+      )}
+    >
+      <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">{label}</div>
+      <div className="font-display text-[1.5rem] tabular text-ink leading-none mt-0.5">
+        {value}
+      </div>
+      {sub && (
+        <div className="text-[0.625rem] text-ink-muted mt-1 leading-snug">{sub}</div>
+      )}
+      {onClick && ctaLabel && (
+        <button
+          type="button"
+          onClick={onClick}
+          className="mt-1.5 text-[0.6875rem] text-accent hover:underline focus-visible:outline-none focus-visible:underline"
+        >
+          {ctaLabel} →
+        </button>
+      )}
     </div>
   );
 }
