@@ -779,25 +779,12 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
         {/* Step 4 — Slot shortfall: inline bid form (only when needed) */}
         {hasAircraft && hasShortfall && (
           <Section step={4} title="Slot bidding (required)">
-            <div className="rounded-md border border-warning/50 bg-[var(--warning-soft)] px-3 py-2.5 mb-3 text-[0.8125rem] text-ink-2">
-              <div className="font-semibold text-warning mb-1 text-[0.75rem] uppercase tracking-wider">
-                You need slots — set your bid below
-              </div>
-              You don&apos;t hold enough weekly slots at{" "}
+            <div className="rounded-md border border-warning/50 bg-[var(--warning-soft)] px-3 py-2 mb-3 text-[0.8125rem] text-ink-2">
+              You don&apos;t have enough slots at{" "}
               {shortfall.atOrigin > 0 && <strong className="font-mono">{origin}</strong>}
               {shortfall.atOrigin > 0 && shortfall.atDest > 0 && " / "}
               {shortfall.atDest > 0 && <strong className="font-mono">{dest}</strong>}
-              {" "}to fly this schedule. <strong>Pick your bid price per slot</strong> —
-              you&apos;ll only pay if you win, but rivals are bidding too.
-              Higher bids beat lower ones at the quarter-close auction.
-              <br />
-              <span className="text-[0.6875rem] text-ink-muted mt-1 inline-block">
-                Route will stay <strong>Pending</strong> while the auction runs;
-                bids re-submit automatically each quarter at the price you set
-                here until you either win the slots or cancel the pending
-                route from the Routes panel. Aircraft remain assigned to the
-                pending route while it waits.
-              </span>
+              . Set a bid below — you only pay if you win the auction at quarter close.
             </div>
 
             {shortfall.atOrigin > 0 && origin && (
@@ -840,12 +827,6 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                 })}
               />
             )}
-
-            <div className="text-[0.6875rem] text-ink-muted mt-2 leading-relaxed">
-              <strong className="text-ink">Model B:</strong> winning bids set
-              your weekly per-slot rent for as long as you hold the slot.
-              Quarterly cost = slots × weekly price × 13 weeks.
-            </div>
           </Section>
         )}
 
@@ -923,11 +904,15 @@ export function BidRow({
   const minPrice = basePrice;
   const maxPrice = Math.round(basePrice * 3);
   const city = CITIES_BY_CODE[airportCode];
-  const isSet = price !== undefined;
-  // Use the BASE price as the slider's resting position before the user
-  // commits — but the price is NOT applied to bidPrices state until
-  // they actually move/click the slider.
-  const displayPrice = price ?? basePrice;
+  // Auto-prime the bid price to the minimum on first render so the
+  // player doesn't have to nudge the slider just to "activate" the
+  // bid. Most players want the cheapest viable bid; if they want to
+  // outbid rivals they can drag up.
+  useEffect(() => {
+    if (price === undefined) onChange(minPrice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const displayPrice = price ?? minPrice;
   const weeklyCost = displayPrice * slots;
   const quarterlyCost = weeklyCost * 13;
   // Player can over-bid for headroom but never below the route's strict need.
@@ -942,38 +927,17 @@ export function BidRow({
   const isOverdraft = !!player && player.cashUsd < 0;
 
   return (
-    <div
-      className={cn(
-        "rounded-md border p-3 mb-2 transition-colors",
-        isSet
-          ? "border-primary bg-[rgba(20,53,94,0.04)]"
-          : "border-warning/60 bg-[var(--warning-soft)]/40",
-      )}
-    >
-      <div className="flex items-baseline justify-between mb-2">
-        <div>
+    <div className="rounded-md border border-primary bg-[rgba(20,53,94,0.04)] p-3 mb-2">
+      {/* Header — airport + slot count compact stepper */}
+      <div className="flex items-center justify-between gap-3 mb-2.5">
+        <div className="min-w-0">
           <span className="font-mono text-ink font-semibold">{airportCode}</span>
           <span className="text-ink-muted text-[0.75rem] ml-1.5">
-            {city?.name} · Tier {tier}
+            {city?.name}
           </span>
         </div>
-        <Badge tone={isSet ? "positive" : "warning"}>
-          {isSet
-            ? `Bid set · ${slots} slot${slots === 1 ? "" : "s"}`
-            : `${slotsNeeded} slot${slotsNeeded === 1 ? "" : "s"} needed`}
-        </Badge>
-      </div>
-
-      {/* Slot count selector — default is what this route needs; player
-          can request more so they have headroom for future routes. */}
-      <div className="flex items-center justify-between gap-2 mb-2 rounded-md bg-surface-2/50 px-2 py-1.5">
-        <div className="text-[0.75rem] text-ink-2">
-          Slots to bid for
-          <span className="text-ink-muted ml-1.5 text-[0.6875rem]">
-            (need {slotsNeeded} for this route)
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1 shrink-0">
+          <span className="text-[0.6875rem] text-ink-muted mr-1">Slots</span>
           <button
             onClick={() => onSlotsChange(Math.max(slotsNeeded, slots - 1))}
             disabled={slots <= slotsNeeded}
@@ -996,20 +960,13 @@ export function BidRow({
         </div>
       </div>
 
-      {!isSet && (
-        <div className="text-[0.6875rem] text-warning leading-relaxed mb-2">
-          ↓ Move the slider to set your bid. Higher bids beat rivals — but
-          you commit to that weekly rent for as long as you hold these slots.
-        </div>
-      )}
-
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[0.75rem] text-ink-2 font-medium">Bid per slot / week</span>
-        <span className={cn(
-          "tabular font-mono text-[0.875rem] font-semibold",
-          isSet ? "text-ink" : "text-ink-muted",
-        )}>
-          {isSet ? `$${displayPrice.toLocaleString()}` : "— not set —"}
+      {/* Bid slider — value sits inline with the label, no separate
+          row. Defaulted to min on mount so the player can submit
+          without dragging. */}
+      <div className="flex items-baseline justify-between mb-1">
+        <span className="text-[0.75rem] text-ink-2">Bid / slot / week</span>
+        <span className="tabular font-mono text-[0.875rem] font-semibold text-ink">
+          ${displayPrice.toLocaleString()}
         </span>
       </div>
       <input
@@ -1021,64 +978,42 @@ export function BidRow({
         onChange={(e) => onChange(parseInt(e.target.value, 10))}
         className="w-full accent-primary"
       />
-      <div className="flex justify-between text-[0.6875rem] text-ink-muted tabular mb-2">
-        <span>min ${minPrice.toLocaleString()}</span>
+      <div className="flex justify-between text-[0.625rem] text-ink-muted tabular">
+        <span>${minPrice.toLocaleString()}</span>
         <span>${maxPrice.toLocaleString()}</span>
       </div>
 
-      {isSet && (
-        <div className="grid grid-cols-2 gap-2 text-[0.75rem] tabular border-t border-line pt-2">
-          <div>
-            <div className="text-ink-muted text-[0.625rem] uppercase tracking-wider">Weekly cost</div>
-            <div className="font-mono text-ink">${weeklyCost.toLocaleString()}</div>
-          </div>
-          <div>
-            <div className="text-ink-muted text-[0.625rem] uppercase tracking-wider">Quarterly (× 13)</div>
-            <div className="font-mono text-ink font-semibold">${quarterlyCost.toLocaleString()}</div>
-          </div>
-        </div>
-      )}
+      {/* Cost summary — single line, weekly + quarterly. */}
+      <div className="flex items-baseline justify-between gap-2 mt-2 pt-2 border-t border-line text-[0.75rem]">
+        <span className="text-ink-muted">If won:</span>
+        <span className="tabular font-mono text-ink">
+          ${weeklyCost.toLocaleString()}/wk
+          <span className="text-ink-muted"> · </span>
+          <span className="font-semibold">${quarterlyCost.toLocaleString()}/Q</span>
+        </span>
+      </div>
 
-      {/* ── Cash escrow shortfall warning. Slot auctions hold the
-          maximum bid in escrow until close, so borrowing headroom
-          doesn't substitute for cash. Surface this BEFORE the player
-          hits Submit and gets a confusing "Need $X cash" error.
-          One-click jump to Financials lets them refinance overdraft
-          or borrow before bidding. */}
-      {isSet && cashShortfall > 0 && (
-        <div className="mt-2 rounded-md border border-negative bg-[var(--negative-soft)] px-2.5 py-2 text-[0.75rem] text-ink-2 leading-snug">
-          <div className="flex items-baseline justify-between gap-2 mb-1">
+      {/* Cash escrow shortfall — pre-submit. Auctions hold the bid in
+          escrow until close, so borrowing headroom doesn't substitute
+          for cash. */}
+      {cashShortfall > 0 && (
+        <div className="mt-2 rounded-md border border-negative bg-[var(--negative-soft)] px-2.5 py-1.5 text-[0.75rem]">
+          <div className="flex items-baseline justify-between gap-2">
             <span className="font-semibold text-negative">
-              {isOverdraft ? "You're in overdraft" : "Not enough cash"}
+              {isOverdraft ? "Overdraft" : "Cash short"} · ${(cashShortfall / 1_000_000).toFixed(2)}M
             </span>
-            <span className="tabular font-mono text-[0.6875rem] text-negative shrink-0">
-              short ${(cashShortfall / 1_000_000).toFixed(2)}M
-            </span>
+            <button
+              type="button"
+              onClick={() => {
+                closePanel();
+                openPanel("reports");
+              }}
+              className="text-accent hover:underline text-[0.6875rem]"
+            >
+              Fix in Financials →
+            </button>
           </div>
-          <div className="mb-1.5">
-            Slot auctions hold the bid in escrow until close — you
-            need real cash, not borrowing headroom.
-            {isOverdraft && " Refinance the overdraft into a term loan to free up cash."}
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              closePanel();
-              openPanel("reports");
-            }}
-            className="text-accent hover:underline text-[0.6875rem]"
-          >
-            Open Financials → Borrowing →
-          </button>
         </div>
-      )}
-      {isSet && (
-        <button
-          onClick={() => onChange(NaN)}
-          className="mt-2 text-[0.6875rem] text-ink-muted hover:text-ink underline"
-        >
-          clear bid
-        </button>
       )}
     </div>
   );

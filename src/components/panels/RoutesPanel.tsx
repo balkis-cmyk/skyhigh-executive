@@ -1482,12 +1482,10 @@ function RouteDetailModal({
             quarter close. */}
         {hasShortfall && (
           <div>
-            <Label>5 · Slots needed — bid below to lift schedule</Label>
-            <div className="rounded-md border border-warning/40 bg-[var(--warning-soft)]/40 px-3 py-2 mb-2 text-[0.75rem] text-ink-2 leading-relaxed">
-              Lifting frequency to <strong className="text-ink">{weeklyFreq}/wk</strong> needs more
-              slots than you currently hold. Set your bid for each airport
-              below — bids resolve at quarter close, and the schedule will
-              auto-update if you win.
+            <Label>5 · Slots needed — bid to lift schedule</Label>
+            <div className="rounded-md border border-warning/40 bg-[var(--warning-soft)]/40 px-3 py-2 mb-2 text-[0.75rem] text-ink-2">
+              Lifting to <strong className="text-ink">{weeklyFreq}/wk</strong> needs more
+              slots. Auctions resolve at quarter close — you only pay if you win.
             </div>
             {shortfallOrigin > 0 && (
               <BidRow
