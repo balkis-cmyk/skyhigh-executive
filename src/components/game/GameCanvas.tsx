@@ -29,6 +29,7 @@ import { AdminPanel } from "@/components/panels/AdminPanel";
 import { RouteSetupModal } from "@/components/game/RouteSetupModal";
 import { AirportDetailModal } from "@/components/game/AirportDetailModal";
 import { RouteLaunchBar } from "@/components/game/RouteLaunchBar";
+import { MapCommandHud } from "@/components/game/MapCommandHud";
 import { QuarterTimerDriver } from "@/components/game/QuarterTimer";
 import { Toaster } from "@/components/game/Toaster";
 import { useShallow } from "zustand/react/shallow";
@@ -261,6 +262,12 @@ function CanvasInner() {
           {meta.render()}
         </Panel>
       )}
+
+      {/* Bottom-right command HUD — scaffolds the route-launch flow
+          (1. origin → 2. dest → 3. launch) and exposes map shortcuts.
+          Collapses to a tiny pill when a side panel is open so it
+          doesn't compete for attention. */}
+      <MapCommandHud origin={origin} dest={dest} compact={!!currentPanel} />
 
       {/* Floating route launch bar — always visible during selection,
           never blocks the map. Clicking "Launch" opens the detail modal. */}
