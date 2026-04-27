@@ -223,6 +223,14 @@ export interface LoanInstrument {
   originQuarter: number;
   remainingPrincipal: number;
   govBacked: boolean;
+  /** Display-only counterparty name. Persisted on the loan so the
+   *  same lender shows up on every panel (Financials list, Endgame
+   *  debrief, etc.) instead of being randomly re-rolled per render.
+   *  Older saves may omit; UI falls back to "Bank loan #X". */
+  lenderName?: string;
+  /** Loan kind — surfaces "overdraft consolidation" loans in the UI
+   *  so the player remembers why they took it. */
+  source?: "borrowing" | "overdraft-refi";
 }
 
 // ─── Scenarios (board decisions) ─────────────────────────
@@ -247,6 +255,25 @@ export interface DeferredEvent {
   resolved?: boolean;
   resolvedOutcome?: "triggered" | "missed";
   resolvedAtQuarter?: number;
+}
+
+export type TimedScenarioModifierKind =
+  | "digital-full"
+  | "digital-phased"
+  | "digital-reskill"
+  | "aging-operations"
+  | "blue-ocean-first"
+  | "blue-ocean-deepen"
+  | "blue-ocean-split"
+  | "political-favour-full"
+  | "political-favour-partial"
+  | "political-favour-subsidy";
+
+export interface TimedScenarioModifier {
+  id: string;
+  kind: TimedScenarioModifierKind;
+  activeFromQuarter: number;
+  activeUntilQuarter: number;
 }
 
 // ─── World News ──────────────────────────────────────────
@@ -364,6 +391,7 @@ export interface Team {
   decisions: ScenarioDecision[];
   flags: Set<string>;            // gov_board_card, trusted_operator, ...
   deferredEvents: DeferredEvent[];
+  timedModifiers?: TimedScenarioModifier[];
 
   /** Audit log of every aircraft that has exited the fleet — sold
    *  on the secondary market, retired (auto-scrapped on lifespan

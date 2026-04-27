@@ -13,7 +13,7 @@
 
 import { AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CITIES_BY_CODE } from "@/data/cities";
-import { SCENARIOS, type OptionEffect, type Scenario } from "@/data/scenarios";
+import { SCENARIOS, type OptionEffect, type ScaledCashEffect, type Scenario } from "@/data/scenarios";
 import { SUBSIDIARY_BY_TYPE as SUBSIDIARY_CATALOG_BY_TYPE } from "@/data/subsidiaries";
 import { NEWS_BY_QUARTER } from "@/data/world-news";
 import { cityEventImpact, newsItemImpactForCity } from "./city-events";

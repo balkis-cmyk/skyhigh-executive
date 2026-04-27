@@ -10,6 +10,7 @@ import {
   maxBorrowingUsd,
   runQuarterClose,
 } from "@/lib/engine";
+import { loanDisplayName } from "@/lib/bank-names";
 
 /**
  * Financials report — three blocks:
@@ -125,24 +126,91 @@ export function FinancialsPanel() {
             Borrow →
           </Button>
         </div>
+
+        {/* ── Overdraft refi CTA — only renders when cash is negative.
+            The RCF auto-draws to cover the gap at 2× the base rate
+            (very expensive); this lets the player convert the
+            overdraft into a fresh term loan at the standard
+            covenant-adjusted rate. */}
+        {player.cashUsd < 0 && (
+          <div className="rounded-md border border-negative bg-[var(--negative-soft)] p-3 mb-3 space-y-2">
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="font-semibold text-negative text-[0.8125rem]">
+                Overdraft active · {fmtMoney(-player.cashUsd)}
+              </div>
+              <div className="text-[0.6875rem] tabular font-mono text-negative">
+                paying ~{(s.baseInterestRatePct * 2).toFixed(1)}% RCF rate
+              </div>
+            </div>
+            <p className="text-[0.75rem] text-ink-2 leading-snug">
+              Your revolving credit facility is bridging the negative
+              balance at a penalty rate. Refinancing converts the
+              overdraft into a regular term loan at your effective
+              borrowing rate ({rate.toFixed(1)}%) — same payback profile
+              as a normal loan, much lower interest while it sits.
+            </p>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                const r = s.refinanceOverdraft();
+                if (!r.ok) setError(r.error ?? "Refi failed");
+              }}
+              title={`Convert ${fmtMoney(Math.ceil(-player.cashUsd / 1_000_000) * 1_000_000)} into a term loan at ${rate.toFixed(1)}%`}
+            >
+              Refinance overdraft →
+            </Button>
+          </div>
+        )}
+
         <div className="space-y-1.5 text-[0.8125rem]">
           <Row k="Base rate" v={`${s.baseInterestRatePct.toFixed(1)}%`} />
           <Row k="Your effective rate" v={`${rate.toFixed(2)}%`} bold />
           <Row k="Max borrowing" v={fmtMoney(maxBorrow)} />
           {player.loans.length > 0 && (
             <div className="mt-3 pt-2 border-t border-line space-y-1.5">
+              <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">
+                Active facilities · {player.loans.length}
+              </div>
               {player.loans.map((loan) => {
                 const canRepay = player.cashUsd >= loan.remainingPrincipal;
-                const newRateAvailable = s.baseInterestRatePct;
+                const newRateAvailable = effectiveBorrowingRate(player, s.baseInterestRatePct);
                 const refiSavings = loan.ratePct - newRateAvailable;
                 const canRefi = refiSavings >= 0.25 && player.cashUsd >= loan.remainingPrincipal * 0.01;
+                // Quarterly cost = remaining × annual rate / 4. This is
+                // the actual interest the engine charges via
+                // quarterlyInterestUsd, surfaced per-loan so the player
+                // can see which facility is most expensive.
+                const quarterlyCost = loan.remainingPrincipal * (loan.ratePct / 100) / 4;
                 return (
                   <div key={loan.id} className="rounded-md border border-line bg-surface px-2.5 py-2">
-                    <div className="flex items-baseline justify-between text-[0.75rem] mb-1">
-                      <span className="text-ink-muted">Loan · Q{loan.originQuarter}</span>
-                      <span className="tabular font-mono text-ink">
-                        {fmtMoney(loan.remainingPrincipal)} @ {loan.ratePct.toFixed(1)}%
-                      </span>
+                    <div className="flex items-baseline justify-between gap-2 mb-1">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-ink text-[0.8125rem] truncate">
+                          {loanDisplayName(loan)}
+                        </div>
+                        <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted flex items-center gap-1.5">
+                          <span>Originated {fmtQuarter(loan.originQuarter)}</span>
+                          {loan.source === "overdraft-refi" && (
+                            <span className="text-warning bg-[var(--warning-soft)] px-1 py-0.5 rounded text-[0.5625rem] font-semibold">
+                              Overdraft refi
+                            </span>
+                          )}
+                          {loan.govBacked && (
+                            <span className="text-positive bg-[var(--positive-soft)] px-1 py-0.5 rounded text-[0.5625rem] font-semibold">
+                              Gov-backed
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="tabular font-mono text-ink font-semibold text-[0.875rem]">
+                          {fmtMoney(loan.remainingPrincipal)}
+                        </div>
+                        <div className="text-[0.625rem] tabular font-mono text-ink-muted">
+                          @ {loan.ratePct.toFixed(2)}% · {fmtMoney(quarterlyCost)}/Q
+                        </div>
+                      </div>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Button
@@ -155,7 +223,7 @@ export function FinancialsPanel() {
                           if (!r.ok) setError(r.error ?? "Repay failed");
                         }}
                       >
-                        Repay {fmtMoney(loan.remainingPrincipal)}
+                        Repay
                       </Button>
                       <Button
                         size="sm"
@@ -164,7 +232,7 @@ export function FinancialsPanel() {
                         title={canRefi
                           ? `Refi to ${newRateAvailable.toFixed(1)}% (1% fee)`
                           : refiSavings < 0.25
-                            ? "Base rate not low enough yet"
+                            ? "Current rate too close to your effective rate to refi"
                             : "Need cash for 1% fee"}
                         onClick={() => {
                           const r = s.refinanceLoan(loan.id);

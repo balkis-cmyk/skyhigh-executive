@@ -1,5 +1,19 @@
 import type { ScenarioId } from "@/types/game";
 
+export interface ScaledCashEffect {
+    basis:
+      | "lastRevenueQ"
+      | "annualRevenue"
+      | "staffCostQ"
+      | "fuelCostQ"
+      | "debt"
+      | "fleetValue"
+      | "airlineValue";
+    multiplier: number;
+    min: number;
+    max: number;
+}
+
 /**
  * Effect applied immediately on submission. Deferred events + plot twists
  * are kept as metadata for the engine to schedule; this file is the content
@@ -7,10 +21,40 @@ import type { ScenarioId } from "@/types/game";
  */
 export interface OptionEffect {
   cash?: number;
+  /** Cash effect resolved at submission / trigger time against the
+   *  current airline size. Positive = inflow/savings, negative = spend
+   *  or disruption. `min` / `max` are signed bounds. */
+  scaledCash?: ScaledCashEffect;
   brandPts?: number;
   opsPts?: number;
   loyaltyDelta?: number;      // percentage points
   setFlags?: string[];
+  /** Time-bounded strategic effects applied during quarter close. */
+  timedModifier?: {
+    id: string;
+    kind:
+      | "digital-full"
+      | "digital-phased"
+      | "digital-reskill"
+      | "aging-operations"
+      | "blue-ocean-first"
+      | "blue-ocean-deepen"
+      | "blue-ocean-split"
+      | "political-favour-full"
+      | "political-favour-partial"
+      | "political-favour-subsidy";
+    durationQuarters: number;
+  };
+  /** Debt refinancing effect resolved by the store because it mutates
+   *  loan instruments, not just headline cash. */
+  refinanceDebt?: {
+    portion: number;          // 1 = all current debt, 0.5 = half exposure
+    breakFeePct: number;      // charged on refinanced principal
+    rateMultiplier: number;   // e.g. 0.85 = 15% lower rate
+    successProbability?: number;
+  };
+  /** One-off capacity benefit from a government / regulator deal. */
+  opsExpansionSlots?: number;
   /**
    * Set the team's recurring quarterly staff-cost surcharge to this
    * value (replaces, not adds). Used by S14 talent heist "Full
@@ -55,6 +99,7 @@ export interface OptionEffect {
     cities: string[];
     durationQuarters: number;
     finePerQuarterUsd: number;
+    fineScaled?: ScaledCashEffect;
     label: string;
   };
   // simplified — real engine should schedule these at targetQuarter:
@@ -254,18 +299,27 @@ export const SCENARIOS: Scenario[] = [
       "Your treasurer has secured refinancing terms at the current rate window. Break fee 3.5% of current debt, locks new rate for remaining term.",
     options: [
       { id: "A", label: "Full refinance",
-        description: "Pay break fee, lock new rate.",
-        effect: { setFlags: ["efficient_capital"] },
-        effectTags: ["Rate optimized"] },
+        description: "Refinance the full debt stack. Pay a break fee based on current debt, then lower rates for the remaining term.",
+        effect: {
+          setFlags: ["efficient_capital"],
+          refinanceDebt: { portion: 1, breakFeePct: 0.035, rateMultiplier: 0.85 },
+        },
+        effectTags: ["Fee ≈ 3.5% of debt", "Rate optimized"] },
       { id: "B", label: "Decline",
         description: "Keep current rates. Risk rate hike next quarter.",
         effect: {}, effectTags: ["Rate risk Q11"] },
       { id: "C", label: "Half refinance",
-        description: "Refinance 50% of debt.",
-        effect: {}, effectTags: ["50% rate optimized"] },
+        description: "Hedge the rate window by refinancing roughly half the exposure.",
+        effect: {
+          refinanceDebt: { portion: 0.5, breakFeePct: 0.035, rateMultiplier: 0.85 },
+        },
+        effectTags: ["Fee ≈ 1.75% of debt", "50% rate optimized"] },
       { id: "D", label: "Counter-offer from competing bank",
         description: "60% success probability on better rate.",
-        effect: {}, effectTags: ["60% lower rate"] },
+        effect: {
+          refinanceDebt: { portion: 1, breakFeePct: 0.02, rateMultiplier: 0.80, successProbability: 0.6 },
+        },
+        effectTags: ["60% success", "Fee ≈ 2% of debt if won"] },
     ],
     autoSubmitOptionId: "B",
   },
@@ -300,24 +354,72 @@ export const SCENARIOS: Scenario[] = [
     id: "S8", title: "The Political Favour", quarter: 21, severity: "MEDIUM", timeLimitMinutes: 30,
     teaser: "A minister is asking for a favour. So is a regulator.",
     context:
-      "State request: subsidize three regional routes at a loss. In exchange, priority hub slot allocation. Decline and you risk regulatory friction.",
+      "State request: open and maintain service to Casablanca plus two Tier 3 regional access cities for eight quarters. The routes will be thin, but the ministry is offering permit certainty and priority slot treatment. Decline and you risk regulatory friction.",
     options: [
-      { id: "A", label: "Accept all requests",
-        description: "Full cooperation. Hub slot secured.",
-        effect: { brandPts: 15, opsPts: -8, setFlags: ["government_ally"] },
-        effectTags: ["Annual cost -$13M", "Brand +15", "Hub slot secured"] },
-      { id: "B", label: "Negotiate down to three routes",
-        description: "Partial cooperation.",
-        effect: { brandPts: 8, opsPts: -4 },
-        effectTags: ["Annual cost -$11M", "Brand +8"] },
+      { id: "A", label: "Accept regional access package",
+        description: "Commit to Casablanca, Amman, and Nairobi service for two years. Receive priority slot treatment and full government goodwill.",
+        effect: {
+          brandPts: 15,
+          opsPts: -8,
+          loyaltyDelta: 4,
+          setFlags: ["government_ally"],
+          opsExpansionSlots: 18,
+          timedModifier: { id: "S8_POLITICAL_FULL", kind: "political-favour-full", durationQuarters: 8 },
+          routeObligation: {
+            id: "S8_POLITICAL_FAVOUR",
+            cities: ["CMN", "AMM", "NBO"],
+            durationQuarters: 8,
+            finePerQuarterUsd: 12 * M,
+            fineScaled: { basis: "lastRevenueQ", multiplier: 0.04, min: 8 * M, max: 60 * M },
+            label: "Political favour · Casablanca + Tier 3 access service",
+          },
+        },
+        effectTags: ["Cost scales with revenue", "Priority slots +18/wk"] },
+      { id: "B", label: "Negotiate priority route only",
+        description: "Commit to Casablanca service and a smaller regional-access package. Benefits are smaller, but the exposure is contained.",
+        effect: {
+          brandPts: 8,
+          opsPts: -4,
+          loyaltyDelta: 2,
+          opsExpansionSlots: 8,
+          timedModifier: { id: "S8_POLITICAL_PARTIAL", kind: "political-favour-partial", durationQuarters: 8 },
+          routeObligation: {
+            id: "S8_POLITICAL_FAVOUR_PARTIAL",
+            cities: ["CMN"],
+            durationQuarters: 8,
+            finePerQuarterUsd: 8 * M,
+            fineScaled: { basis: "lastRevenueQ", multiplier: 0.025, min: 5 * M, max: 35 * M },
+            label: "Political favour · Casablanca service",
+          },
+        },
+        effectTags: ["Cost scales with revenue", "Priority slots +8/wk"] },
       { id: "C", label: "Decline politely",
         description: "Keep independence. 40% chance of permit disruption.",
         effect: { brandPts: -10, opsPts: 5,
-          deferred: { quarter: 25, probability: 0.4, effect: { cash: -40 * M, opsPts: -10 } } },
+          deferred: {
+            quarter: 25,
+            probability: 0.4,
+            effect: {
+              scaledCash: { basis: "lastRevenueQ", multiplier: -0.08, min: -120 * M, max: -15 * M },
+              opsPts: -10,
+            },
+          } },
         effectTags: ["Brand -10", "40% disruption risk"] },
       { id: "D", label: "Seek public subsidy",
         description: "40% success on public subsidy offsetting cost.",
-        effect: {}, effectTags: ["40% subsidy success"] },
+        effect: {
+          brandPts: 6,
+          opsPts: 2,
+          deferred: {
+            quarter: 23,
+            probability: 0.4,
+            effect: {
+              scaledCash: { basis: "annualRevenue", multiplier: 0.015, min: 10 * M, max: 90 * M },
+              brandPts: 6,
+              setFlags: ["subsidy_model"],
+            },
+          },
+        }, effectTags: ["40% scaled subsidy success"] },
     ],
     autoSubmitOptionId: "C",
   },
@@ -328,21 +430,39 @@ export const SCENARIOS: Scenario[] = [
       "Diplomatic thaw has opened a previously restricted corridor. Early entrants capture market share; late entrants fight for scraps.",
     options: [
       { id: "A", label: "Enter new market",
-        description: "-$85M now, $150M/yr from Q19. First-mover endgame bonus.",
-        effect: { cash: -85 * M, opsPts: -5 },
-        effectTags: ["-$85M", "Revenue from Q19", "End-game bonus"] },
+        description: "Commit first. Investment scales with airline size; new-corridor revenue runs for the next two years.",
+        effect: {
+          scaledCash: { basis: "annualRevenue", multiplier: -0.035, min: -180 * M, max: -45 * M },
+          opsPts: -5,
+          setFlags: ["blue_ocean_first_mover"],
+          timedModifier: { id: "S9_BLUE_OCEAN_FIRST", kind: "blue-ocean-first", durationQuarters: 8 },
+        },
+        effectTags: ["Investment scales with revenue", "Revenue uplift 8Q"] },
       { id: "B", label: "Deepen existing routes",
-        description: "Safer investment. $80M/yr from Q17.",
-        effect: { cash: -40 * M, brandPts: 5 },
-        effectTags: ["-$40M", "Revenue from Q17"] },
+        description: "Defend and densify existing markets. Smaller investment, smaller recurring uplift.",
+        effect: {
+          scaledCash: { basis: "annualRevenue", multiplier: -0.018, min: -100 * M, max: -20 * M },
+          brandPts: 5,
+          timedModifier: { id: "S9_BLUE_OCEAN_DEEPEN", kind: "blue-ocean-deepen", durationQuarters: 8 },
+        },
+        effectTags: ["Investment scales with revenue", "Revenue uplift 8Q"] },
       { id: "C", label: "Split budget",
         description: "Half measure. Distraction flag.",
-        effect: { cash: -60 * M, opsPts: -5, setFlags: ["distracted_airline"] },
-        effectTags: ["-$60M", "Ops -5", "Distracted"] },
+        effect: {
+          scaledCash: { basis: "annualRevenue", multiplier: -0.025, min: -125 * M, max: -30 * M },
+          opsPts: -5,
+          setFlags: ["distracted_airline"],
+          timedModifier: { id: "S9_BLUE_OCEAN_SPLIT", kind: "blue-ocean-split", durationQuarters: 6 },
+        },
+        effectTags: ["Investment scales with revenue", "Diluted uplift 6Q"] },
       { id: "D", label: "Pay dividend",
         description: "Return cash to shareholders. No-vision flag.",
-        effect: { cash: 40 * M, brandPts: -5, setFlags: ["no_vision"] },
-        effectTags: ["+$40M dividend", "Brand -5"] },
+        effect: {
+          scaledCash: { basis: "airlineValue", multiplier: -0.004, min: -80 * M, max: -10 * M },
+          brandPts: -5,
+          setFlags: ["no_vision"],
+        },
+        effectTags: ["Dividend outflow scales with value"] },
     ],
     autoSubmitOptionId: "C",
   },
@@ -434,28 +554,47 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "S13", title: "The Digital Gamble", quarter: 29, severity: "HIGH", timeLimitMinutes: 30,
-    teaser: "AI displaces 800 jobs. Three rollout paths, each with different cost.",
+    teaser: "AI changes the operating model. Three rollout paths, each with different cost.",
     context:
-      "Your operations AI platform is ready. Full rollout means $95M/yr savings from Q17 — and a 30% per-quarter strike risk. Phase it, reskill, or cancel.",
+      "Your operations AI platform is ready. Savings and disruption should scale with your current payroll, fleet, and network footprint. Full rollout lowers staff cost fastest, but it creates material strike risk. Phase it, reskill, or let the operating model age.",
     options: [
       { id: "A", label: "Full rollout",
-        description: "Maximum savings. Strike risk every quarter.",
-        effect: { cash: -25 * M, brandPts: -10, loyaltyDelta: -5 },
-        effectTags: ["-$25M", "Savings $95M/yr Q17+", "30% strike/Q"],
+        description: "Fastest savings. Implementation cost scales with payroll and the strike-risk modifier is active for two years.",
+        effect: {
+          scaledCash: { basis: "staffCostQ", multiplier: -1.4, min: -150 * M, max: -20 * M },
+          brandPts: -10,
+          loyaltyDelta: -5,
+          setFlags: ["digital_full_rollout"],
+          timedModifier: { id: "S13_DIGITAL_FULL", kind: "digital-full", durationQuarters: 8 },
+        },
+        effectTags: ["Cost scales with payroll", "Payroll savings 8Q"],
         blockedByFlags: ["gov_board_card"],
       },
       { id: "B", label: "3-phase rollout",
         description: "Slower savings, lower strike risk.",
-        effect: { cash: -25 * M, brandPts: -3 },
-        effectTags: ["-$25M", "Ramping savings", "10% strike/Q"] },
+        effect: {
+          scaledCash: { basis: "staffCostQ", multiplier: -0.95, min: -95 * M, max: -12 * M },
+          brandPts: -3,
+          timedModifier: { id: "S13_DIGITAL_PHASED", kind: "digital-phased", durationQuarters: 8 },
+        },
+        effectTags: ["Cost scales with payroll", "Ramping savings 8Q"] },
       { id: "C", label: "Reskill workforce",
         description: "People-first flag. Longer ramp.",
-        effect: { cash: -65 * M, brandPts: 15, loyaltyDelta: 8, setFlags: ["people_first"] },
-        effectTags: ["-$65M", "Brand +15", "Loyalty +8%", "People First"] },
+        effect: {
+          scaledCash: { basis: "staffCostQ", multiplier: -2.1, min: -200 * M, max: -35 * M },
+          brandPts: 15,
+          loyaltyDelta: 8,
+          setFlags: ["people_first", "digital_reskill_path"],
+          timedModifier: { id: "S13_DIGITAL_RESKILL", kind: "digital-reskill", durationQuarters: 8 },
+        },
+        effectTags: ["Cost scales with payroll", "Safer savings 8Q"] },
       { id: "D", label: "Cancel rollout",
         description: "Competitor AI gap widens. Aging-ops flag.",
-        effect: { setFlags: ["aging_operations"] },
-        effectTags: ["Aging Ops", "Competitive gap"] },
+        effect: {
+          setFlags: ["aging_operations"],
+          timedModifier: { id: "S13_AGING_OPERATIONS", kind: "aging-operations", durationQuarters: 8 },
+        },
+        effectTags: ["Future cost scales with revenue"] },
     ],
     autoSubmitOptionId: "D",
     notes: "Option A blocked if gov_board_card flag is active.",
@@ -531,22 +670,35 @@ export const SCENARIOS: Scenario[] = [
       "Signal intelligence suggests the Moscow corridor may close. Commit to aggressive mitigation (lock-in 1-4 quarters), or trust it's a false alarm.",
     options: [
       { id: "A", label: "Aggressive — full shutdown",
-        description: "$28M/qtr saved. Lock-in chosen quarters.",
-        effect: { opsPts: -2 }, effectTags: ["$28M/Q saved", "Lock-in 1-4Q"] },
+        description: "Cut exposed flying hard. Near-term savings scale with your recent revenue; over-locking can miss the rebound.",
+        effect: {
+          scaledCash: { basis: "lastRevenueQ", multiplier: 0.06, min: 12 * M, max: 90 * M },
+          opsPts: -2,
+        }, effectTags: ["Savings scale with revenue", "Lock-in 1-4Q"] },
       { id: "B", label: "Moderate — partial",
-        description: "$14M/qtr saved. Lock-in chosen quarters.",
-        effect: {}, effectTags: ["$14M/Q saved", "Lock-in 1-4Q"] },
+        description: "Trim exposure without fully walking away from demand.",
+        effect: {
+          scaledCash: { basis: "lastRevenueQ", multiplier: 0.03, min: 6 * M, max: 50 * M },
+        }, effectTags: ["Savings scale with revenue", "Lock-in 1-4Q"] },
       { id: "C", label: "Invest in protocols",
-        description: "$1.5M to prepare. Full summer capture if false alarm.",
-        effect: { cash: -1.5 * M, brandPts: 5, loyaltyDelta: 2 },
-        effectTags: ["-$1.5M", "Brand +5", "Loyalty +2%"] },
+        description: "Prepare operations without cutting demand. Protocol cost scales with fleet size.",
+        effect: {
+          scaledCash: { basis: "fleetValue", multiplier: -0.004, min: -18 * M, max: -1.5 * M },
+          brandPts: 5,
+          loyaltyDelta: 2,
+        },
+        effectTags: ["Protocol cost scales with fleet"] },
       { id: "D", label: "Counter-position",
         description: "Grab competitor bookings. Aggressive upside.",
-        effect: { cash: -8 * M, brandPts: 15, loyaltyDelta: 8 },
-        effectTags: ["-$8M", "Captured $55M", "Brand +15"] },
+        effect: {
+          scaledCash: { basis: "lastRevenueQ", multiplier: -0.025, min: -45 * M, max: -5 * M },
+          brandPts: 15,
+          loyaltyDelta: 8,
+        },
+        effectTags: ["Marketing push scales with revenue"] },
     ],
     autoSubmitOptionId: "A",
-    notes: "False alarm reveal at Q6. Lock-in teams miss the summer surge.",
+    notes: "False alarm reveal at Q11. Lock-in teams miss the summer surge.",
   },
   {
     id: "S17", title: "The Green Ultimatum", quarter: 33, severity: "MEDIUM", timeLimitMinutes: 30,

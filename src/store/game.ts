@@ -10,6 +10,8 @@ import {
   computeAirlineValue,
   computeBrandValue,
   distanceBetween,
+  effectiveBorrowingRate,
+  maxBorrowingUsd,
   maxRouteDailyFrequency,
   runQuarterClose,
   serializeEffect,
@@ -69,6 +71,7 @@ import {
   leaseTermsFor,
   wouldExceedLeaseCap,
 } from "@/lib/lease";
+import { pickLenderName } from "@/lib/bank-names";
 import type {
   AirportBid,
   AirportLease,
@@ -337,6 +340,10 @@ export interface GameStore extends GameState {
   borrowCapital(amount: number): { ok: boolean; error?: string };
   repayLoan(loanId: string): { ok: boolean; error?: string };
   refinanceLoan(loanId: string): { ok: boolean; error?: string };
+  /** Convert a negative cash position into a fresh term loan at the
+   *  current covenant-adjusted rate. No-op if cash >= 0. The new loan
+   *  is tagged source: "overdraft-refi" so the UI can flag it. */
+  refinanceOverdraft(): { ok: boolean; error?: string };
 
   closeQuarter(): void;
   advanceToNext(): void;
@@ -660,6 +667,7 @@ function makeStartingTeam(args: {
     decisions: [],
     flags: new Set<string>(),
     deferredEvents: [],
+    timedModifiers: [],
     routeObligations: [],
     rcfBalanceUsd: 0,
     taxLossCarryForward: [],
@@ -2784,13 +2792,23 @@ export const useGame = create<GameStore>()(
         const s = get();
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player team" };
+        // Borrowing rate honours the team's covenant pressure +
+        // brand premium (effectiveBorrowingRate). Earlier this used
+        // the bare baseRate, so high-debt airlines silently borrowed
+        // at the same rate as healthy ones — covenant breach badge
+        // showed but didn't bite.
+        const ratePct = effectiveBorrowingRate(player, s.baseInterestRatePct);
         const loan: LoanInstrument = {
           id: mkId("loan"),
           principalUsd: amount,
-          ratePct: s.baseInterestRatePct,
+          ratePct,
           originQuarter: s.currentQuarter,
           remainingPrincipal: amount,
           govBacked: false,
+          lenderName: pickLenderName(
+            player.loans.map((l) => l.lenderName ?? ""),
+          ),
+          source: "borrowing",
         };
         set({
           teams: s.teams.map((t) => t.id !== player.id ? t : {
@@ -2800,6 +2818,57 @@ export const useGame = create<GameStore>()(
             loans: [...t.loans, loan],
           }),
         });
+        return { ok: true };
+      },
+
+      // ── Refinance overdraft ──────────────────────────────
+      // When cash goes negative, the airline is implicitly running
+      // on overdraft (high penalty interest). This action converts
+      // the negative balance into a regular term loan at the standard
+      // covenant-adjusted rate, restoring cash to 0 and adding a new
+      // entry to the loans list with an "overdraft-refi" tag so the
+      // player remembers why they took it.
+      refinanceOverdraft: () => {
+        const s = get();
+        const player = s.teams.find((t) => t.id === s.playerTeamId);
+        if (!player) return { ok: false, error: "No player team" };
+        if (player.cashUsd >= 0)
+          return { ok: false, error: "No overdraft to refinance — cash isn't negative." };
+        const overdraftAmount = Math.ceil(-player.cashUsd / 1_000_000) * 1_000_000;
+        // Borrowing cap respected so the team can't paper over a
+        // collapse with infinite overdraft refis.
+        const headroom = maxBorrowingUsd(player);
+        if (headroom < overdraftAmount) {
+          return {
+            ok: false,
+            error: `Overdraft is ${fmtMoneyPlain(overdraftAmount)} but borrowing cap leaves only ${fmtMoneyPlain(headroom)}. Trim debt first.`,
+          };
+        }
+        const ratePct = effectiveBorrowingRate(player, s.baseInterestRatePct);
+        const loan: LoanInstrument = {
+          id: mkId("loan"),
+          principalUsd: overdraftAmount,
+          ratePct,
+          originQuarter: s.currentQuarter,
+          remainingPrincipal: overdraftAmount,
+          govBacked: false,
+          lenderName: pickLenderName(
+            player.loans.map((l) => l.lenderName ?? ""),
+          ),
+          source: "overdraft-refi",
+        };
+        set({
+          teams: s.teams.map((t) => t.id !== player.id ? t : {
+            ...t,
+            cashUsd: t.cashUsd + overdraftAmount,
+            totalDebtUsd: t.totalDebtUsd + overdraftAmount,
+            loans: [...t.loans, loan],
+          }),
+        });
+        toast.success(
+          `Overdraft refinanced · ${fmtMoneyPlain(overdraftAmount)}`,
+          `Cash restored to balance. New term loan at ${ratePct.toFixed(1)}% with ${loan.lenderName}.`,
+        );
         return { ok: true };
       },
 
@@ -4223,6 +4292,7 @@ export const useGame = create<GameStore>()(
           routes: [],
           decisions: [],
           deferredEvents: [],
+          timedModifiers: [],
           routeObligations: [],
           flags: new Set(),
           financialsByQuarter: [],
@@ -5453,6 +5523,7 @@ export const useGame = create<GameStore>()(
             return leases;
           })(),
           pendingSlotBids: t.pendingSlotBids ?? [],
+          timedModifiers: t.timedModifiers ?? [],
           cargoStorageActivations: t.cargoStorageActivations ?? [t.hubCode],
           hubInvestments: t.hubInvestments ?? {
             fuelReserveTankHubs: [],
