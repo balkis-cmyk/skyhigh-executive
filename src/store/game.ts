@@ -641,7 +641,23 @@ function makeStartingTeam(args: {
   salaryPhilosophy?: Team["salaryPhilosophy"];
   marketingLevel?: Team["marketingLevel"];
   csrTheme?: Team["csrTheme"];
+  /** Multiplayer-aware fields. When omitted, the team behaves the same
+   *  as the legacy single-browser solo flow:
+   *    - human team → controlledBy: "human", claimedBySessionId: null
+   *      (the local session is bound at startNewGame via activeTeamId)
+   *    - rival team → controlledBy: "bot" + a bot difficulty.
+   *  Future lobby-driven creators can pass these explicitly. */
+  controlledBy?: "human" | "bot";
+  claimedBySessionId?: string | null;
+  playerDisplayName?: string | null;
 }): Team {
+  // Derive controlledBy from isPlayer when not passed explicitly. In
+  // legacy solo runs, isPlayer === true means "this browser's human"
+  // and isPlayer === false means "rival bot". The new fields make
+  // both cases explicit; isPlayer is kept in sync for the 30+ legacy
+  // call sites that still read it.
+  const controlledBy: "human" | "bot" =
+    args.controlledBy ?? (args.isPlayer ? "human" : "bot");
   return {
     id: mkId("team"),
     name: args.airlineName,
@@ -651,6 +667,9 @@ function makeStartingTeam(args: {
     secondaryHubCodes: [],
     doctrine: args.doctrine,
     isPlayer: args.isPlayer,
+    controlledBy,
+    claimedBySessionId: args.claimedBySessionId ?? null,
+    playerDisplayName: args.playerDisplayName ?? null,
     members: [
       { role: "CEO",  name: args.isPlayer ? "Your CEO"  : `${args.code} CEO`,  mvpPts: 0, cards: [] },
       { role: "CFO",  name: args.isPlayer ? "Your CFO"  : `${args.code} CFO`,  mvpPts: 0, cards: [] },
@@ -743,9 +762,23 @@ export const useGame = create<GameStore>()(
       airportBids: [],
       worldCupHostCode: null,
       olympicHostCode: null,
+      // Legacy session fields — kept synced with the new `session` block
+      // so the existing /facilitator + /join surfaces keep reading them.
+      // Will be retired in Step 5 of the multiplayer rollout once those
+      // pages migrate to read `session` directly.
       sessionCode: null,
       sessionLocked: false,
       sessionSlots: [],
+      // Multiplayer/lobby-aware state. `session` is null in legacy
+      // single-browser solo runs (created via the existing onboarding
+      // flow). Games created via /games/new always carry a session.
+      // `activeTeamId` binds THIS browser to one team for the run;
+      // panels/HUD branch on it instead of `team.isPlayer` so the
+      // same engine state can render correctly for any human team.
+      // `localSessionId` is the per-browser id we set on first paint.
+      session: null,
+      activeTeamId: null,
+      localSessionId: null,
       preOrders: [],
       productionCapOverrides: {},
 
@@ -4500,6 +4533,13 @@ export const useGame = create<GameStore>()(
           code: code2,
           color: ["#1E6B5C", "#2B6B88", "#7A4B2E", "#C38A1E", "#4A6480", "#9A7D3D", "#C23B1F", "#6B5F88", "#4B7A2E", "#2E5C7A"][s.teams.length % 10],
           isPlayer: true,
+          // Multiplayer-aware fields. The legacy /join flow doesn't
+          // know about the new `localSessionId` yet — Step 5 will wire
+          // it through. For now claimedBySessionId stays null and
+          // `displayName` carries the company name as the visible label.
+          controlledBy: "human",
+          claimedBySessionId: null,
+          playerDisplayName: companyName.trim(),
           hubCode,
           secondaryHubCodes: [],
           doctrine: "premium-service",
