@@ -45,7 +45,7 @@ export default function JoinPage() {
   const sessionActive = !!sessionCode && totalSeats > 0;
 
   return (
-    <main className="flex-1 flex items-center justify-center px-6 py-12 bg-surface-2/30">
+    <main className="flex-1 min-h-0 overflow-y-auto flex items-center justify-center px-6 py-12 bg-surface-2/30">
       <Card className="w-[min(560px,calc(100vw-2rem))]">
         <CardBody>
           <Badge tone="accent">Join simulation</Badge>

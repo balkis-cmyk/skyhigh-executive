@@ -43,7 +43,11 @@ export default function FacilitatorPage() {
   const pendingBidsCount = (s.airportBids ?? []).filter((b) => b.status === "pending").length;
 
   return (
-    <main className="flex-1 flex flex-col bg-surface-2/30">
+    // min-h-0 is critical: the body has overflow-hidden + flex-col,
+    // so without min-h-0 here the inner overflow-auto column doesn't
+    // engage and the bottom of the page gets clipped. Same fix as
+    // /endgame and the lobby pages.
+    <main className="flex-1 min-h-0 flex flex-col bg-surface-2/30">
       <header className="px-8 py-4 border-b border-line bg-surface flex items-center justify-between">
         <div className="flex items-baseline gap-3">
           <Link href="/" className="text-ink-muted hover:text-ink flex items-center gap-1.5 text-[0.8125rem]">
@@ -69,7 +73,7 @@ export default function FacilitatorPage() {
         )}
       </header>
 
-      <div className="flex-1 flex">
+      <div className="flex-1 min-h-0 flex">
         {/* Sidebar nav */}
         <nav className="w-52 border-r border-line bg-surface flex flex-col py-4 gap-1 px-2 shrink-0">
           <NavItem
