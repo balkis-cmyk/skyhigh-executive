@@ -72,6 +72,10 @@ import {
   wouldExceedLeaseCap,
 } from "@/lib/lease";
 import { pickLenderName } from "@/lib/bank-names";
+import {
+  hubPriceUsd,
+  ONBOARDING_TOTAL_BUDGET_USD,
+} from "@/lib/hub-pricing";
 import type {
   AirportBid,
   AirportLease,
@@ -117,7 +121,10 @@ export interface GameStore extends GameState {
     code: string;
     doctrine: DoctrineId;
     hubCode: string;
-    teamCount?: number;        // 2..10, default 5
+    /** Number of rival bots to seed alongside the player. Defaults
+     *  to 5. Facilitator-only setting now — not exposed in player
+     *  onboarding UI. */
+    teamCount?: number;
 
     // Optional Q1 Brand Building profile (defaults applied if omitted)
     tagline?: string;
@@ -127,9 +134,6 @@ export interface GameStore extends GameState {
     salaryPhilosophy?: "below" | "at" | "above";
     marketingLevel?: "low" | "medium" | "high" | "aggressive";
     csrTheme?: "environment" | "community" | "employees" | "none";
-
-    /** Simulated L0 rank (1-5) → cash injection + brand multiplier. */
-    l0Rank?: 1 | 2 | 3 | 4 | 5;
   }): void;
 
   setSliders(sliders: Partial<Sliders>): void;
@@ -748,7 +752,7 @@ export const useGame = create<GameStore>()(
         const {
           airlineName, code, doctrine, hubCode, teamCount = 5,
           tagline, marketFocus, geographicPriority, pricingPhilosophy,
-          salaryPhilosophy, marketingLevel, csrTheme, l0Rank,
+          salaryPhilosophy, marketingLevel, csrTheme,
         } = args;
 
         const player = makeStartingTeam({
@@ -770,21 +774,17 @@ export const useGame = create<GameStore>()(
             : salaryPhilosophy === "above" ? 3 : 2;
         }
 
-        // PRD §13.2 L0 cash injection based on presentation rank (1-5)
-        // 1st = +$80M, 2nd = +$60M, 3rd = +$40M, 4th = +$20M, 5th = +$0
-        const cashInjection = l0Rank === 1 ? 80_000_000
-          : l0Rank === 2 ? 60_000_000
-          : l0Rank === 3 ? 40_000_000
-          : l0Rank === 4 ? 20_000_000
-          : 0;
-        player.cashUsd = 150_000_000 + cashInjection;
-        // Brand pts multiplier: 10× / 7× / 5× / 3× / 2× baseline 50 (scaled down)
-        const brandBonus = l0Rank === 1 ? 20
-          : l0Rank === 2 ? 14
-          : l0Rank === 3 ? 10
-          : l0Rank === 4 ? 6
-          : 4;
-        player.brandPts = 50 + brandBonus;
+        // Hub-cost deduction. Player gets ONBOARDING_TOTAL_BUDGET ($350M
+        // = $150M base + $200M onboarding capital) and pays for their
+        // hub from that pool. Premium gateways (LHR/CDG/JFK/SFO/DXB)
+        // cost $300M; T1 hubs $200M; T2 $100M; T3 $50M. Replaces the
+        // old L0 presentation-rank scoring system entirely — that
+        // mechanic is now facilitator-driven via direct cash/brand
+        // adjustments from the admin panel if a session wants it.
+        const hubCity = CITIES_BY_CODE[hubCode];
+        const hubCost = hubCity ? hubPriceUsd(hubCity) : 0;
+        player.cashUsd = ONBOARDING_TOTAL_BUDGET_USD - hubCost;
+        player.brandPts = 50;
 
         // Seed: give player 2× A320 to start. Onboarding *is* the PRD's Q1
         // brand-building phase — the player commits to doctrine, market focus,
@@ -1014,17 +1014,12 @@ export const useGame = create<GameStore>()(
           olympicHostCode,
         });
 
-        if (l0Rank && l0Rank <= 3) {
+        // Welcome toast — surface the hub purchase + remaining cash
+        // so the player understands the trade-off they just made.
+        if (hubCity) {
           toast.accent(
-            `L0 Brand Building · Rank ${l0Rank}`,
-            `Cash injection +${fmtMoneyPlain(cashInjection)} · Brand +${brandBonus}`,
-          );
-        } else if (l0Rank) {
-          toast.info(
-            `L0 Brand Building · Rank ${l0Rank}`,
-            cashInjection > 0
-              ? `Cash injection +${fmtMoneyPlain(cashInjection)}`
-              : "No cash injection — make your Q2 decisions count.",
+            `${hubCity.name} (${hubCity.code}) hub secured`,
+            `Hub cost ${fmtMoneyPlain(hubCost)} · ${fmtMoneyPlain(player.cashUsd)} cash to operate.`,
           );
         }
       },
