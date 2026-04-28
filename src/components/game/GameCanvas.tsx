@@ -250,6 +250,12 @@ function CanvasInner() {
           onCityDoubleClick={(c) => setAirportDetailCode(c.code)}
           onClearSelection={() => { setOrigin(null); setDest(null); }}
         />
+        {/* Transparent blocker — sits on top of the map whenever a side
+            panel is open so drag and click events don't bleed through to
+            the map behind it. Visually invisible; functionally a wall. */}
+        {currentPanel && (
+          <div className="absolute inset-0 z-[600] cursor-default" />
+        )}
       </div>
 
       {/* Attached chrome */}
@@ -263,11 +269,16 @@ function CanvasInner() {
         </Panel>
       )}
 
-      {/* Bottom-right command HUD — scaffolds the route-launch flow
-          (1. origin → 2. dest → 3. launch) and exposes map shortcuts.
-          Collapses to a tiny pill when a side panel is open so it
-          doesn't compete for attention. */}
-      <MapCommandHud origin={origin} dest={dest} compact={!!currentPanel} />
+      {/* Bottom-right command HUD — scaffolds the route-launch flow and
+          tells the player exactly what to do at each step. Collapses to
+          an explanatory note when a panel is open so they know why map
+          clicks aren't working. */}
+      <MapCommandHud
+        origin={origin}
+        dest={dest}
+        hubCode={player.hubCode}
+        compact={!!currentPanel}
+      />
 
       {/* Floating route launch bar — always visible during selection,
           never blocks the map. Clicking "Launch" opens the detail modal. */}
