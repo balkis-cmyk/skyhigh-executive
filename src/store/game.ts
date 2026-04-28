@@ -2546,11 +2546,28 @@ export const useGame = create<GameStore>()(
 
       closeRoute: (routeId) => {
         const s = get();
+        // Preserve closed-route history. Earlier this dropped the
+        // route from the team's array entirely, so reports / endgame /
+        // analytics lost any record of routes that ever existed.
+        // Now we set status: "closed" and unlink the aircraft. Active-
+        // route filters across the codebase already exclude
+        // status === "closed", so this is a no-op for live calculations
+        // — but the row stays in financialsByQuarter and can be shown
+        // in retro views.
         set({
           teams: s.teams.map((t) =>
             t.id !== s.playerTeamId ? t : {
               ...t,
-              routes: t.routes.filter((r) => r.id !== routeId),
+              routes: t.routes.map((r) =>
+                r.id === routeId
+                  ? {
+                      ...r,
+                      status: "closed" as const,
+                      aircraftIds: [],
+                      dailyFrequency: 0,
+                    }
+                  : r,
+              ),
               fleet: t.fleet.map((f) => f.routeId === routeId
                 ? { ...f, status: "active", routeId: null } : f),
             },

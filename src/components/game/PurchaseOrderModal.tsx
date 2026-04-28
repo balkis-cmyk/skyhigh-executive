@@ -12,6 +12,7 @@ import {
 import { fmtMoney } from "@/lib/format";
 import { planeImagePath } from "@/lib/aircraft-images";
 import { cn } from "@/lib/cn";
+import { useGame, selectPlayer } from "@/store/game";
 import type { AircraftSpec } from "@/types/game";
 
 /**
@@ -490,16 +491,85 @@ function PurchaseOrderBody({
               {fmtMoney(totalCost)}
             </span>
           </div>
+          <CashAffordabilityRow totalCost={totalCost} />
         </div>
       </ModalBody>
 
       <ModalFooter>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" onClick={handleOrder}>
-          Order {quantity} → {fmtMoney(totalCost)}
-        </Button>
+        <CashAwareOrderButton
+          totalCost={totalCost}
+          quantity={quantity}
+          onOrder={handleOrder}
+        />
       </ModalFooter>
     </Modal>
+  );
+}
+
+/** Cash readout — shows the player exactly what they have on hand
+ *  vs what this order needs, so the Order button isn't a black box.
+ *  When short, the row goes red and the gap is the focal number. */
+function CashAffordabilityRow({ totalCost }: { totalCost: number }) {
+  const player = useGame(selectPlayer);
+  if (!player) return null;
+  const cashOnHand = player.cashUsd;
+  const shortfall = Math.max(0, totalCost - cashOnHand);
+  const canAfford = shortfall === 0;
+  return (
+    <div
+      className={cn(
+        "flex items-baseline justify-between text-[0.75rem] mt-1.5 rounded-md px-2 py-1.5",
+        canAfford
+          ? "bg-surface-2/40 text-ink-2"
+          : "bg-[var(--negative-soft)] text-negative",
+      )}
+    >
+      <span className="uppercase tracking-wider text-[0.625rem]">
+        Cash on hand
+      </span>
+      <span className="tabular font-mono">
+        {fmtMoney(cashOnHand)}
+        {!canAfford && (
+          <span className="ml-2 font-semibold">
+            · short {fmtMoney(shortfall)}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Order button with built-in cash check. When the player has enough
+ *  cash the button is its normal CTA; when short, it disables but
+ *  rewrites its label to call out the gap so the player knows WHY. */
+function CashAwareOrderButton({
+  totalCost, quantity, onOrder,
+}: {
+  totalCost: number;
+  quantity: number;
+  onOrder: () => void;
+}) {
+  const player = useGame(selectPlayer);
+  if (!player) return null;
+  const shortfall = Math.max(0, totalCost - player.cashUsd);
+  const canAfford = shortfall === 0;
+  return (
+    <Button
+      variant="primary"
+      onClick={canAfford ? onOrder : undefined}
+      disabled={!canAfford}
+      title={
+        canAfford
+          ? undefined
+          : `Need ${fmtMoney(shortfall)} more cash. Borrow from Financials → Borrowing or trim the order.`
+      }
+    >
+      {canAfford
+        ? <>Order {quantity} → {fmtMoney(totalCost)}</>
+        : <>Need {fmtMoney(shortfall)} more cash</>
+      }
+    </Button>
   );
 }
 
