@@ -4663,12 +4663,14 @@ export const useGame = create<GameStore>()(
         const s = get();
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player" };
+        if (typeof size !== "string" || !["small", "medium", "large"].includes(size))
+          return { ok: false, error: "Invalid tank size" };
         const specs = {
           small:  { cost: 3_000_000,  capacity: 25_000_000 },
           medium: { cost: 8_000_000,  capacity: 75_000_000 },
           large:  { cost: 15_000_000, capacity: 150_000_000 },
         } as const;
-        const spec = specs[size];
+        const spec = specs[size as "small" | "medium" | "large"];
         if (player.cashUsd < spec.cost)
           return { ok: false, error: `Need ${fmtMoneyPlain(spec.cost)}` };
         const currentCapL =
@@ -4693,6 +4695,8 @@ export const useGame = create<GameStore>()(
         const s = get();
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player" };
+        if (typeof litres !== "number" || !Number.isFinite(litres) || litres <= 0)
+          return { ok: false, error: "Invalid litres amount" };
         const specs = {
           small: { capacity: 25_000_000 },
           medium: { capacity: 75_000_000 },
@@ -4730,6 +4734,8 @@ export const useGame = create<GameStore>()(
         const s = get();
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) return { ok: false, error: "No player" };
+        if (typeof litres !== "number" || !Number.isFinite(litres) || litres <= 0)
+          return { ok: false, error: "Invalid litres amount" };
         if (litres > player.fuelStorageLevelL)
           return { ok: false, error: `Only ${(player.fuelStorageLevelL / 1_000_000).toFixed(1)}M L in storage` };
         const sellPrice = (s.fuelIndex / 100) * FUEL_BASELINE_USD_PER_L * 0.75;
