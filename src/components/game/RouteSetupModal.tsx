@@ -431,16 +431,16 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   })();
   const hasShortfall = shortfall.atOrigin > 0 || shortfall.atDest > 0;
 
-  // The button is enabled when every shortfall airport has SOME bid in
-  // place. We auto-prime each BidRow's price to the tier minimum on
-  // mount, so an unset entry should never persist past the first
-  // render — but if the parent's reset effect clears bidPrices in
-  // response to a player ref change, BidRow's empty-deps useEffect
-  // doesn't re-fire and the entry stays undefined. The slider is still
-  // visibly showing minPrice though, so treating undefined as
-  // "implicit minimum bid" matches what the player sees and prevents
-  // the Submit button from getting stuck disabled.
-  const allBidsSet = !hasShortfall;
+  // Submit is enabled the moment the form has aircraft + a valid
+  // schedule. Slot bids on shortfall airports default to the tier
+  // minimum (visibly shown in the slider) and confirmRoute reads
+  // BASE_SLOT_PRICE_BY_TIER as a fallback for any still-undefined
+  // entries. Earlier this was `allBidsSet = !hasShortfall`, which
+  // made the button greyed out FOREVER on shortfall routes — even
+  // after the player moved the slider — because the gate only
+  // looked at "no shortfall" instead of "bids present". That's the
+  // production bug being fixed here.
+  const allBidsSet = true;
   // (bid-price prime useEffect lives above the early return — see the
   // hook ordering note further up. We can't safely keep it here because
   // it would render conditionally on `if (!player) return null;`.)
