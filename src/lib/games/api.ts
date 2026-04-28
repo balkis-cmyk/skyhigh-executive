@@ -44,16 +44,36 @@ export interface CreateGameArgs {
   mode: "facilitated" | "self_guided";
   visibility: "public" | "private";
   maxTeams: number;
-  /** Browser session id of the host. Required — the host gets host
-   *  role on the resulting game and is the default facilitator if
-   *  mode is facilitated. */
+  /** Browser session id of the host (or auth user.id when signed in).
+   *  The host gets host role; if `beGameMaster` is true they also
+   *  become the Game Master. */
   hostSessionId: string;
-  /** Optional facilitator session id. When omitted in facilitated
-   *  mode, host = facilitator. Ignored in self-guided mode. */
-  facilitatorSessionId?: string;
-  /** Initial engine GameState snapshot (post-onboarding shape from
-   *  the existing single-browser flow). The lobby just persists it;
-   *  the play page rehydrates the engine from this on first paint. */
+  /** When true, the host claims the Game Master role for the game.
+   *  Max one GM per game. False/omitted = no GM (self-driven mode). */
+  beGameMaster?: boolean;
+  /** Optional explicit GM session id. Almost always omitted — the
+   *  host is the GM via `beGameMaster` toggle. Reserved for facilitator
+   *  hand-off scenarios where the creator preassigns the role. */
+  gameMasterSessionId?: string;
+  /** Total rounds the game runs for. Default 40. The create-game
+   *  form offers 8/16/24/40 presets. */
+  totalRounds?: number;
+  /** Whether the boardroom decisions surface is enabled. Defaults
+   *  to true when GM is on, false otherwise — but explicit override
+   *  always wins. */
+  boardDecisionsEnabled?: boolean;
+  /** Configured seats from the create-game form. Each entry plans a
+   *  human-claimable seat (`type: human`) or a bot-filled seat
+   *  (`type: bot` + `difficulty`). Length must equal `maxTeams`. */
+  plannedSeats?: Array<{
+    id?: string;
+    type: "human" | "bot";
+    difficulty?: "easy" | "medium" | "hard";
+    label?: string;
+  }>;
+  /** Initial engine GameState snapshot — minimal shell for now;
+   *  per-team state lands when each player completes their
+   *  airline-branding onboarding inside the lobby. */
   initialState: unknown;
 }
 
@@ -113,6 +133,22 @@ export async function createGame(args: CreateGameArgs): Promise<
   const joinCode =
     args.visibility === "private" ? await allocateJoinCode() : null;
 
+  // Resolve Game Master assignment.
+  //   - Explicit `gameMasterSessionId` wins (rare hand-off scenarios)
+  //   - Otherwise `beGameMaster: true` makes the host the GM
+  //   - Otherwise no GM (mode 'self_guided' implicit, but the user
+  //     can still flip board_decisions_enabled independently)
+  const gmSessionId =
+    args.gameMasterSessionId ??
+    (args.beGameMaster ? args.hostSessionId : null);
+
+  // boardDecisionsEnabled defaults: explicit value wins, otherwise
+  // mirror the GM toggle (with-GM = decisions on by default).
+  const boardDecisions =
+    args.boardDecisionsEnabled ?? (gmSessionId !== null);
+
+  const totalRounds = args.totalRounds ?? 40;
+
   const { data: game, error: gameErr } = await supa
     .from("games")
     .insert({
@@ -121,12 +157,13 @@ export async function createGame(args: CreateGameArgs): Promise<
       visibility: args.visibility,
       max_teams: args.maxTeams,
       join_code: joinCode,
-      board_decisions_enabled: args.mode === "facilitated",
+      board_decisions_enabled: boardDecisions,
       created_by_session_id: args.hostSessionId,
-      facilitator_session_id:
-        args.mode === "facilitated"
-          ? (args.facilitatorSessionId ?? args.hostSessionId)
-          : null,
+      // facilitator_session_id is the legacy column name in the SQL
+      // schema — it now stores the Game Master session id (renamed
+      // at the UI level only). We'll formalise the rename in a
+      // follow-up migration once the lobby flow is stable.
+      facilitator_session_id: gmSessionId,
     })
     .select()
     .single();
@@ -134,18 +171,56 @@ export async function createGame(args: CreateGameArgs): Promise<
     return { ok: false, error: gameErr?.message ?? "Failed to create game" };
   }
 
+  // Initial state snapshot — augment whatever the caller passed with
+  // the lobby session block so the play page can hydrate without a
+  // separate round-trip. The session field carries totalRounds,
+  // plannedSeats, mode, etc — single source of truth for the game.
+  const inputState =
+    typeof args.initialState === "object" && args.initialState !== null
+      ? (args.initialState as Record<string, unknown>)
+      : {};
+  const seededState = {
+    ...inputState,
+    session: {
+      gameId: game.id,
+      name: game.name,
+      mode: game.mode,
+      visibility: game.visibility,
+      status: game.status,
+      boardDecisionsEnabled: game.board_decisions_enabled,
+      joinCode: game.join_code,
+      locked: game.locked,
+      maxTeams: game.max_teams,
+      creatorSessionId: game.created_by_session_id,
+      gameMasterSessionId: gmSessionId,
+      facilitatorSessionId: gmSessionId,  // legacy alias
+      totalRounds,
+      plannedSeats: (args.plannedSeats ?? []).map((s, i) => ({
+        id: s.id ?? `seat-${i}`,
+        type: s.type,
+        botDifficulty: s.type === "bot" ? (s.difficulty ?? "medium") : undefined,
+        label: s.label,
+      })),
+      seats: [],
+      startedAt: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      version: 1,
+    },
+  };
+
   const { data: state, error: stateErr } = await supa
     .from("game_state")
-    .insert({ game_id: game.id, state_json: args.initialState, version: 1 })
+    .insert({ game_id: game.id, state_json: seededState, version: 1 })
     .select()
     .single();
   if (stateErr || !state) {
     return { ok: false, error: stateErr?.message ?? "Failed to seed game state" };
   }
 
-  // Host as the first member, with the appropriate role
-  const hostRole =
-    args.mode === "facilitated" ? "facilitator" : "host";
+  // Host as the first member. Role: game-master if they claimed it,
+  // otherwise plain host.
+  const hostRole = gmSessionId === args.hostSessionId ? "facilitator" : "host";
   await supa.from("game_members").insert({
     game_id: game.id,
     session_id: args.hostSessionId,
@@ -156,7 +231,14 @@ export async function createGame(args: CreateGameArgs): Promise<
     gameId: game.id,
     actorSessionId: args.hostSessionId,
     type: "game.created",
-    payload: { mode: args.mode, visibility: args.visibility, maxTeams: args.maxTeams },
+    payload: {
+      mode: args.mode,
+      visibility: args.visibility,
+      maxTeams: args.maxTeams,
+      totalRounds,
+      boardDecisionsEnabled: boardDecisions,
+      gameMasterSessionId: gmSessionId,
+    },
   });
 
   return { ok: true, data: { game, state } };

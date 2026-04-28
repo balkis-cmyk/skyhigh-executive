@@ -34,7 +34,11 @@ export async function POST(req: NextRequest) {
       visibility,
       maxTeams,
       hostSessionId,
-      facilitatorSessionId,
+      gameMasterSessionId,
+      beGameMaster,
+      totalRounds,
+      boardDecisionsEnabled,
+      plannedSeats,
       initialState,
     } = body ?? {};
 
@@ -53,9 +57,12 @@ export async function POST(req: NextRequest) {
     if (typeof hostSessionId !== "string" || hostSessionId.length < 8) {
       return NextResponse.json({ error: "Missing host session id." }, { status: 400 });
     }
+    if (totalRounds !== undefined && (typeof totalRounds !== "number" || totalRounds < 4 || totalRounds > 80)) {
+      return NextResponse.json({ error: "Total rounds must be 4-80." }, { status: 400 });
+    }
     if (initialState === undefined || initialState === null) {
       return NextResponse.json(
-        { error: "Initial state required — run onboarding first." },
+        { error: "Initial state required." },
         { status: 400 },
       );
     }
@@ -66,7 +73,12 @@ export async function POST(req: NextRequest) {
       visibility,
       maxTeams,
       hostSessionId,
-      facilitatorSessionId,
+      gameMasterSessionId,
+      beGameMaster: typeof beGameMaster === "boolean" ? beGameMaster : undefined,
+      totalRounds,
+      boardDecisionsEnabled:
+        typeof boardDecisionsEnabled === "boolean" ? boardDecisionsEnabled : undefined,
+      plannedSeats: Array.isArray(plannedSeats) ? plannedSeats : undefined,
       initialState,
     });
     if (!result.ok) {

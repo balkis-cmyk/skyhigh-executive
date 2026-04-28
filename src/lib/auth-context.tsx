@@ -1,0 +1,161 @@
+"use client";
+
+/**
+ * Lightweight Supabase Auth context for SkyForce.
+ *
+ * Optional auth — anonymous play still works without signing in. When
+ * a user IS signed in we use their auth user.id as the durable
+ * session id (replacing the per-browser uuid in localStorage), so
+ * their saved games + history follow them across devices.
+ *
+ * Three sign-in surfaces: Google OAuth, Microsoft OAuth (cohort
+ * partners often run Microsoft 365), and email + password. All
+ * three call into the same `signIn*` methods exposed on the
+ * context so the LoginPage doesn't need to know which provider it's
+ * driving.
+ *
+ * Keeps the existing `getOrCreateSessionId` localStorage path alive
+ * for unsigned-in players, so the lobby doesn't break when Supabase
+ * env vars aren't set.
+ */
+
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { getBrowserClient } from "@/lib/supabase/browser";
+import type { Session, User } from "@supabase/supabase-js";
+
+interface AuthState {
+  user: User | null;
+  session: Session | null;
+  loading: boolean;
+  /** True when Supabase env vars are populated. Marketing header etc.
+   *  hide the sign-in chip when false to avoid a 500 on click. */
+  authConfigured: boolean;
+  signInWithGoogle: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  signInWithMicrosoft: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  signInWithPassword: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  signUpWithPassword: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  signOut: () => Promise<void>;
+}
+
+const Ctx = createContext<AuthState | null>(null);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const supa = getBrowserClient();
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+  const router = useRouter();
+  const authConfigured = supa !== null;
+
+  useEffect(() => {
+    if (!supa) {
+      setLoading(false);
+      return;
+    }
+    let mounted = true;
+    supa.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSession(data.session);
+      setUser(data.session?.user ?? null);
+      setLoading(false);
+    });
+    const { data: sub } = supa.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      setUser(s?.user ?? null);
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function signInWithGoogle() {
+    if (!supa) return { ok: false as const, error: "Auth not configured" };
+    const redirectTo = typeof window !== "undefined"
+      ? `${window.location.origin}/auth/callback`
+      : undefined;
+    const { error } = await supa.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const };
+  }
+
+  async function signInWithMicrosoft() {
+    if (!supa) return { ok: false as const, error: "Auth not configured" };
+    const redirectTo = typeof window !== "undefined"
+      ? `${window.location.origin}/auth/callback`
+      : undefined;
+    const { error } = await supa.auth.signInWithOAuth({
+      provider: "azure",
+      options: { redirectTo, scopes: "email" },
+    });
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const };
+  }
+
+  async function signInWithPassword(email: string, password: string) {
+    if (!supa) return { ok: false as const, error: "Auth not configured" };
+    const { error } = await supa.auth.signInWithPassword({ email, password });
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const };
+  }
+
+  async function signUpWithPassword(email: string, password: string) {
+    if (!supa) return { ok: false as const, error: "Auth not configured" };
+    const { error } = await supa.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: typeof window !== "undefined"
+          ? `${window.location.origin}/auth/callback`
+          : undefined,
+      },
+    });
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const };
+  }
+
+  async function signOut() {
+    if (!supa) return;
+    await supa.auth.signOut();
+    router.refresh();
+  }
+
+  return (
+    <Ctx.Provider
+      value={{
+        user, session, loading, authConfigured,
+        signInWithGoogle, signInWithMicrosoft,
+        signInWithPassword, signUpWithPassword, signOut,
+      }}
+    >
+      {children}
+    </Ctx.Provider>
+  );
+}
+
+export function useAuth(): AuthState {
+  const v = useContext(Ctx);
+  if (!v) {
+    // Render-safe fallback when AuthProvider isn't mounted (e.g.
+    // legacy game-canvas surfaces that don't need auth). All methods
+    // return error envelopes; user/session null.
+    return {
+      user: null,
+      session: null,
+      loading: false,
+      authConfigured: false,
+      signInWithGoogle: async () => ({ ok: false, error: "Auth provider not mounted" }),
+      signInWithMicrosoft: async () => ({ ok: false, error: "Auth provider not mounted" }),
+      signInWithPassword: async () => ({ ok: false, error: "Auth provider not mounted" }),
+      signUpWithPassword: async () => ({ ok: false, error: "Auth provider not mounted" }),
+      signOut: async () => {},
+    };
+  }
+  return v;
+}

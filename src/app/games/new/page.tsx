@@ -1,104 +1,212 @@
 "use client";
 
 /**
- * /games/new — host creates a new game.
+ * /games/new — comprehensive Create Game form.
  *
- * Two-step flow:
- *   1. Pick mode + visibility + max teams + game name
- *   2. Onboarding (existing /onboarding shape) to seed the host's
- *      starting team — same team-factory as solo, so the host walks
- *      into the lobby with a complete team. The other seats stay
- *      open until joiners claim them.
+ * Per the V1 spec the host configures everything in one screen:
  *
- * Step 2 is reached via `/onboarding?gameId=<new-id>` — the
- * onboarding page already produces a complete starting position;
- * we hand off via query string and the onboarding "Start game"
- * button branches on the param to call /api/games/create instead
- * of seeding the local store.
+ *   Game name           — short label shown on /lobby and the lobby
+ *   Visibility          — Public (listed in /lobby) | Private (code only)
+ *   Game Master         — toggle "I want to be the Game Master" (max 1
+ *                          per game, or zero). GM gets the facilitator
+ *                          console + admin overrides.
+ *   Board Decisions     — on/off (separate from GM)
+ *   Number of rounds    — 8 / 16 / 24 / 40 (default 40, full 10 yrs)
+ *   Player slots        — list of seats, each marked Player or AI Bot,
+ *                          AI gets a difficulty picker. Min 1, max 8.
  *
- * (That branching is wired up later. For Step 4 of the rollout we
- * land the form + handoff stub; the onboarding-side branch lands
- * with Step 5.)
+ * V3 deferred (spec from user, NOT shipped now):
+ *   - Start year (1960-2015)        → affects aircraft availability
+ *   - Round unit (quarters/months)
+ *
+ * On submit: POST /api/games/create with the assembled config, then
+ * route to /games/[id]/lobby. The host-side onboarding (brand your
+ * airline) happens AFTER seat-claim in the lobby.
  */
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, ArrowRight, Globe2, Lock, Sparkles, Users, ChevronRight,
+  ArrowLeft, ArrowRight, Loader2, Lock, Globe2, Sparkles,
+  CheckSquare, Users, Plus, X, Trash2, User, Bot,
 } from "lucide-react";
+import { useLocalSessionId } from "@/lib/games/session";
+import { useAuth } from "@/lib/auth-context";
+import { isMultiplayerAvailable } from "@/lib/supabase/browser";
+import { MarketingHeader } from "@/components/marketing/MarketingHeader";
 
-type Mode = "facilitated" | "self_guided";
 type Visibility = "public" | "private";
+type Difficulty = "easy" | "medium" | "hard";
+type SeatType = "human" | "bot";
 
-export default function NewGamePage() {
+interface SlotDraft {
+  id: string;
+  type: SeatType;
+  difficulty?: Difficulty;
+}
+
+const ROUND_PRESETS = [
+  { value: 8, label: "8 rounds", sub: "2 years · quick session" },
+  { value: 16, label: "16 rounds", sub: "4 years · half campaign" },
+  { value: 24, label: "24 rounds", sub: "6 years · medium" },
+  { value: 40, label: "40 rounds", sub: "10 years · full decade" },
+] as const;
+
+function mkSlotId() {
+  return `slot-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export default function CreateGamePage() {
   const router = useRouter();
+  const sessionId = useLocalSessionId();
+  const { user } = useAuth();
+  const mpAvailable = isMultiplayerAvailable();
+
   const [name, setName] = useState("");
-  const [mode, setMode] = useState<Mode>("self_guided");
-  // Default visibility tracks the user's hint: facilitated → private,
-  // self-guided → public. They can flip independently.
   const [visibility, setVisibility] = useState<Visibility>("public");
-  const [maxTeams, setMaxTeams] = useState(6);
+  const [beGameMaster, setBeGameMaster] = useState(false);
+  const [boardDecisionsEnabled, setBoardDecisionsEnabled] = useState(false);
+  const [totalRounds, setTotalRounds] = useState(40);
+  const [slots, setSlots] = useState<SlotDraft[]>([
+    { id: mkSlotId(), type: "human" },
+    { id: mkSlotId(), type: "bot", difficulty: "medium" },
+    { id: mkSlotId(), type: "bot", difficulty: "medium" },
+    { id: mkSlotId(), type: "bot", difficulty: "medium" },
+  ]);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function handleModeChange(next: Mode) {
-    setMode(next);
-    // If they hadn't manually picked a visibility, follow the default.
-    setVisibility(next === "facilitated" ? "private" : "public");
+  // Mirror the GM-toggle into Board Decisions default — facilitated
+  // sessions usually want decisions on; turning GM off doesn't force
+  // decisions off, but turning GM on and never touching decisions
+  // gives the expected default.
+  useEffect(() => {
+    if (beGameMaster && !boardDecisionsEnabled) {
+      setBoardDecisionsEnabled(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beGameMaster]);
+
+  function addSlot(type: SeatType) {
+    if (slots.length >= 8) return;
+    setSlots([
+      ...slots,
+      type === "bot"
+        ? { id: mkSlotId(), type, difficulty: "medium" }
+        : { id: mkSlotId(), type },
+    ]);
   }
 
-  function handleNext() {
+  function removeSlot(id: string) {
+    if (slots.length <= 1) return;
+    setSlots(slots.filter((s) => s.id !== id));
+  }
+
+  function updateSlot(id: string, patch: Partial<SlotDraft>) {
+    setSlots(slots.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }
+
+  async function handleSubmit() {
     setError(null);
     if (name.trim().length === 0) {
       setError("Game name is required.");
       return;
     }
+    if (slots.length < 1) {
+      setError("At least one seat is required.");
+      return;
+    }
+    if (!sessionId) {
+      setError("Browser session not ready — please refresh.");
+      return;
+    }
+
     setSubmitting(true);
-    // Hand off to onboarding, carrying the lobby config in query
-    // params. Onboarding completes the host's team setup, then
-    // POSTs /api/games/create with the assembled state. Step 5 of
-    // the rollout wires the actual handoff; for now we route to
-    // onboarding and surface a coming-soon banner if Supabase env
-    // is missing.
-    const params = new URLSearchParams({
-      gameName: name.trim().slice(0, 80),
-      gameMode: mode,
-      gameVisibility: visibility,
-      gameMaxTeams: String(maxTeams),
-    });
-    router.push(`/onboarding?${params.toString()}`);
+    try {
+      const res = await fetch("/api/games/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          mode: beGameMaster ? "facilitated" : "self_guided",
+          visibility,
+          maxTeams: slots.length,
+          totalRounds,
+          boardDecisionsEnabled,
+          beGameMaster,
+          plannedSeats: slots,
+          hostSessionId: user?.id ?? sessionId,
+          // Initial state placeholder — the host's airline-branding
+          // happens after seat-claim. For now we ship a minimal
+          // skeleton; the engine fills it in at start.
+          initialState: {
+            phase: "idle",
+            currentQuarter: 1,
+            totalRounds,
+            teams: [],
+            session: null,
+          },
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Failed to create game.");
+        setSubmitting(false);
+        return;
+      }
+      router.push(`/games/${json.game.id}/lobby`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error");
+      setSubmitting(false);
+    }
   }
+
+  const humanCount = slots.filter((s) => s.type === "human").length;
+  const botCount = slots.filter((s) => s.type === "bot").length;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="max-w-3xl mx-auto px-6 h-14 flex items-center justify-between">
-          <Link
-            href="/lobby"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to lobby
-          </Link>
-          <span className="text-xs text-slate-400 tabular">Step 1 of 2</span>
-        </div>
-      </header>
+      <MarketingHeader />
 
-      <main className="max-w-3xl mx-auto px-6 py-12">
+      <main className="max-w-3xl mx-auto px-6 py-12 lg:py-16">
+        <Link
+          href="/lobby"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-900 mb-6"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to lobby
+        </Link>
+
         <p className="text-xs font-semibold uppercase tracking-widest text-cyan-600 mb-2">
           Create game
         </p>
-        <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900 mb-2">
-          Set up your run
+        <h1 className="text-3xl md:text-4xl font-display font-bold tracking-tight text-slate-900 mb-2">
+          Set up your run.
         </h1>
         <p className="text-sm text-slate-500 mb-10 max-w-xl">
-          Configure the lobby first. You&rsquo;ll fill in your airline brand
-          (doctrine, hub, sliders) on the next step — same as solo.
+          Configure the seats, mode, and length. Once you create, you&rsquo;ll
+          land in the game lobby with a code to share.
         </p>
 
+        {!mpAvailable && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 mb-8">
+            <p className="text-sm font-semibold text-amber-900 mb-1">
+              Multiplayer not configured
+            </p>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              The lobby system needs Supabase env vars to work. You can still{" "}
+              <Link href="/onboarding" className="underline font-medium">
+                play solo offline
+              </Link>{" "}
+              until that&rsquo;s set up.
+            </p>
+          </div>
+        )}
+
         <div className="space-y-8">
-          {/* Game name */}
+          {/* 1. Game name */}
           <Field label="Game name" required>
             <input
               type="text"
@@ -109,33 +217,11 @@ export default function NewGamePage() {
               className="w-full px-4 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-200 focus:border-cyan-400"
             />
             <p className="text-xs text-slate-400 mt-2">
-              Shown in the lobby and the facilitator console.
+              Shown in the public lobby and to anyone who joins.
             </p>
           </Field>
 
-          {/* Mode */}
-          <Field label="Mode">
-            <div className="grid sm:grid-cols-2 gap-3">
-              <ChoiceCard
-                active={mode === "self_guided"}
-                onClick={() => handleModeChange("self_guided")}
-                icon={<Globe2 className="w-5 h-5" />}
-                title="Self-guided"
-                accent="emerald"
-                description="Players advance the quarter once everyone is ready. Board Decisions disabled."
-              />
-              <ChoiceCard
-                active={mode === "facilitated"}
-                onClick={() => handleModeChange("facilitated")}
-                icon={<Sparkles className="w-5 h-5" />}
-                title="Facilitated"
-                accent="violet"
-                description="A facilitator drives quarter close + Board Decisions. Defaults to private."
-              />
-            </div>
-          </Field>
-
-          {/* Visibility */}
+          {/* 2. Visibility */}
           <Field label="Visibility">
             <div className="grid sm:grid-cols-2 gap-3">
               <ChoiceCard
@@ -144,37 +230,124 @@ export default function NewGamePage() {
                 icon={<Globe2 className="w-5 h-5" />}
                 title="Public"
                 accent="cyan"
-                description="Listed in the public lobby. Anyone can join until you lock or fill it."
+                description="Listed in the public lobby. Anyone can browse and join an open seat."
               />
               <ChoiceCard
                 active={visibility === "private"}
                 onClick={() => setVisibility("private")}
                 icon={<Lock className="w-5 h-5" />}
                 title="Private"
-                accent="slate"
-                description="Hidden from /lobby. Players join with a 4-digit code you share."
+                accent="violet"
+                description="Hidden from /lobby. We'll generate a 4-digit code you share with players."
               />
             </div>
           </Field>
 
-          {/* Max teams */}
-          <Field label="Max teams" hint={`${maxTeams} teams (humans + bots combined)`}>
-            <div className="flex items-center gap-4">
-              <input
-                type="range"
-                min={1}
-                max={12}
-                value={maxTeams}
-                onChange={(e) => setMaxTeams(Number(e.target.value))}
-                className="flex-1 accent-cyan-600"
-              />
-              <div className="w-16 text-center font-mono text-base font-semibold text-slate-900 tabular bg-white border border-slate-200 rounded-lg py-1.5">
-                {maxTeams}
-              </div>
+          {/* 3. Game Master toggle */}
+          <Field label="Game Master role">
+            <Toggle
+              active={beGameMaster}
+              onClick={() => setBeGameMaster((v) => !v)}
+              icon={<Sparkles className="w-5 h-5" />}
+              title="Yes, I'll be the Game Master"
+              description="One Game Master per game (or none). Drives quarter close, runs board decisions, has admin overrides. Only the creator can claim this role."
+              accent="violet"
+            />
+            {!beGameMaster && (
+              <p className="text-xs text-slate-400 mt-2">
+                No Game Master · the game runs self-driven. Quarter advances
+                automatically once every player marks ready.
+              </p>
+            )}
+          </Field>
+
+          {/* 4. Board Decisions */}
+          <Field label="Board decisions">
+            <Toggle
+              active={boardDecisionsEnabled}
+              onClick={() => setBoardDecisionsEnabled((v) => !v)}
+              icon={<CheckSquare className="w-5 h-5" />}
+              title={boardDecisionsEnabled ? "Enabled" : "Disabled"}
+              description="The 18 boardroom scenarios (cyber breach, fuel hedging, government deals…). Best with a Game Master to facilitate; can run without."
+              accent="emerald"
+            />
+          </Field>
+
+          {/* 5. Number of rounds */}
+          <Field
+            label="Number of rounds"
+            hint={`${totalRounds} rounds · ${(totalRounds / 4).toFixed(0)} years`}
+          >
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {ROUND_PRESETS.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setTotalRounds(p.value)}
+                  className={
+                    "rounded-xl border p-3 text-left transition-all " +
+                    (totalRounds === p.value
+                      ? "border-slate-900 bg-white ring-2 ring-slate-900/10"
+                      : "border-slate-200 bg-white hover:border-slate-300")
+                  }
+                >
+                  <div className="text-base font-display font-bold text-slate-900">
+                    {p.value}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-0.5">
+                    {p.sub}
+                  </div>
+                </button>
+              ))}
             </div>
-            <p className="text-xs text-slate-400 mt-2 inline-flex items-center gap-1">
-              <Users className="w-3 h-3" />
-              Empty seats stay open in the lobby until claimed or filled by bots.
+            <p className="text-xs text-slate-400 mt-3">
+              <span className="text-slate-500">V3 coming:</span> start year
+              picker (1960-2015) and round unit (quarter/month).
+            </p>
+          </Field>
+
+          {/* 6. Player slots */}
+          <Field
+            label="Player slots"
+            hint={`${slots.length} seat${slots.length === 1 ? "" : "s"} · ${humanCount} human · ${botCount} bot`}
+          >
+            <div className="space-y-2">
+              {slots.map((slot, i) => (
+                <SlotRow
+                  key={slot.id}
+                  index={i + 1}
+                  slot={slot}
+                  canRemove={slots.length > 1}
+                  onUpdate={(patch) => updateSlot(slot.id, patch)}
+                  onRemove={() => removeSlot(slot.id)}
+                />
+              ))}
+            </div>
+            {slots.length < 8 && (
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => addSlot("human")}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full border border-slate-200 hover:border-slate-300 bg-white text-xs font-semibold text-slate-700 transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  <User className="w-3 h-3" />
+                  Add player
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addSlot("bot")}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-full border border-slate-200 hover:border-slate-300 bg-white text-xs font-semibold text-slate-700 transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  <Bot className="w-3 h-3" />
+                  Add AI bot
+                </button>
+              </div>
+            )}
+            <p className="text-xs text-slate-400 mt-3">
+              Up to 8 seats. Human seats stay open until claimed; AI bots
+              auto-fill at start.
             </p>
           </Field>
 
@@ -186,7 +359,7 @@ export default function NewGamePage() {
           )}
 
           {/* Submit */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
+          <div className="flex items-center justify-end gap-3 pt-6 border-t border-slate-200">
             <Link
               href="/lobby"
               className="px-4 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-900"
@@ -194,12 +367,21 @@ export default function NewGamePage() {
               Cancel
             </Link>
             <button
-              onClick={handleNext}
-              disabled={submitting}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-50 transition-colors"
+              onClick={handleSubmit}
+              disabled={submitting || !mpAvailable || !sessionId}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#00C2CB] hover:bg-[#00a9b1] text-white text-sm font-semibold disabled:opacity-50 transition-colors"
             >
-              Next: brand your airline
-              <ArrowRight className="w-4 h-4" />
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Creating…
+                </>
+              ) : (
+                <>
+                  Create game
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -222,7 +404,7 @@ function Field({
 }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between mb-2">
+      <div className="flex items-baseline justify-between mb-2.5">
         <label className="text-sm font-semibold text-slate-900">
           {label}
           {required && <span className="text-rose-500 ml-1" aria-label="required">*</span>}
@@ -242,13 +424,13 @@ function ChoiceCard({
   icon: React.ReactNode;
   title: string;
   description: string;
-  accent: "cyan" | "violet" | "emerald" | "slate";
+  accent: "cyan" | "violet" | "emerald" | "amber";
 }) {
   const accentRing = {
     cyan: "bg-cyan-50 text-cyan-700 ring-cyan-100",
     violet: "bg-violet-50 text-violet-700 ring-violet-100",
     emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
-    slate: "bg-slate-100 text-slate-700 ring-slate-200",
+    amber: "bg-amber-50 text-amber-700 ring-amber-100",
   }[accent];
   return (
     <button
@@ -262,17 +444,161 @@ function ChoiceCard({
       }
     >
       <div className="flex items-start gap-3">
-        <div className={"shrink-0 w-9 h-9 rounded-lg ring-4 flex items-center justify-center " + accentRing}>
+        <div className={`shrink-0 w-9 h-9 rounded-lg ring-4 flex items-center justify-center ${accentRing}`}>
           {icon}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-1">
+          <div className="text-sm font-semibold text-slate-900 mb-1">{title}</div>
+          <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function Toggle({
+  active, onClick, icon, title, description, accent,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  accent: "violet" | "emerald";
+}) {
+  const accentRing = active
+    ? accent === "violet"
+      ? "bg-violet-100 text-violet-700 ring-violet-200"
+      : "bg-emerald-100 text-emerald-700 ring-emerald-200"
+    : "bg-slate-100 text-slate-400 ring-slate-200";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      role="switch"
+      aria-checked={active}
+      className={
+        "w-full text-left rounded-xl border p-4 transition-all " +
+        (active
+          ? "border-slate-900 bg-white ring-2 ring-slate-900/10"
+          : "border-slate-200 bg-white hover:border-slate-300")
+      }
+    >
+      <div className="flex items-start gap-3">
+        <div className={`shrink-0 w-9 h-9 rounded-lg ring-4 flex items-center justify-center transition-colors ${accentRing}`}>
+          {icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-3 mb-1">
             <span className="text-sm font-semibold text-slate-900">{title}</span>
-            {active && <ChevronRight className="w-4 h-4 text-slate-900" />}
+            <span
+              className={
+                "shrink-0 inline-block w-9 h-5 rounded-full transition-colors relative " +
+                (active ? "bg-slate-900" : "bg-slate-200")
+              }
+            >
+              <span
+                className={
+                  "absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform " +
+                  (active ? "translate-x-4" : "translate-x-0")
+                }
+              />
+            </span>
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
         </div>
       </div>
+    </button>
+  );
+}
+
+function SlotRow({
+  index, slot, canRemove, onUpdate, onRemove,
+}: {
+  index: number;
+  slot: SlotDraft;
+  canRemove: boolean;
+  onUpdate: (patch: Partial<SlotDraft>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-3">
+      <div className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 text-slate-700 font-mono text-xs font-bold tabular flex items-center justify-center">
+        {index}
+      </div>
+
+      {/* Type selector */}
+      <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5">
+        <SegBtn
+          active={slot.type === "human"}
+          onClick={() => onUpdate({ type: "human", difficulty: undefined })}
+          icon={<User className="w-3.5 h-3.5" />}
+          label="Player"
+        />
+        <SegBtn
+          active={slot.type === "bot"}
+          onClick={() => onUpdate({ type: "bot", difficulty: slot.difficulty ?? "medium" })}
+          icon={<Bot className="w-3.5 h-3.5" />}
+          label="AI bot"
+        />
+      </div>
+
+      {/* Difficulty (bot only) */}
+      {slot.type === "bot" && (
+        <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5">
+          {(["easy", "medium", "hard"] as const).map((d) => (
+            <SegBtn
+              key={d}
+              active={slot.difficulty === d}
+              onClick={() => onUpdate({ difficulty: d })}
+              label={d[0].toUpperCase() + d.slice(1)}
+            />
+          ))}
+        </div>
+      )}
+
+      {slot.type === "human" && (
+        <div className="hidden sm:block text-xs text-slate-400 italic flex-1">
+          Open seat — anyone can claim
+        </div>
+      )}
+
+      {/* Remove */}
+      {canRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove seat ${index}`}
+          className="ml-auto shrink-0 w-7 h-7 rounded-md text-slate-400 hover:bg-slate-100 hover:text-rose-600 flex items-center justify-center"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SegBtn({
+  active, onClick, icon, label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon?: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors " +
+        (active
+          ? "bg-white text-slate-900 shadow-sm"
+          : "text-slate-500 hover:text-slate-900")
+      }
+    >
+      {icon}
+      {label}
     </button>
   );
 }

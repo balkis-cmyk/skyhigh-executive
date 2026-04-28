@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
   title: "SkyForce — Airline Strategy Simulation",
@@ -28,7 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body className="h-full flex flex-col bg-bg text-ink antialiased overflow-hidden">
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

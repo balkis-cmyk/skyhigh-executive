@@ -729,12 +729,52 @@ export interface GameSession {
   locked: boolean;
   maxTeams: number;
   creatorSessionId: string;
+  /** "Game Master" is the V1 facilitator role — exactly one or zero
+   *  per game. The creator opts in at create-time. The GM advances
+   *  quarters, sees the facilitator console, has admin overrides.
+   *  Stored as a session id (anonymous play) or auth user id (signed
+   *  in). Null = no GM, game runs in self-driven mode where the host
+   *  still holds host-level controls (start/lock) but no facilitator
+   *  powers. */
+  gameMasterSessionId: string | null;
+  /** @deprecated use gameMasterSessionId. Kept as alias during the
+   *  facilitator-rename rollout so existing code paths keep working. */
   facilitatorSessionId: string | null;
+  /** Total number of rounds the game runs for. Default 40 (a full
+   *  10-year decade in the 2015-2024 calendar). Configurable at
+   *  create-time so cohort sessions can run shorter formats:
+   *  8 (2 years) / 16 (4 years) / 24 (6 years) / 40 (10 years).
+   *  Engine reads this in place of the legacy TOTAL_GAME_ROUNDS
+   *  constant once the create-game form lands. */
+  totalRounds: number;
+  /** Configured seat plan from the create-game form. Each entry
+   *  represents one seat in the lobby; humans claim, bots auto-fill
+   *  when the host clicks Start. The order maps 1:1 to lobby seat
+   *  display. */
+  plannedSeats: PlannedSeat[];
   seats: GameSessionSeat[];
   startedAt: number | null;
   createdAt: number;
   updatedAt: number;
   version: number;
+}
+
+/** Configured seat at create-time. Different from runtime seats
+ *  (`GameSessionSeat`) which track claim state — `PlannedSeat`
+ *  is the host's intent: "this slot is for a human" vs "this slot
+ *  is reserved for an Easy AI bot." */
+export interface PlannedSeat {
+  /** Stable id assigned at create-time. Persists into the runtime
+   *  seat record so the lobby can map plan → claim. */
+  id: string;
+  /** Human-claimable or AI-filled. */
+  type: "human" | "bot";
+  /** Difficulty for bot seats. Required when type=bot, ignored when
+   *  type=human. */
+  botDifficulty?: "easy" | "medium" | "hard";
+  /** Display label the host can set (e.g. "CEO seat", "Strategy
+   *  team"). Optional; falls back to "Seat N". */
+  label?: string;
 }
 
 /** A single seat in the lobby. The lobby UI iterates these to render

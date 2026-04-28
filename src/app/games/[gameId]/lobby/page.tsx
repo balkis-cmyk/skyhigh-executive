@@ -172,13 +172,24 @@ export default function GameLobbyPage({
         <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900 mb-2">
           {game.name}
         </h1>
-        <p className="text-sm text-slate-500 mb-10 max-w-xl">
+        <p className="text-sm text-slate-500 mb-8 max-w-xl">
           Players claim seats below. {game.mode === "facilitated"
-            ? "The facilitator starts the game when ready."
-            : "The host starts the game when everyone is in."}
+            ? "The Game Master starts when everyone is in."
+            : "The host starts when everyone is in."}
         </p>
 
-        {/* Host / facilitator panel */}
+        {/* Prominent share-code banner — shown on private games to
+            ANY visitor (so non-host members can see the code their
+            host shared with them, and the host can copy at a glance). */}
+        {game.join_code && game.status === "lobby" && (
+          <ShareCodeBanner
+            code={game.join_code}
+            onCopy={handleCopyCode}
+            copyHint={copyHint}
+          />
+        )}
+
+        {/* Host / Game Master panel */}
         {(isHost || isFacilitator) && (
           <HostPanel
             game={game}
@@ -224,6 +235,45 @@ export default function GameLobbyPage({
 // ============================================================================
 // Subcomponents
 // ============================================================================
+
+function ShareCodeBanner({
+  code, onCopy, copyHint,
+}: {
+  code: string;
+  onCopy: () => void;
+  copyHint: boolean;
+}) {
+  return (
+    <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 text-white p-6 mb-8 relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-cyan-500/15 rounded-full blur-3xl -mr-20 -mt-20" />
+      <div className="relative flex flex-wrap items-center justify-between gap-6">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-cyan-300 mb-2">
+            Private game · share this code
+          </p>
+          <p className="text-sm text-slate-300 mb-1 max-w-md leading-relaxed">
+            Players visit <span className="font-mono text-white">/lobby</span> and enter this 4-digit code to join your game.
+          </p>
+        </div>
+        <button
+          onClick={onCopy}
+          className="group inline-flex items-center gap-4 px-6 py-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+          aria-label={`Copy join code ${code}`}
+        >
+          <span className="font-mono text-5xl font-bold tabular text-white tracking-[0.25em]">
+            {code}
+          </span>
+          <span className="flex flex-col items-start text-xs">
+            <span className="text-slate-300 group-hover:text-white transition-colors">
+              {copyHint ? "Copied!" : "Click to copy"}
+            </span>
+            <span className="text-slate-500 mt-0.5">share via chat / email</span>
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function HostPanel({
   game, isFacilitator, actionPending, onCopyCode, copyHint, onToggleLock, onStart,
