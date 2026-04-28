@@ -11,7 +11,8 @@ import { HelpModal } from "@/components/game/HelpModal";
 import { NotificationCenter } from "@/components/game/NotificationCenter";
 import { Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
 import { SCENARIOS_BY_QUARTER } from "@/data/scenarios";
-import { HelpCircle, Trophy, ChevronDown, Eye } from "lucide-react";
+import { HelpCircle, Trophy, ChevronDown, Eye, MoreVertical, RotateCcw, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useShallow } from "zustand/react/shallow";
 
 export function TopBar() {
@@ -156,6 +157,7 @@ export function TopBar() {
         >
           <HelpCircle size={16} aria-hidden="true" />
         </button>
+        <GameMenu />
         <CloseQuarterButton />
       </div>
       <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
@@ -499,5 +501,107 @@ function AirlineSwitcher({
         <Button variant="ghost" onClick={onClose}>Close</Button>
       </ModalFooter>
     </Modal>
+  );
+}
+
+// ============================================================================
+// Game menu — kebab-style overflow with "End game & start over"
+// ============================================================================
+
+/**
+ * Top-bar overflow menu. The only item right now is "End game & start
+ * over", which calls the store's resetGame() and routes back to the
+ * onboarding flow. Lives in TopBar so the player always has a visible
+ * exit, no matter which panel they're in. Without this the only path
+ * out of a saved game was clearing localStorage manually — players
+ * who wanted to start fresh got stuck mid-quarter on next visit.
+ */
+function GameMenu() {
+  const router = useRouter();
+  const resetGame = useGame((g) => g.resetGame);
+  const phase = useGame((g) => g.phase);
+  const [open, setOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  function handleEndGame() {
+    resetGame();
+    setConfirmOpen(false);
+    setOpen(false);
+    router.replace("/");
+  }
+
+  return (
+    <>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label="Game menu"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title="Game menu"
+          className="w-8 h-8 rounded-md text-ink-muted hover:text-ink hover:bg-surface-hover flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+        >
+          <MoreVertical size={16} aria-hidden="true" />
+        </button>
+        {open && (
+          <>
+            {/* Click-away catcher */}
+            <div
+              className="fixed inset-0 z-[60]"
+              onClick={() => setOpen(false)}
+              aria-hidden
+            />
+            <div
+              role="menu"
+              className="absolute right-0 top-9 z-[61] w-56 rounded-lg border border-line bg-surface shadow-[var(--shadow-3)] py-1.5"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  setConfirmOpen(true);
+                }}
+                className="w-full text-left px-3 py-2 text-[0.8125rem] text-ink hover:bg-surface-hover flex items-center gap-2"
+              >
+                <RotateCcw size={13} className="text-ink-muted" />
+                <span>End game &amp; start over</span>
+              </button>
+              <div className="px-3 py-1.5 text-[0.6875rem] text-ink-muted leading-snug border-t border-line/40 mt-1 pt-2">
+                {phase === "endgame"
+                  ? "Resets the saved run and returns to onboarding."
+                  : "Wipes the current saved run. Cannot be undone."}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <Modal open={confirmOpen} onClose={() => setConfirmOpen(false)}>
+        <ModalHeader>End the current game?</ModalHeader>
+        <ModalBody>
+          <p className="text-[0.9375rem] text-ink-2 leading-relaxed">
+            This wipes your current run from this browser&rsquo;s saved
+            state and routes you back to the onboarding flow. There&rsquo;s
+            no undo — once you confirm, the saved game is gone.
+          </p>
+          <p className="text-[0.8125rem] text-ink-muted leading-relaxed mt-3">
+            If you&rsquo;re in the middle of an interesting quarter you
+            want to keep, hit Cancel and consider taking a screenshot of
+            the leaderboard first.
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="ghost" onClick={() => setConfirmOpen(false)}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleEndGame}>
+            <X size={14} className="mr-1" />
+            End game &amp; start over
+          </Button>
+        </ModalFooter>
+      </Modal>
+    </>
   );
 }
