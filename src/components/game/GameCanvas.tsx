@@ -269,16 +269,18 @@ function CanvasInner() {
         </Panel>
       )}
 
-      {/* Bottom-right command HUD — scaffolds the route-launch flow and
-          tells the player exactly what to do at each step. Collapses to
-          an explanatory note when a panel is open so they know why map
-          clicks aren't working. */}
-      <MapCommandHud
-        origin={origin}
-        dest={dest}
-        hubCode={player.hubCode}
-        compact={!!currentPanel}
-      />
+      {/* Bottom-right command HUD — scaffolds the route-launch flow.
+          Visible while actively selecting (any origin set) OR while the
+          player has no live routes yet (first-time guidance). Hides once
+          at least one route exists and no selection is in progress. */}
+      {(!!origin || !player.routes.some((r) => r.status !== "closed")) && (
+        <MapCommandHud
+          origin={origin}
+          dest={dest}
+          hubCode={player.hubCode}
+          compact={!!currentPanel}
+        />
+      )}
 
       {/* Floating route launch bar — always visible during selection,
           never blocks the map. Clicking "Launch" opens the detail modal. */}
