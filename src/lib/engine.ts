@@ -1080,10 +1080,11 @@ export function computeRouteEconomics(
   // ─ Cargo route (A4) ────────────────────────────────────
   if (route.isCargo) {
     const cargoCapacityMultiplier = isDoctrine(team, "cargo-dominance") ? 1.20 : 1.0;
-    const tonnesPerFlight = planes.reduce((sum, p) => {
+    const tonnesSum = planes.reduce((sum, p) => {
       const spec = AIRCRAFT_BY_ID[p.specId];
       return sum + (spec?.cargoTonnes ?? 0) * cargoCapacityMultiplier;
     }, 0);
+    const tonnesPerFlight = planes.length > 0 ? tonnesSum / planes.length : 0;
     const dailyCapacityT = tonnesPerFlight * route.dailyFrequency;
     // Cargo demand = min of the two cities' business demand (A4),
     // multiplied by per-city cargo-category event modifiers from the
@@ -1133,7 +1134,7 @@ export function computeRouteEconomics(
     // Fuel — see FUEL_BASELINE_USD_PER_L docstring; cargo + passenger
     // paths now share the same baseline.
     const fuelPricePerL = (fuelIndex / 100) * FUEL_BASELINE_USD_PER_L;
-    const totalFuelBurnPerFlight = planes.reduce((sum, p) => {
+    const fuelBurnSumPerFlight = planes.reduce((sum, p) => {
       const spec = AIRCRAFT_BY_ID[p.specId];
       if (!spec) return sum;
       // Stack engine retrofit + eco + fuselage coating multiplicatively.
@@ -1144,6 +1145,8 @@ export function computeRouteEconomics(
         (p.fuselageUpgrade ? 0.9 : 1.0);
       return sum + spec.fuelBurnPerKm * fuelMult * distanceKm;
     }, 0);
+    const totalFuelBurnPerFlight =
+      planes.length > 0 ? fuelBurnSumPerFlight / planes.length : 0;
     const quarterlyFuelCost =
       totalFuelBurnPerFlight * fuelPricePerL * route.dailyFrequency * QUARTER_DAYS;
 
@@ -1444,7 +1447,7 @@ export function computeRouteEconomics(
   // now share FUEL_BASELINE_USD_PER_L so a 10kL Atlantic crossing
   // shows a real $5,500 fuel bill instead of $1,800.
   const fuelPricePerL = (fuelIndex / 100) * FUEL_BASELINE_USD_PER_L;
-  const totalFuelBurnPerFlight = planes.reduce((sum, p) => {
+  const fuelBurnSumPerFlight = planes.reduce((sum, p) => {
     const spec = AIRCRAFT_BY_ID[p.specId];
     if (!spec) return sum;
     // Stack engine retrofit + eco + fuselage coating multiplicatively.
@@ -1455,6 +1458,8 @@ export function computeRouteEconomics(
     const burn = spec.fuelBurnPerKm * fuelMult * distanceKm;
     return sum + burn;
   }, 0);
+  const totalFuelBurnPerFlight =
+    planes.length > 0 ? fuelBurnSumPerFlight / planes.length : 0;
   // Apply S4 hedge if flag set
   const hedge = team.flags.has("hedged_12m")
     ? 100 / fuelIndex
