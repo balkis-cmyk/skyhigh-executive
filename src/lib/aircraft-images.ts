@@ -44,16 +44,16 @@ const SPEC_TO_IMAGE: Record<string, string> = {
   "B757-200F":    "B757-200/B757-200_3view.png",       // TEMP FALLBACK
   "B767-300F":    "B767-300F/B767-300F_3view.png",
   "B747-400F":    "B747-400F/B747-400F_3view.png",
-  "B777F":        "B777F/B777F_3view.png",
-  "A300-600F":    "A300-600F/A300-600F_3view.png",
-  "A330-200F":    "A330-200/A330-200_3view.png",       // TEMP FALLBACK → passenger silhouette
+  "B777F":        "B777F/B777F_side.png",
+  "A300-600F":    "A300-600F/A300-600F_side.png",
+  "A330-200F":    "A330-200F/A330-200F_side.png",
 
   // ─── R5 (Q1 2016) ──────────────────────────────────────────
   "B777-300ER":   "B777-300ER/B777-300ER_3view.png",
   "E190":         "E190/E190_3view.png",
 
   // ─── R9 (Q1 2017) ──────────────────────────────────────────
-  "A380-800":     "A380-800/A380-800_3view.png",
+  "A380-800":     "A380-800/A380-800_side.png",
 
   // ─── R12 (Q4 2017) ─────────────────────────────────────────
   "B787-8":       "B787-8/B787-8_3view.png",
@@ -77,7 +77,7 @@ const SPEC_TO_IMAGE: Record<string, string> = {
 
   // ─── R25 (Q1 2021) — late-gen widebodies + E2 ────────────
   "A350-1000":    "A350-1000/A350-1000_3view.png",
-  "A330-900neo":  "A330-900neo/A330-900neo_3view.png",
+  "A330-900neo":  "A330-900neo/A330-900neo_side.png",
   "B787-10":      "B787-10/B787-10_3view.png",
   "E195-E2":      "E195-E2/E195-E2_3view.png",
 
@@ -87,13 +87,13 @@ const SPEC_TO_IMAGE: Record<string, string> = {
   "C919":         "C919/C919_3view.png",
 
   // ─── Staggered cargo unlocks (R9, R12, R16, R25, R29, R32) ───
-  "A380F":        "A380-800/A380-800_3view.png",       // TEMP FALLBACK → passenger A380
-  "A330-300P2F":  "A330-300/A330-300_3view.png",       // TEMP FALLBACK
-  "B747-8F":      "B747-8F/B747-8F_3view.png",
-  "B737-800BCF":  "B737-800/B737-800_3view.png",       // TEMP FALLBACK
-  "A321P2F":      "A321/A321_3view.png",               // TEMP FALLBACK
-  "B777-8F":      "B777X-9/B777X-9_3view.png",         // TEMP FALLBACK → 777X silhouette
-  "ATR-72-600F":  "ATR 72-600/ATR 72-600_3view.png",   // TEMP FALLBACK
+  "A380F":        "A380F/A380F_side.png",
+  "A330-300P2F":  "A330-300P2F/A330-300P2F_side.png",
+  "B747-8F":      "B747-8F/B747-8F_side.png",
+  "B737-800BCF":  "B737-800BCF/B737-800BCF_side.png",
+  "A321P2F":      "A321P2F/A321P2F_side.png",
+  "B777-8F":      "B777-8F/B777-8F_side.png",
+  "ATR-72-600F":  "ATR-72-600F/ATR-72-600F_side.png",
 
   // ─── R32 / R34 user-override unlocks ──────────────────────
   "B777X-8":      "B777X-9/B777X-9_3view.png",         // TEMP FALLBACK → 777X-9 silhouette
