@@ -77,6 +77,7 @@ import {
   hubPriceUsd,
   ONBOARDING_TOTAL_BUDGET_USD,
 } from "@/lib/hub-pricing";
+import { createInitializedTeamFromOnboarding } from "@/lib/games/team-factory";
 import type {
   AirportBid,
   AirportLease,
@@ -513,9 +514,12 @@ function emptyStreaks() {
   return out;
 }
 
-function mkId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-}
+// Re-exported from src/lib/id.ts so the team-factory + future
+// server API routes share the same id shape. Kept as a local
+// const so the store's many call sites (mkId('ac') / mkId('route') /
+// mkId('team') / etc.) need no edit.
+import { mkId as mkIdShared } from "@/lib/id";
+const mkId = mkIdShared;
 
 function fmtMoneyPlain(n: number): string {
   if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
@@ -789,91 +793,21 @@ export const useGame = create<GameStore>()(
           salaryPhilosophy, marketingLevel, csrTheme,
         } = args;
 
-        const player = makeStartingTeam({
+        // Player team — built via the shared factory so a solo run
+        // produces the SAME starting position as a player joining a
+        // multiplayer lobby. Every detail (hub-cost deduction, $350M
+        // budget, 2× A320 starter fleet, 30 free slots at popular
+        // dests, Q1 financials backfill, slider nudges from
+        // marketingLevel/salaryPhilosophy) lives in the factory.
+        // Lobby-driven creators just call the same function with
+        // their own session id and display name.
+        const player = createInitializedTeamFromOnboarding({
           airlineName, code, doctrine, hubCode,
-          isPlayer: true, color: "#14355E",
+          color: "#14355E",
           tagline, marketFocus, geographicPriority, pricingPhilosophy,
           salaryPhilosophy, marketingLevel, csrTheme,
+          controlledBy: "human",
         });
-
-        // Apply pricing philosophy to initial sliders as a nudge
-        if (marketingLevel) {
-          const lvl: Record<typeof marketingLevel, SliderLevel> = {
-            low: 1, medium: 2, high: 3, aggressive: 4,
-          };
-          player.sliders.marketing = lvl[marketingLevel];
-        }
-        if (salaryPhilosophy) {
-          player.sliders.staff = salaryPhilosophy === "below" ? 1
-            : salaryPhilosophy === "above" ? 3 : 2;
-        }
-
-        // Hub-cost deduction. Player gets ONBOARDING_TOTAL_BUDGET ($350M
-        // = $150M base + $200M onboarding capital) and pays for their
-        // hub from that pool. Premium gateways (LHR/CDG/JFK/SFO/DXB)
-        // cost $300M; T1 hubs $200M; T2 $100M; T3 $50M. Replaces the
-        // old L0 presentation-rank scoring system entirely — that
-        // mechanic is now facilitator-driven via direct cash/brand
-        // adjustments from the admin panel if a session wants it.
-        const hubCity = CITIES_BY_CODE[hubCode];
-        const hubCost = hubCity ? hubPriceUsd(hubCity) : 0;
-        player.cashUsd = ONBOARDING_TOTAL_BUDGET_USD - hubCost;
-        player.brandPts = 50;
-
-        // Seed: give player 2× A320 to start. Onboarding *is* the PRD's Q1
-        // brand-building phase — the player commits to doctrine, market focus,
-        // pricing, salary, marketing and CSR there, then walks into Q2 with
-        // the resulting cash injection and brand bonus already baked in.
-        const starter1: FleetAircraft = {
-          id: mkId("ac"), specId: "A320", status: "active",
-          acquisitionType: "buy", purchaseQuarter: 1,
-          purchasePrice: 25_000_000, bookValue: 25_000_000,
-          leaseQuarterly: null, ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
-          cabinConfig: "default", routeId: null,
-          retirementQuarter: 1 + 28, // 7-year (28Q) lifespan
-          maintenanceDeficit: 0, satisfactionPct: 75,
-        };
-        const starter2: FleetAircraft = { ...starter1, id: mkId("ac") };
-        player.fleet = [starter1, starter2];
-
-        // PRD update — give the player a small grant of free starter slots
-        // at their hub's nearest popular destinations so they can open
-        // routes in Q2 without waiting for the first auction round.
-        // Per-airport allocation: 30 free slots, no recurring fee.
-        const STARTER_DESTINATIONS_BY_HUB: Record<string, string[]> = {
-          DXB: ["LHR", "JFK", "SIN", "CDG", "BOM"],
-          LHR: ["JFK", "DXB", "CDG", "FRA", "AMS"],
-          JFK: ["LHR", "CDG", "LAX", "MIA", "ORD"],
-          SIN: ["HKG", "BKK", "KUL", "BOM", "SYD"],
-          NRT: ["HKG", "SIN", "LAX", "ICN", "PVG"],
-          HKG: ["NRT", "SIN", "BKK", "PVG", "SYD"],
-          CDG: ["LHR", "JFK", "FRA", "AMS", "MAD"],
-          FRA: ["LHR", "CDG", "JFK", "AMS", "ZRH"],
-          ORD: ["JFK", "LAX", "SFO", "LHR", "FRA"],
-          LAX: ["JFK", "ORD", "SFO", "NRT", "SYD"],
-        };
-        const starterDests = STARTER_DESTINATIONS_BY_HUB[hubCode] ??
-          ["LHR", "JFK", "SIN", "CDG", "DXB"];
-        for (const dest of starterDests) {
-          player.slotsByAirport[dest] = 30;
-          player.airportLeases[dest] = { slots: 30, totalWeeklyCost: 0 };
-        }
-
-        // Backfill a Q1 "brand-building" snapshot so charts/sparklines have
-        // an honest starting point. Costs/revenue are 0 — Q1 was about
-        // identity, not operations.
-        player.financialsByQuarter = [{
-          quarter: 1,
-          cash: player.cashUsd,
-          debt: 0,
-          revenue: 0,
-          costs: 0,
-          netProfit: 0,
-          brandPts: player.brandPts,
-          opsPts: player.opsPts,
-          loyalty: player.customerLoyaltyPct,
-          brandValue: player.brandValue,
-        }];
 
         // Mock competitors
         const rivals: Team[] = [];
@@ -1050,10 +984,15 @@ export const useGame = create<GameStore>()(
 
         // Welcome toast — surface the hub purchase + remaining cash
         // so the player understands the trade-off they just made.
-        if (hubCity) {
+        // (`hubCity` and `hubCost` were locals in the old inline init;
+        // re-derive from the city table now that the factory has
+        // absorbed that logic.)
+        const hubCityForToast = CITIES_BY_CODE[hubCode];
+        const hubCostForToast = hubCityForToast ? hubPriceUsd(hubCityForToast) : 0;
+        if (hubCityForToast) {
           toast.accent(
-            `${hubCity.name} (${hubCity.code}) hub secured`,
-            `Hub cost ${fmtMoneyPlain(hubCost)} · ${fmtMoneyPlain(player.cashUsd)} cash to operate.`,
+            `${hubCityForToast.name} (${hubCityForToast.code}) hub secured`,
+            `Hub cost ${fmtMoneyPlain(hubCostForToast)} · ${fmtMoneyPlain(player.cashUsd)} cash to operate.`,
           );
         }
       },
