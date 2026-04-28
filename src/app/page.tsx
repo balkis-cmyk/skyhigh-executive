@@ -36,7 +36,7 @@ export default function Home() {
 
   if (!hydrated) {
     return (
-      <div className="min-h-screen bg-slate-50" aria-hidden />
+      <div className="flex-1 min-h-0 bg-slate-50" aria-hidden />
     );
   }
 
@@ -50,8 +50,14 @@ export default function Home() {
 }
 
 function EntryPicker() {
+  // The root layout's body has overflow-hidden + flex-col (so the
+  // in-game map doesn't push the page around). Use flex-1 + min-h-0
+  // + overflow-y-auto so this picker scrolls its OWN content inside
+  // the flex column instead of being clipped by the body. Same
+  // pattern /endgame uses; min-h-screen breaks here because the
+  // body never gets the chance to scroll.
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-slate-50">
       <main className="max-w-5xl mx-auto px-6 py-16 md:py-24">
         <div className="text-center mb-12 md:mb-16">
           <p className="text-xs font-semibold uppercase tracking-widest text-cyan-600 mb-3">
