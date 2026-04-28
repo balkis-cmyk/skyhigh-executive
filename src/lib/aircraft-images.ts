@@ -15,7 +15,7 @@ const SPEC_TO_IMAGE: Record<string, string> = {
   // ─── R1 passenger starters ─────────────────────────────────
   "A319":         "A319/A319_3view.png",
   "A320":         "A320/A320_3view.png",
-  "A321":         "A321/A321_3view.png",
+  "A321":         "A321P2F/A321P2F_side.png",
   "A330-200":     "A330-200/A330-200_3view.png",
   "A330-300":     "A330-300/A330-300_3view.png",
   "B737-300":     "B737-300/B737-300_3view.png",
