@@ -358,12 +358,52 @@ export interface Team {
   hubCode: string;
   secondaryHubCodes: string[];   // additional hubs added after Q3 at 2× fee
   doctrine: DoctrineId;
-  isPlayer: boolean;             // player (single-team demo) vs mocked rival
+
+  /** Single source of truth for who runs this team:
+   *    - "human" — a real player owns this seat (or it's an open seat in
+   *      a multiplayer lobby waiting to be claimed).
+   *    - "bot"   — the engine fills this seat with an AI bot every quarter
+   *      close, using `botDifficulty`.
+   *
+   *  In single-player solo, exactly one team is `human` and the rest are
+   *  `bot`. In multiplayer, every claimed seat is `human`; unclaimed seats
+   *  may be `human` (waiting for join) or `bot` (filled). The `isPlayer`
+   *  flag below is kept as a derived legacy field — `true` when this team
+   *  is human AND bound to the current browser's session — but new code
+   *  should branch on `controlledBy` + `claimedBySessionId` directly. */
+  controlledBy: "human" | "bot";
+
+  /** Session id of the browser/device that has claimed this seat. Null
+   *  means the seat is open. Used by `/games/[id]/play` to bind "you" to
+   *  a specific team across reconnects. */
+  claimedBySessionId?: string | null;
+
+  /** Display name the player typed when they joined. May differ from
+   *  `name` (the airline name); kept so the lobby can surface "Sarah K."
+   *  alongside "Skyforce Aviation". */
+  playerDisplayName?: string | null;
+
+  /** @deprecated Use `controlledBy === "human" && claimedBySessionId === activeSessionId`
+   *  instead. Retained because 34 callsites in panels/HUD still read
+   *  `isPlayer`; kept in sync at every state mutation that changes
+   *  controlledBy or claimedBySessionId. Will be removed once Step 7 of
+   *  the multiplayer rollout migrates every reader to teamId/session
+   *  matching. */
+  isPlayer: boolean;
+
   /** When set, this team is run by an AI bot at the configured
    *  difficulty. Drives quarterly route opening, fleet ordering, slot
-   *  bidding, and scenario decisions in the engine. Player teams have
-   *  this null/undefined. */
+   *  bidding, and scenario decisions in the engine. Only meaningful
+   *  when `controlledBy === "bot"`. */
   botDifficulty?: "easy" | "medium" | "hard";
+
+  /** Per-team ready flag for the next quarter close. Self-guided games
+   *  auto-advance once every active human team is ready; facilitated
+   *  games still let the facilitator drive the close, but the flag
+   *  surfaces in the lobby/HUD so the facilitator can see who's still
+   *  in their submission flow. Resets to false at every quarter close. */
+  readyForNextQuarter?: boolean;
+
   members: TeamMember[];         // CEO/CFO/CMO/CHRO with MVP tally
 
   // Q1 Brand Building profile (PRD §13.2) — saved for reference + flavour
@@ -599,6 +639,133 @@ export type GamePhase =
   | "quarter-closing"
   | "endgame";
 
+/** How the run is hosted.
+ *
+ *    - "facilitated"  — A facilitator owns the run. They control the
+ *      quarter timer, advance/recover the session, review teams, and
+ *      Board Decisions are enabled (S1–S18 boardroom scenarios that
+ *      need a human in the loop to discuss + decide). Default for
+ *      classroom and workshop deployments.
+ *    - "self_guided" — No facilitator. Players drive their own quarter
+ *      close via a per-team `readyForNextQuarter` flag; once everyone
+ *      is ready, the engine advances. Board Decisions are disabled
+ *      (the boardroom loop assumes a discussion partner that doesn't
+ *      exist) — operations, fleet, finance, news, slots, and bots all
+ *      still run normally.
+ */
+export type GameMode = "facilitated" | "self_guided";
+
+/** Lobby visibility.
+ *
+ *    - "private" — Hidden from the public lobby. Joinable only via
+ *      a 4-digit `joinCode`. Default for facilitated runs.
+ *    - "public"  — Listed on /lobby alongside other open games. Anyone
+ *      can pick a seat until the lobby is full or `locked === true`.
+ */
+export type GameVisibility = "private" | "public";
+
+/** Lifecycle of a multiplayer/lobby-aware game.
+ *
+ *    - "lobby"   — Pre-Q1. Teams claiming seats. Facilitator/host
+ *      configures bots, max teams, etc. `phase: "idle" | "onboarding"`.
+ *    - "playing" — Q1+ live. Quarter timer running, route ops in flight.
+ *    - "ended"   — Past Q40 or facilitator-ended. `phase: "endgame"`.
+ *      Read-only on the engine; lobby surfaces this as "completed".
+ */
+export type GameStatus = "lobby" | "playing" | "ended";
+
+/** Multiplayer/lobby session block. Lives on `GameState.session`. Null
+ *  for legacy single-browser solo runs that pre-date the lobby system.
+ *
+ *  Field semantics:
+ *
+ *    - `gameId`     — Stable identifier the database row keys on. UUID
+ *      generated at create time; never changes for the life of the run.
+ *    - `name`       — Human-readable game label shown in /lobby and the
+ *      facilitator console (e.g. "ERTH Cohort 12 — Spring '26").
+ *    - `mode`       — facilitated vs self-guided. Drives what surfaces
+ *      are visible (Board Decisions, facilitator console, live sims).
+ *    - `visibility` — public lists in /lobby, private hides (join-by-code
+ *      only). Default for facilitated → private.
+ *    - `status`     — lobby (pre-Q1) → playing (Q1+) → ended (post-Q40
+ *      or facilitator-ended).
+ *    - `boardDecisionsEnabled` — Mirror of `mode === "facilitated"` at
+ *      creation time, but stored explicitly so a future "facilitated +
+ *      decisions auto-resolved by AI" mode can flip it independently.
+ *      Read by DecisionsPanel / NavRail / TopBar / quarter close.
+ *    - `joinCode`   — 4-digit code for private lobbies. Null for public.
+ *    - `locked`     — When true, no NEW seats can be claimed; existing
+ *      players reconnect via `claimedBySessionId` match.
+ *    - `maxTeams`   — Cap on total teams (human + bot). Lobby refuses
+ *      seat-claims past this. Excludes bot fillers added at start.
+ *    - `creatorSessionId` — Whoever ran /games/new. Has host-level
+ *      controls (start, lock, kick) regardless of mode. Distinct from
+ *      facilitator: a self-guided creator is host-only, not facilitator.
+ *    - `facilitatorSessionId` — Set in facilitated mode only; the
+ *      browser allowed to advance/recover quarters and surface the
+ *      facilitator console. May equal `creatorSessionId` (host = also
+ *      facilitator), or be reassigned mid-run.
+ *    - `seats`      — Snapshot of seat slots and their claim state.
+ *      Authoritative source for the lobby UI; the engine reads
+ *      `team.claimedBySessionId` directly during play. Each entry's
+ *      `teamId` matches a `teams[i].id`. Open seats have `claimedBy`
+ *      null.
+ *    - `startedAt`  — Wall-clock ms timestamp when the lobby flipped to
+ *      playing. Used for analytics + lobby "started X min ago" labels.
+ *    - `version`    — Optimistic-concurrency token bumped on every
+ *      server-mediated mutation. Clients send their last-seen version
+ *      with every write; mismatched writes are rejected with a
+ *      "stale state" error so simultaneous teams can't clobber each
+ *      other.
+ */
+export interface GameSession {
+  gameId: string;
+  name: string;
+  mode: GameMode;
+  visibility: GameVisibility;
+  status: GameStatus;
+  boardDecisionsEnabled: boolean;
+  joinCode: string | null;
+  locked: boolean;
+  maxTeams: number;
+  creatorSessionId: string;
+  facilitatorSessionId: string | null;
+  seats: GameSessionSeat[];
+  startedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+}
+
+/** A single seat in the lobby. The lobby UI iterates these to render
+ *  the seat list; engine code reads `teams[i].claimedBySessionId`
+ *  directly during play. The two stay in sync via the claim/release
+ *  mutations on the server. */
+export interface GameSessionSeat {
+  /** Stable id. Never changes for the life of the seat. */
+  id: string;
+  /** Position in the lobby — 1-based, used for "Seat 3" labels. */
+  index: number;
+  /** Whether a real human has claimed this seat. False for both empty
+   *  human seats AND bot seats — bots aren't claimed, they're filled. */
+  claimed: boolean;
+  /** Browser session id of the claimer. Mirror of
+   *  `team.claimedBySessionId`; kept on the seat for lobby rendering
+   *  without having to cross-reference teams. */
+  claimedBySessionId: string | null;
+  /** Display name the claimer typed when they joined. Surface in the
+   *  lobby seat card alongside the airline name. */
+  displayName: string | null;
+  /** Team id created for this seat. Bots have a teamId from creation;
+   *  empty human seats have null until claimed (the team is created
+   *  at claim time so bot-fill counts and capacity caps stay clean). */
+  teamId: string | null;
+  /** When this seat is reserved for a bot at start. Bot seats keep
+   *  `claimed: false` and `claimedBySessionId: null` but render
+   *  differently in the lobby. */
+  controlledBy: "human" | "bot";
+}
+
 export interface GameState {
   phase: GamePhase;
   currentQuarter: number;         // 1..20
@@ -637,17 +804,41 @@ export interface GameState {
    *  as worldCupHostCode — tier 1-2, not a player/rival hub. */
   olympicHostCode: string | null;
 
-  /** 4-digit join code generated by the facilitator. Players enter this
-   *  on /join along with their company name to take a seat. Null when no
-   *  facilitated session is active. */
+  /** Multiplayer/lobby session metadata. Null in pure-solo runs that
+   *  pre-date the lobby system; future games created via /games/new
+   *  always carry this block. Read at every code path that gates on
+   *  mode / visibility / boardDecisionsEnabled / readiness.
+   *
+   *  See GameSession below for the field-by-field contract. */
+  session: GameSession | null;
+
+  /** Active team binding for THIS browser. In multiplayer this is the
+   *  team the local user controls; mutated only by the team-claim flow
+   *  on /games/[id]/lobby. In solo this is set once at startNewGame to
+   *  the lone human team. Read by panels/HUD as the canonical "you" key
+   *  — replacing `team.isPlayer` (which only worked when there was a
+   *  single human). */
+  activeTeamId: string | null;
+
+  /** Stable per-browser id, generated lazily from crypto.randomUUID()
+   *  and persisted in localStorage. Used to bind a seat in
+   *  `team.claimedBySessionId`, so a refresh reconnects to the same
+   *  team. NOT the same as a Supabase auth user — the lobby system
+   *  intentionally allows anonymous play. */
+  localSessionId: string | null;
+
+  /** @deprecated Use `state.session?.joinCode`. Kept as a shadow during
+   *  the lobby rollout; mirrored from `session.joinCode` whenever a
+   *  session is active so legacy `/join` and the facilitator console
+   *  keep working without a parallel migration. */
   sessionCode: string | null;
-  /** When true, the facilitator has locked the session — no NEW seats
-   *  can be claimed via /join. Existing players can still reconnect by
-   *  re-entering the same company name (rejoin path). Default false. */
+  /** @deprecated Use `state.session?.locked`. Mirrored on session
+   *  mutations same as `sessionCode`. */
   sessionLocked: boolean;
-  /** Slots reserved by the facilitator for players to claim. Each entry
-   *  represents an unclaimed seat — once a player joins with the session
-   *  code, one of these slots binds to their team. */
+  /** @deprecated Use `state.session?.seats`. Slot assignments are now
+   *  driven by `team.claimedBySessionId` directly in the multiplayer
+   *  flow; this array is kept synced for the existing `/join` page
+   *  until Step 5 of the rollout retires it. */
   sessionSlots: Array<{
     /** Stable id for this seat. */
     id: string;
