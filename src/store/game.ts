@@ -3515,7 +3515,12 @@ export const useGame = create<GameStore>()(
           worldCupHostCode: s.worldCupHostCode,
           olympicHostCode: s.olympicHostCode,
           allTeams: s.teams,
-          airportSlots: s.airportSlots,
+          // P0 fix: thread the post-early-auction slot pool. Earlier this
+          // was `s.airportSlots` (the pre-auction state), so slots
+          // awarded in the early auction were invisible here AND to the
+          // late auction below — capacity could be sold twice within
+          // the same quarter close.
+          airportSlots: slotsAfterEarlyAuction,
         });
 
         // Decrement remaining quarters on each contract; drop expired
@@ -3881,7 +3886,11 @@ export const useGame = create<GameStore>()(
         // from airportSlots (old save migration gap), seed it with a
         // fresh tier-default pool so the bid actually resolves instead
         // of being silently skipped by resolveSlotAuctions.
-        const slotsForAuction = { ...(s.airportSlots ?? {}) };
+        //
+        // P0 fix: start the late-auction pool from `slotsAfterEarlyAuction`
+        // not `s.airportSlots`. Otherwise capacity awarded in the early
+        // auction is still "available" here and gets re-awarded.
+        const slotsForAuction = { ...(slotsAfterEarlyAuction ?? {}) };
         const fresh = makeInitialAirportSlots();
         for (const code of Object.keys(bidsByAirport)) {
           if (!slotsForAuction[code] && fresh[code]) {

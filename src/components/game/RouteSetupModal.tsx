@@ -375,14 +375,35 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   })();
   const hasShortfall = shortfall.atOrigin > 0 || shortfall.atDest > 0;
 
-  // The button is enabled only when the user has explicitly set a bid for
-  // every airport with a shortfall. Without explicit confirmation we
-  // would be auto-bidding on the player's behalf, and the player could
-  // get outbid silently. Force a deliberate price entry.
-  const allBidsSet = !hasShortfall || (
-    (shortfall.atOrigin === 0 || (origin !== null && bidPrices[origin] !== undefined)) &&
-    (shortfall.atDest === 0   || (dest   !== null && bidPrices[dest]   !== undefined))
-  );
+  // The button is enabled when every shortfall airport has SOME bid in
+  // place. We auto-prime each BidRow's price to the tier minimum on
+  // mount, so an unset entry should never persist past the first
+  // render — but if the parent's reset effect clears bidPrices in
+  // response to a player ref change, BidRow's empty-deps useEffect
+  // doesn't re-fire and the entry stays undefined. The slider is still
+  // visibly showing minPrice though, so treating undefined as
+  // "implicit minimum bid" matches what the player sees and prevents
+  // the Submit button from getting stuck disabled.
+  const allBidsSet = !hasShortfall;
+  // Synchronise bidPrices with the visible default on first paint —
+  // this guarantees confirmRoute reads a real number for every shortfall
+  // airport even if the BidRow's own onMount prime hasn't fired yet.
+  useEffect(() => {
+    if (!hasShortfall || !origin || !dest) return;
+    const updates: Record<string, number> = {};
+    if (shortfall.atOrigin > 0 && bidPrices[origin] === undefined) {
+      const tier = (CITIES_BY_CODE[origin]?.tier ?? 1) as CityTier;
+      updates[origin] = BASE_SLOT_PRICE_BY_TIER[tier];
+    }
+    if (shortfall.atDest > 0 && bidPrices[dest] === undefined) {
+      const tier = (CITIES_BY_CODE[dest]?.tier ?? 1) as CityTier;
+      updates[dest] = BASE_SLOT_PRICE_BY_TIER[tier];
+    }
+    if (Object.keys(updates).length > 0) {
+      setBidPrices((prev) => ({ ...prev, ...updates }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasShortfall, shortfall.atOrigin, shortfall.atDest, origin, dest]);
 
   function confirmRoute() {
     if (!origin || !dest) return;
@@ -830,27 +851,60 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
           </Section>
         )}
 
-        {/* Live projection — passenger uses pax/seats, cargo uses tonnes. */}
-        {projection && (
-          <div className={cn(
-            "rounded-md border px-3 py-2.5 text-[0.8125rem]",
-            projection.tone === "neg" && "border-negative bg-[var(--negative-soft)] text-negative",
-            projection.tone === "warn" && "border-warning bg-[var(--warning-soft)] text-warning",
-            projection.tone === "pos" && "border-positive bg-[var(--positive-soft)] text-positive",
-          )}>
-            <div className="font-semibold uppercase tracking-wider text-[0.6875rem] mb-0.5">
-              Projected occupancy · {(projection.occupancy * 100).toFixed(0)}%
+        {/* Live projection — passenger uses pax/seats, cargo uses tonnes.
+            Shows BOTH daily and weekly figures so the player can sanity-
+            check against the weekly frequency they entered (24/wk) and
+            doesn't have to mentally divide by 7 to read the daily
+            capacity. */}
+        {projection && (() => {
+          const weeklyDemand = projection.demand * 7;
+          const weeklyCapacity = projection.capacity * 7;
+          const unitShort = projection.kind === "cargo" ? "T" : "pax";
+          const capUnit = projection.kind === "cargo" ? "T" : "seats";
+          return (
+            <div className={cn(
+              "rounded-md border px-3 py-2.5 text-[0.8125rem]",
+              projection.tone === "neg" && "border-negative bg-[var(--negative-soft)] text-negative",
+              projection.tone === "warn" && "border-warning bg-[var(--warning-soft)] text-warning",
+              projection.tone === "pos" && "border-positive bg-[var(--positive-soft)] text-positive",
+            )}>
+              <div className="font-semibold uppercase tracking-wider text-[0.6875rem] mb-1.5">
+                Projected occupancy · {(projection.occupancy * 100).toFixed(0)}%
+              </div>
+              {/* Two-column daily/weekly breakdown so units are explicit. */}
+              <div className="grid grid-cols-2 gap-2 text-[0.75rem] mb-1.5">
+                <div className="rounded-md bg-surface/50 px-2 py-1.5">
+                  <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">
+                    Per day
+                  </div>
+                  <div className="tabular font-mono text-ink mt-0.5">
+                    {Math.round(projection.demand).toLocaleString()} {unitShort} demand
+                  </div>
+                  <div className="tabular font-mono text-ink-2 text-[0.6875rem]">
+                    {Math.round(projection.capacity).toLocaleString()} {capUnit} capacity
+                  </div>
+                </div>
+                <div className="rounded-md bg-surface/50 px-2 py-1.5">
+                  <div className="text-[0.625rem] uppercase tracking-wider text-ink-muted">
+                    Per week
+                  </div>
+                  <div className="tabular font-mono text-ink mt-0.5">
+                    {Math.round(weeklyDemand).toLocaleString()} {unitShort} demand
+                  </div>
+                  <div className="tabular font-mono text-ink-2 text-[0.6875rem]">
+                    {Math.round(weeklyCapacity).toLocaleString()} {capUnit} capacity
+                  </div>
+                </div>
+              </div>
+              <div className="text-[0.6875rem] text-ink-2 leading-snug">
+                {projection.kind === "cargo" && "Cargo demand before market-focus + news modifiers. "}
+                {projection.tone === "neg" && "Route is unlikely to be profitable at this configuration."}
+                {projection.tone === "warn" && "Consider lowering frequency or adjusting fares."}
+                {projection.tone === "pos" && "Strong occupancy projected."}
+              </div>
             </div>
-            <div className="text-ink-2 text-[0.75rem]">
-              {projection.kind === "cargo"
-                ? `Daily demand ${Math.round(projection.demand)} T vs capacity ${Math.round(projection.capacity)} T (before market-focus + news modifiers).`
-                : `Daily demand ${Math.round(projection.demand)} pax vs capacity ${Math.round(projection.capacity)} seats.`}
-              {projection.tone === "neg" && " Route is unlikely to be profitable at this configuration."}
-              {projection.tone === "warn" && " Consider lowering frequency or adjusting fares."}
-              {projection.tone === "pos" && " Strong occupancy projected."}
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {error && (
           <div className="text-negative text-[0.875rem] rounded-md border border-[var(--negative-soft)] bg-[var(--negative-soft)] px-3 py-2">
