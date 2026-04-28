@@ -597,6 +597,40 @@ export function routeDemandPerDay(
   return { tourism, business, total: tourism + business, amplifier };
 }
 
+/** Distance-aware cabin class share of an OD pair's daily passenger
+ *  demand. Real-world long-haul routes carry a much higher business +
+ *  first-class share than short-haul commuter routes — corporate
+ *  travelers will pay for flat beds on a 12-hour flight, won't on
+ *  a 90-minute hop. Source-of-truth: ICAO RPK premium-vs-economy
+ *  split, IATA premium-economy reports.
+ *
+ *  Shares sum to 1.0:
+ *    short-haul  (<1500km):  1% first / 12% bus / 87% econ
+ *    domestic    (<4000km):  2% first / 16% bus / 82% econ
+ *    medium      (<8000km):  4% first / 22% bus / 74% econ
+ *    long-haul   (≥8000km):  6% first / 28% bus / 66% econ
+ *
+ *  Tier-1↔Tier-1 OD pairs (LHR-JFK, DXB-SIN, etc.) get a 1.20×
+ *  lift on premium classes capped at 10% first / 40% business —
+ *  global business hubs concentrate corporate trip volume. */
+export function classDemandShares(
+  distanceKm: number,
+  originTier: number,
+  destTier: number,
+): { first: number; bus: number; econ: number } {
+  let first: number, bus: number;
+  if (distanceKm < 1500)       { first = 0.01; bus = 0.12; }
+  else if (distanceKm < 4000)  { first = 0.02; bus = 0.16; }
+  else if (distanceKm < 8000)  { first = 0.04; bus = 0.22; }
+  else                          { first = 0.06; bus = 0.28; }
+  if (originTier === 1 && destTier === 1) {
+    first = Math.min(0.10, first * 1.20);
+    bus   = Math.min(0.40, bus   * 1.20);
+  }
+  const econ = Math.max(0, 1 - first - bus);
+  return { first, bus, econ };
+}
+
 /** Effective Travel Index for a given quarter — defaults to TRAVEL_INDEX
  *  but is overridden by any news item at that quarter that ships an
  *  explicit `travelIndex` value (e.g. recession dips, Olympics spikes).
@@ -1149,6 +1183,26 @@ export function slotFeeUsd(tier: 1 | 2 | 3 | 4): number {
   return tier === 1 ? 42_500 : tier === 2 ? 28_500 : tier === 3 ? 15_000 : 7_500;
 }
 
+/** Cross-route cargo-pool context. Built once per team per quarter
+ *  in the simulator: which OD pairs the team is serving with belly
+ *  cargo (passenger jets) vs dedicated freighters. Used to split the
+ *  OD's cargo demand 30% (parcels/mail → belly) vs 70% (full pallets
+ *  → freighter), avoiding the 130%-of-pool double-count when both
+ *  modes serve the same OD. UI preview callers can omit this. */
+export interface CargoPoolContext {
+  /** OD keys (sorted city-code pair "ABC|XYZ") where the team has
+   *  passenger flights with cargo bellies. */
+  hasBellyOD: Set<string>;
+  /** OD keys where the team has dedicated freighter routes. */
+  hasFreighterOD: Set<string>;
+}
+
+/** Sorted OD key — direction-agnostic. Cargo flows both ways equally
+ *  well, so ABC→XYZ and XYZ→ABC share a pool. */
+export function odKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
 export function computeRouteEconomics(
   team: Team,
   route: Route,
@@ -1157,6 +1211,7 @@ export function computeRouteEconomics(
   rivals?: Team[],
   worldCupHostCode?: string | null,
   olympicHostCode?: string | null,
+  cargoPool?: CargoPoolContext,
 ): RouteEconomics {
   const origin = CITIES_BY_CODE[route.originCode];
   const dest = CITIES_BY_CODE[route.destCode];
@@ -1226,12 +1281,20 @@ export function computeRouteEconomics(
     // suppressed Q4 freight visibility — Black Friday/December peak
     // is the largest single seasonal pulse in real air freight.
     const cargoSeasonal = seasonalMultiplier(quarter).cargo;
+    // Belly/freighter shared OD pool: when the team also has passenger
+    // routes carrying belly cargo on this same OD, the freighter only
+    // gets 70% of the pool (full pallets) and belly gets the remaining
+    // 30% (parcels/mail). Avoids the 130%-of-pool double-count when
+    // both modes are wired up. UI preview callers (no cargoPool ctx)
+    // see the legacy "freighter takes all" behavior.
+    const odK = odKey(route.originCode, route.destCode);
+    const freighterPoolShare = cargoPool?.hasBellyOD.has(odK) ? 0.70 : 1.0;
     const cargoDemandT = Math.max(
       0,
       Math.min(
         cityBusinessAtQuarter(origin, quarter) * cargoMultA,
         cityBusinessAtQuarter(dest, quarter) * cargoMultB,
-      ) * cargoFocusBonus * cargoNetworkBonus * cargoShockBonus * cargoSeasonal,
+      ) * cargoFocusBonus * cargoNetworkBonus * cargoShockBonus * cargoSeasonal * freighterPoolShare,
     );
     const dailyTonnes = Math.max(0, Math.min(dailyCapacityT, cargoDemandT));
     const occupancy = dailyCapacityT > 0 ? Math.max(0, Math.min(1.0, dailyTonnes / dailyCapacityT)) : 0;
@@ -1411,23 +1474,39 @@ export function computeRouteEconomics(
       doctrineDemandBonus * cabinPenalty,
   );
 
-  const dailyPax = Math.max(0, Math.min(dailyCapacity, effectiveDemand));
-  // Cap at 1.0 — earlier the engine clamped to 0.98 to reserve a
-  // "no-show buffer" but the player saw "98%" on every hot route and
-  // assumed it was a UI cap rather than the result. Real overbooked
-  // flights routinely achieve 100% load factor. Floor at 0 because
-  // load is a [0,1] ratio, not a signed delta.
-  let occupancy =
-    dailyCapacity > 0 ? Math.max(0, Math.min(1.0, dailyPax / dailyCapacity)) : 0;
+  // ── Per-class OD pools (Wave 3.2) ──────────────────────
+  // Earlier the engine pooled all demand into one number, distributed
+  // pax across cabins by seat-mix ratio, and reported a single load
+  // factor. That hid two real-airline dynamics:
+  //   1. Long-haul routes carry a higher business + first-class share
+  //      than commuter routes — corporates pay for flat beds on a 12h
+  //      flight, not on a 90min hop.
+  //   2. Economy demand can't fill a first-class cabin, and vice versa.
+  //      A long-haul widebody with too many first-class seats and a
+  //      budget tier should leave the front empty, not magic-fill it.
+  // Now each class has its own demand pool; capacity clamps per class;
+  // yield management lifts each class's fare independently.
+  const shares = classDemandShares(distanceKm, origin.tier, dest.tier);
+  const dailyDemandFirst = effectiveDemand * shares.first;
+  const dailyDemandBus   = effectiveDemand * shares.bus;
+  const dailyDemandEcon  = effectiveDemand * shares.econ;
 
-  // Tournament demand boost (PRD §10.3, refined per user feedback):
-  //   The World Cup and Olympics each have a single neutral host city
-  //   chosen at game start (tier 1-2, never a player or rival hub). The
-  //   demand surge applies ONLY to routes touching that host city — no
-  //   more global 100% load factor. The S10 winner ("global_brand") gets
-  //   the strongest version (capped 98% load through tournament window
-  //   + 50% uplift in the tail rounds); other airlines flying that city
-  //   still get a smaller surge from event traffic.
+  const dailyCapacityFirst = seatsPerFlight.first * route.dailyFrequency;
+  const dailyCapacityBus   = seatsPerFlight.bus   * route.dailyFrequency;
+  const dailyCapacityEcon  = seatsPerFlight.econ  * route.dailyFrequency;
+
+  let dailyPaxFirst = Math.max(0, Math.min(dailyCapacityFirst, dailyDemandFirst));
+  let dailyPaxBus   = Math.max(0, Math.min(dailyCapacityBus,   dailyDemandBus));
+  let dailyPaxEcon  = Math.max(0, Math.min(dailyCapacityEcon,  dailyDemandEcon));
+
+  // Tournament demand boost (PRD §10.3): the World Cup and Olympics each
+  // have a single neutral host city chosen at game start (tier 1-2,
+  // never a player or rival hub). The boost applies ONLY to routes
+  // touching that host city. The S10 winner ("global_brand") gets the
+  // strongest version on the main rounds; other airlines flying that
+  // city still get a smaller surge from event traffic. Boost lifts
+  // per-class pax (clamped by per-class capacity) so a premium-heavy
+  // carrier sees the front fill on World Cup routes too.
   const touchesWorldCup =
     worldCupHostCode &&
     (route.originCode === worldCupHostCode || route.destCode === worldCupHostCode);
@@ -1435,26 +1514,41 @@ export function computeRouteEconomics(
     olympicHostCode &&
     (route.originCode === olympicHostCode || route.destCode === olympicHostCode);
 
-  // World Cup window: rounds 19-24
+  function liftAllClasses(mult: number) {
+    if (mult === Infinity) {
+      dailyPaxFirst = dailyCapacityFirst;
+      dailyPaxBus   = dailyCapacityBus;
+      dailyPaxEcon  = dailyCapacityEcon;
+    } else {
+      dailyPaxFirst = Math.min(dailyCapacityFirst, dailyPaxFirst * mult);
+      dailyPaxBus   = Math.min(dailyCapacityBus,   dailyPaxBus   * mult);
+      dailyPaxEcon  = Math.min(dailyCapacityEcon,  dailyPaxEcon  * mult);
+    }
+  }
+
   if (touchesWorldCup && quarter >= 19 && quarter <= 24) {
     if (team.flags?.has("global_brand")) {
-      // S10 winner — sealed-in 100% load through the main event,
-      // +50% uplift in the tail two rounds (clamped at 1.0).
-      if (quarter <= 22) occupancy = 1.0;
-      else occupancy = Math.min(1.0, occupancy * 1.5);
+      if (quarter <= 22) liftAllClasses(Infinity);    // sealed at 100%
+      else               liftAllClasses(1.5);
     } else {
-      occupancy = Math.min(1.0, occupancy * 1.25);
+      liftAllClasses(1.25);
     }
   }
-  // Olympic window: rounds 29-32 (smaller global event than World Cup)
   if (touchesOlympic && quarter >= 29 && quarter <= 32) {
     if (team.flags?.has("premium_airline")) {
-      // S11 official partner — sealed at 100% on Olympic-host routes.
-      occupancy = Math.max(occupancy, 1.0);
+      liftAllClasses(Infinity);                       // sealed at 100%
     } else {
-      occupancy = Math.min(1.0, occupancy * 1.18);
+      liftAllClasses(1.18);
     }
   }
+
+  const dailyPax = dailyPaxFirst + dailyPaxBus + dailyPaxEcon;
+  // Cap at 1.0 — earlier the engine clamped to 0.98 to reserve a
+  // "no-show buffer" but the player saw "98%" on every hot route and
+  // assumed it was a UI cap. Real overbooked flights routinely hit
+  // 100%. Floor at 0 because load is a [0,1] ratio.
+  const occupancy =
+    dailyCapacity > 0 ? Math.max(0, Math.min(1.0, dailyPax / dailyCapacity)) : 0;
 
   // ─ Per-class fares (A7 + A11) ──────────────────────────
   const tier = PRICE_TIER[route.pricingTier];
@@ -1462,31 +1556,25 @@ export function computeRouteEconomics(
   let busFare = route.busFare ?? classFareRange(distanceKm, "bus").base * tier;
   let firstFare = route.firstFare ?? classFareRange(distanceKm, "first").base * tier;
 
-  // ── Yield management — when projected demand exceeds capacity,
-  //    real airlines extract more revenue per seat through dynamic
-  //    pricing (last-minute fare ladders, restricted inventory).
-  //    Without this, seasonal peaks invisibly bottleneck at 100%
-  //    occupancy and revenue looks flat across Q1↔Q3 even when
-  //    underlying demand swings 30%+. Modelled as a per-route fare
-  //    lift scaling with demand-pressure ratio.
-  //
-  //    Pressure = effectiveDemand / dailyCapacity, clamped [0, 2.0].
-  //    Lift  = clamp(0, 0.20, (pressure - 1.0) × 0.4)  · max 20%.
-  //    Premium cabins (First/Business) flex more than Economy
-  //    because business travel is less price-sensitive last-minute.
-  if (dailyCapacity > 0) {
-    const pressure = Math.min(2.0, effectiveDemand / dailyCapacity);
-    if (pressure > 1.0) {
-      const econLift = Math.min(0.15, (pressure - 1.0) * 0.30);
-      const busLift = Math.min(0.20, (pressure - 1.0) * 0.40);
-      const firstLift = Math.min(0.25, (pressure - 1.0) * 0.50);
-      econFare *= 1 + econLift;
-      busFare *= 1 + busLift;
-      firstFare *= 1 + firstLift;
-    }
+  // ── Yield management (per-class) — when one cabin's demand exceeds
+  //    its own capacity, real airlines lift THAT cabin's fare via
+  //    last-minute inventory restriction. Earlier the engine used
+  //    aggregate pressure, which lifted economy fares on a route
+  //    where only first-class was hot, and vice versa. Now each cabin
+  //    flexes independently. Premium cabins flex harder because
+  //    corporate trips are less price-sensitive last-minute.
+  function yieldLift(demand: number, capacity: number, max: number, slope: number): number {
+    if (capacity <= 0 || demand <= capacity) return 1;
+    const pressure = Math.min(2.0, demand / capacity);
+    return 1 + Math.min(max, (pressure - 1.0) * slope);
   }
+  econFare  *= yieldLift(dailyDemandEcon,  dailyCapacityEcon,  0.15, 0.30);
+  busFare   *= yieldLift(dailyDemandBus,   dailyCapacityBus,   0.20, 0.40);
+  firstFare *= yieldLift(dailyDemandFirst, dailyCapacityFirst, 0.25, 0.50);
 
-  // Blended ticket price used by market share / demand sensitivity
+  // Blended ticket price used by market share / demand sensitivity.
+  // Weighted by seat mix so premium-heavy fleets surface a higher
+  // average ticket price in the route summary.
   const seatMix = totalSeatsPerFlight > 0
     ? {
         f: seatsPerFlight.first / totalSeatsPerFlight,
@@ -1497,10 +1585,12 @@ export function computeRouteEconomics(
   const ticketPrice =
     firstFare * seatMix.f + busFare * seatMix.b + econFare * seatMix.e;
 
-  // Revenue: pax × fare, per class (pax distributed proportionally to seat mix)
-  const quarterlyFirstPax = seatsPerFlight.first * route.dailyFrequency * QUARTER_DAYS * occupancy;
-  const quarterlyBusPax = seatsPerFlight.bus * route.dailyFrequency * QUARTER_DAYS * occupancy;
-  const quarterlyEconPax = seatsPerFlight.econ * route.dailyFrequency * QUARTER_DAYS * occupancy;
+  // Revenue: per-class pax × per-class fare. Pax come from the
+  // class-vs-class clamps above, NOT from a single pooled occupancy
+  // distributed by seat-mix.
+  const quarterlyFirstPax = dailyPaxFirst * QUARTER_DAYS;
+  const quarterlyBusPax   = dailyPaxBus   * QUARTER_DAYS;
+  const quarterlyEconPax  = dailyPaxEcon  * QUARTER_DAYS;
   let quarterlyRevenue =
     quarterlyFirstPax * firstFare +
     quarterlyBusPax * busFare +
@@ -1535,13 +1625,16 @@ export function computeRouteEconomics(
     const cargoEventB = cityEventImpact(route.destCode, quarter).cargo / 100;
     const bellyMultA = Math.max(DEMAND_FLOOR_CARGO, 1 + cargoEventA);
     const bellyMultB = Math.max(DEMAND_FLOOR_CARGO, 1 + cargoEventB);
-    // Belly demand is a fraction (~30%) of full-cargo demand because
-    // belly cargo competes with dedicated freighters and most
-    // shipments need pallet-sized doors. We treat belly as a side
-    // market that won't cannibalize a full freighter. Cargo
-    // seasonality is now layered on the same as the dedicated
-    // freighter path (Q4 +18%, Q1 -10%) so belly freight surges in
-    // line with the holiday peak.
+    // Belly demand is the parcels/mail share (~30%) of full-cargo
+    // demand on this OD. Belly cargo doesn't compete with a freighter's
+    // pallet-sized hold for the same shipments — short parcels and
+    // mail flow with passenger jets, full pallets flow with freighters.
+    // Wave 3.2 paired this with the freighter path: when both modes
+    // serve the same OD the freighter takes 70% of pool, belly takes
+    // 30%. Without a freighter, belly is *still* capped at 30% (that's
+    // the parcels-mail market — the rest of the demand is unmet by
+    // belly alone, since shippers won't pay belly rates for full
+    // pallets). Cargo seasonality (Q4 +18% / Q1 −10%) layers on top.
     const bellySeasonal = seasonalMultiplier(quarter).cargo;
     const cargoDemandT = Math.min(
       cityBusinessAtQuarter(origin, quarter) * bellyMultA,
@@ -2380,6 +2473,38 @@ export function runQuarterClose(
   let fuelCost = 0;
   let slotCost = 0;
   let totalPassengers = 0;
+
+  // Cross-route cargo pool context (Wave 3.2): which OD pairs the
+  // team is serving with belly cargo (passenger jets w/ belly fitted)
+  // vs dedicated freighters. Lets computeRouteEconomics split the
+  // OD's cargo demand 70% freighter / 30% belly when both modes are
+  // wired up — avoids the 130%-of-pool double-count.
+  const cargoPool: CargoPoolContext = {
+    hasBellyOD: new Set<string>(),
+    hasFreighterOD: new Set<string>(),
+  };
+  for (const r of next.routes) {
+    if (r.status !== "active") continue;
+    const k = odKey(r.originCode, r.destCode);
+    if (r.isCargo) {
+      cargoPool.hasFreighterOD.add(k);
+    } else {
+      // Has belly capacity if any active passenger plane on the route
+      // ships any belly tonnage at all (any belly setting except none).
+      const hasBelly = r.aircraftIds.some((id) => {
+        const p = next.fleet.find((f) => f.id === id);
+        if (!p || p.status !== "active") return false;
+        const spec = AIRCRAFT_BY_ID[p.specId];
+        if (!spec || spec.family !== "passenger") return false;
+        const totalSeats = (p.customSeats?.first ?? spec.seats.first)
+          + (p.customSeats?.business ?? spec.seats.business)
+          + (p.customSeats?.economy ?? spec.seats.economy);
+        return cargoBellyTonnes(totalSeats, p.cargoBelly) > 0;
+      });
+      if (hasBelly) cargoPool.hasBellyOD.add(k);
+    }
+  }
+
   for (const r of next.routes) {
     if (r.status === "active") {
       // Route Legacy Bonus (PRD E8.1) — +12% after 4+ consecutive active quarters
@@ -2389,7 +2514,7 @@ export function runQuarterClose(
 
       const econ = computeRouteEconomics(
         next, r, ctx.quarter, ctx.fuelIndex, ctx.rivals,
-        ctx.worldCupHostCode, ctx.olympicHostCode,
+        ctx.worldCupHostCode, ctx.olympicHostCode, cargoPool,
       );
       const boostedRevenue = econ.quarterlyRevenue * legacyBonus * firstMoverBonus;
       revenue += boostedRevenue;
