@@ -9,6 +9,7 @@ import {
   applyOptionEffect,
   computeAirlineValue,
   computeBrandValue,
+  computeRouteEconomics,
   distanceBetween,
   effectiveBorrowingRate,
   maxBorrowingUsd,
@@ -27,7 +28,13 @@ import {
 } from "@/lib/slots";
 import { toast } from "./toasts";
 import { fmtQuarter, TOTAL_GAME_ROUNDS } from "@/lib/format";
-import { planBotAircraftOrder, planBotRoutes } from "@/lib/ai-bots";
+import {
+  planBotAircraftOrder,
+  planBotRoutes,
+  botSlotBidPrice,
+  botPickScenarioOption,
+  type BotDifficulty,
+} from "@/lib/ai-bots";
 import {
   saveSnapshot as snapSave,
   loadSnapshot as snapLoad,
@@ -843,10 +850,15 @@ export const useGame = create<GameStore>()(
             airlineName: meta.name, code: meta.code, doctrine,
             hubCode: hub, isPlayer: false, color: meta.color,
           });
-          // All AI rivals run as Medium-difficulty bots by default — they
-          // open routes, order aircraft, and bid for slots each quarter.
-          // Facilitator can override per-team via the admin console.
-          r.botDifficulty = "medium";
+          // Spread rival difficulties so the cohort feels mixed: a 5-rival
+          // game gets ~1 easy / 3 medium / 1 hard; a 9-rival game gets
+          // ~2 easy / 5 medium / 2 hard. Facilitator can still override
+          // per-team via the admin console.
+          const RIVAL_DIFFICULTY_MIX: BotDifficulty[] = [
+            "medium", "easy", "medium", "hard", "medium",
+            "easy", "medium", "hard", "medium",
+          ];
+          r.botDifficulty = RIVAL_DIFFICULTY_MIX[i % RIVAL_DIFFICULTY_MIX.length];
           // Give rivals some routes/fleet to make leaderboard plausible
           r.brandPts = 40 + Math.floor(Math.random() * 30);
           r.customerLoyaltyPct = 45 + Math.floor(Math.random() * 20);
@@ -3704,7 +3716,37 @@ export const useGame = create<GameStore>()(
           // Route openings — bot may start a few new routes from idle planes.
           // Each route's cargo/passenger flag is derived from the aircraft
           // family so cargo-only fleets create cargo routes automatically.
-          const routePlans = planBotRoutes(updated, t.botDifficulty, s.currentQuarter);
+          //
+          // The planner now sees the full team list as `rivals` so it
+          // penalises saturated ODs (player + other bots already there)
+          // and applies a yield filter to drop fuel-bleeders before
+          // they're even considered. See planBotRoutes JSDoc.
+          const routePlans = planBotRoutes(
+            updated,
+            t.botDifficulty,
+            s.currentQuarter,
+            s.teams.filter((tm) => tm.id !== t.id),
+          );
+          // Slot bid accumulator — when a bot opens a route, it must bid
+          // for any slots it doesn't already hold at both endpoints. The
+          // auction phase below this block will pick these up via
+          // `pendingSlotBids` and clear them against the airport's pool,
+          // so a bot that wants 14 slots/wk at JFK actually competes
+          // with the player and other bots for capacity.
+          const newBids: Record<string, { slots: number; price: number }> = {};
+          // Track committed-by-existing-routes slots so multiple new
+          // routes opened the same quarter accumulate correctly (a bot
+          // opening 3 routes that all want JFK should bid for 3× capacity).
+          const committedSlotsAtCode: Record<string, number> = {};
+          for (const code of Object.keys(updated.airportLeases ?? {})) {
+            committedSlotsAtCode[code] = 0;
+            for (const rt of updated.routes) {
+              if (rt.status !== "active" && rt.status !== "pending") continue;
+              if (rt.originCode === code || rt.destCode === code) {
+                committedSlotsAtCode[code] += rt.dailyFrequency * 7;
+              }
+            }
+          }
           for (const rp of routePlans) {
             const dist = distanceBetween(rp.origin, rp.dest);
             const dailyFreq = Math.max(1 / 7, rp.weeklyFreq / 7);
@@ -3733,6 +3775,25 @@ export const useGame = create<GameStore>()(
               consecutiveQuartersActive: 0,
               consecutiveLosingQuarters: 0,
             };
+            // Compute slot deficit at both endpoints. Bots already get
+            // ~30 free slots at popular destinations from team-factory,
+            // so most early routes don't need bids; longer-tail routes
+            // and growth runs into capacity and starts competing.
+            const weeklyNeed = dailyFreq * 7;
+            for (const code of [rp.origin, rp.dest]) {
+              const held = updated.airportLeases?.[code]?.slots ?? 0;
+              const used = committedSlotsAtCode[code] ?? 0;
+              const deficit = Math.max(0, used + weeklyNeed - held);
+              committedSlotsAtCode[code] = used + weeklyNeed;
+              if (deficit > 0) {
+                const cur = newBids[code];
+                const price = botSlotBidPrice(t.botDifficulty, code);
+                newBids[code] = {
+                  slots: (cur?.slots ?? 0) + Math.ceil(deficit),
+                  price: Math.max(cur?.price ?? 0, price),
+                };
+              }
+            }
             updated = {
               ...updated,
               routes: [...updated.routes, route],
@@ -3743,10 +3804,102 @@ export const useGame = create<GameStore>()(
               ),
             };
           }
+          // Append accumulated slot bids to the team's pendingSlotBids.
+          // The auction phase below clears these vs the player's bids.
+          if (Object.keys(newBids).length > 0) {
+            const newPending = [...(updated.pendingSlotBids ?? [])];
+            for (const code of Object.keys(newBids)) {
+              const existing = newPending.find((b) => b.airportCode === code);
+              if (existing) {
+                existing.slots = Math.max(existing.slots, newBids[code].slots);
+                existing.pricePerSlot = Math.max(existing.pricePerSlot, newBids[code].price);
+              } else {
+                newPending.push({
+                  airportCode: code,
+                  slots: newBids[code].slots,
+                  pricePerSlot: newBids[code].price,
+                  quarterSubmitted: s.currentQuarter,
+                });
+              }
+            }
+            updated = { ...updated, pendingSlotBids: newPending };
+          }
           return updated;
         });
+
+        // ── Bot scenario resolution ───────────────────────────────
+        // Earlier bots silently ignored every board scenario — the
+        // procedural leaderboard hid the impact, but the activity feed
+        // showed zero bot decisions and the rival's flags/decisions
+        // arrays stayed empty regardless of strategy. Now each bot
+        // walks every scenario for the current quarter, picks an option
+        // via `botPickScenarioOption(difficulty, scenarioId)`, applies
+        // the immediate effect (cash, brand, ops, loyalty, setFlags),
+        // and records the decision row so the audit trail reflects
+        // their choices. Deferred / acquire / refinance effects are
+        // not yet wired for bots — those need more plumbing and aren't
+        // needed for the leaderboard signal.
+        const scenariosThisQuarter = SCENARIOS_BY_QUARTER[s.currentQuarter] ?? [];
+        const teamsAfterBotScenarios = teamsAfterBotTurns.map((t) => {
+          if (!t.botDifficulty) return t;
+          if (scenariosThisQuarter.length === 0) return t;
+          let updated = { ...t, flags: new Set(t.flags) };
+          const newDecisions: ScenarioDecision[] = [];
+          for (const sc of scenariosThisQuarter) {
+            // Skip if already decided (defensive — bots shouldn't have
+            // decisions yet, but guards against double-apply on
+            // snapshot/restore replays).
+            if (updated.decisions.some(
+              (d) => d.scenarioId === sc.id && d.quarter === s.currentQuarter,
+            )) continue;
+            // Walk eligible options — skip blocked-by-flags and
+            // cargo-fleet-required options the bot can't satisfy.
+            const eligible = sc.options.filter((o) => {
+              if (o.blockedByFlags?.some((f) => updated.flags.has(f))) return false;
+              if (o.requires === "cargo-fleet") {
+                const hasCargo = updated.fleet.some(
+                  (a) => a.status !== "retired" && AIRCRAFT_BY_ID[a.specId]?.family === "cargo",
+                );
+                if (!hasCargo) return false;
+              }
+              return true;
+            });
+            if (eligible.length === 0) continue;
+            const preferredId = botPickScenarioOption(t.botDifficulty, sc.id);
+            const picked = eligible.find((o) => o.id === preferredId) ?? eligible[0];
+            // Apply immediate, simple effects only.
+            const e = picked.effect;
+            if (typeof e.cash === "number") {
+              updated.cashUsd = Math.max(0, updated.cashUsd + e.cash);
+            }
+            if (typeof e.brandPts === "number") {
+              updated.brandPts = Math.max(0, Math.min(100, updated.brandPts + e.brandPts));
+            }
+            if (typeof e.opsPts === "number") {
+              updated.opsPts = Math.max(0, Math.min(100, updated.opsPts + e.opsPts));
+            }
+            if (typeof e.loyaltyDelta === "number") {
+              updated.customerLoyaltyPct = Math.max(0, Math.min(100, updated.customerLoyaltyPct + e.loyaltyDelta));
+            }
+            if (e.setFlags) {
+              for (const f of e.setFlags) updated.flags.add(f);
+            }
+            newDecisions.push({
+              scenarioId: sc.id as ScenarioDecision["scenarioId"],
+              optionId: picked.id,
+              quarter: s.currentQuarter,
+              lockInQuarters: 0,
+              submittedAt: Date.now(),
+            });
+          }
+          if (newDecisions.length > 0) {
+            updated = { ...updated, decisions: [...updated.decisions, ...newDecisions] };
+          }
+          return updated;
+        });
+
         // Replace s.teams reference for downstream rival processing
-        Object.assign(s, { teams: teamsAfterBotTurns });
+        Object.assign(s, { teams: teamsAfterBotScenarios });
 
         // Strategy-driven rival quarter-close.
         // Each rival has a doctrine that shapes their revenue model:
@@ -3852,11 +4005,107 @@ export const useGame = create<GameStore>()(
             }
           }
 
-          const revenue = baseRevenue * brandMul * maturityMul *
+          // ── Wave 4 — Real route economics ──────────────────────
+          // Earlier the rival's revenue/cost was 100% procedural and
+          // their `route.quarterlyRevenue / quarterlyFuelCost / etc.`
+          // fields stayed at 0 forever. Now we run computeRouteEconomics
+          // on each of the rival's routes against the SAME engine the
+          // player uses. Two consequences:
+          //   (1) Rival route table data is real (occupancy, daily pax,
+          //       per-route revenue, fuel) — facilitator console + the
+          //       view-as-rival mode now show meaningful numbers.
+          //   (2) Real route revenue replaces the procedural baseline
+          //       once the rival has a non-trivial network. Procedural
+          //       still applies in early game when route count is small,
+          //       so the leaderboard doesn't flatline at quarter 1.
+          const otherTeamsForEcon = s.teams.filter((tm) => tm.id !== r.id);
+          const cargoPool = {
+            hasBellyOD: new Set<string>(
+              r.routes
+                .filter((rt) => !rt.isCargo && rt.status === "active")
+                .map((rt) => odKey(rt.originCode, rt.destCode)),
+            ),
+            hasFreighterOD: new Set<string>(
+              r.routes
+                .filter((rt) => rt.isCargo && rt.status === "active")
+                .map((rt) => odKey(rt.originCode, rt.destCode)),
+            ),
+          };
+          let realRouteRevenue = 0;
+          let realRouteFuel = 0;
+          let realRouteSlots = 0;
+          const refreshedRoutes = r.routes.map((rt) => {
+            if (rt.status !== "active") return rt;
+            const econ = computeRouteEconomics(
+              r,
+              rt,
+              s.currentQuarter,
+              s.fuelIndex,
+              otherTeamsForEcon,
+              s.worldCupHostCode ?? null,
+              s.olympicHostCode ?? null,
+              cargoPool,
+            );
+            realRouteRevenue += econ.quarterlyRevenue;
+            realRouteFuel += econ.quarterlyFuelCost;
+            realRouteSlots += econ.quarterlySlotCost;
+            return {
+              ...rt,
+              quarterlyRevenue: econ.quarterlyRevenue,
+              quarterlyFuelCost: econ.quarterlyFuelCost,
+              quarterlySlotCost: econ.quarterlySlotCost,
+              avgOccupancy: econ.occupancy,
+              consecutiveLosingQuarters:
+                econ.quarterlyRevenue - econ.quarterlyFuelCost - econ.quarterlySlotCost < 0
+                  ? rt.consecutiveLosingQuarters + 1
+                  : 0,
+              consecutiveQuartersActive: rt.consecutiveQuartersActive + 1,
+            };
+          });
+
+          // Procedural baseline (unchanged math)
+          const proceduralRevenue =
+            baseRevenue * brandMul * maturityMul *
             (1 + personalityNoise) * overlapPenalty * hubPenalty;
-          const fuelDrag = fuelStress * fuelSensitivity * revenue * 0.18;
+          // Blend: lean on real route revenue once the rival has 4+
+          // active routes (mature network); fade in over [0..4] route
+          // count so early game still uses the procedural model.
+          const networkSize = rivalActiveRoutes.length;
+          const realWeight = Math.min(1, networkSize / 4);
+          const blendedRevenue =
+            realRouteRevenue * realWeight + proceduralRevenue * (1 - realWeight);
+
+          // Lease + maintenance — every active aircraft costs money to
+          // operate even when not flying. Lease quarterlies were never
+          // deducted from rival cash before, so leased fleets ran free.
+          // Maintenance is approx $200K per active narrowbody / $400K
+          // wide / $300K freighter per quarter — light heuristic, not
+          // the player's full 7-factor model, but enough to stop bots
+          // from accumulating cash forever.
+          let leaseAndMaintenance = 0;
+          for (const f of r.fleet) {
+            if (f.status !== "active") continue;
+            if (f.acquisitionType === "lease" && f.leaseQuarterly) {
+              leaseAndMaintenance += f.leaseQuarterly;
+            }
+            const spec = AIRCRAFT_BY_ID[f.specId];
+            const seats = spec ? spec.seats.first + spec.seats.business + spec.seats.economy : 0;
+            const maint =
+              spec?.family === "cargo" ? 300_000 :
+              seats > 250 ? 400_000 : 200_000;
+            leaseAndMaintenance += maint;
+          }
+
+          const fuelDrag = fuelStress * fuelSensitivity * blendedRevenue * 0.18;
           const adjustedMargin = marginPct - fuelStress * 0.04;
-          const netProfit = revenue * adjustedMargin - fuelDrag;
+          // Real route fuel/slot already capture some of this — when the
+          // real path dominates, fold it in instead of stacking. We use
+          // the real costs for the realWeight share and procedural
+          // margin for the residual procedural share.
+          const realCosts = realRouteFuel + realRouteSlots + leaseAndMaintenance;
+          const proceduralCosts = proceduralRevenue * (1 - adjustedMargin) + fuelDrag;
+          const blendedCosts = realCosts * realWeight + proceduralCosts * (1 - realWeight);
+          const netProfit = blendedRevenue - blendedCosts;
 
           // Brand drift — successful rivals build brand, losing rivals erode it
           const driftBrand = netProfit > 0 ? 1 + Math.random() * 1.5 : -1 - Math.random();
@@ -3871,6 +4120,7 @@ export const useGame = create<GameStore>()(
             brandPts: newBrand,
             customerLoyaltyPct: newLoyalty,
             cashUsd: newCash,
+            routes: refreshedRoutes,
             financialsByQuarter: [
               // Dedupe rivals' financials too so snapshot-restore +
               // re-close doesn't add a duplicate row on the rival
@@ -3880,8 +4130,8 @@ export const useGame = create<GameStore>()(
                 quarter: s.currentQuarter,
                 cash: newCash,
                 debt: r.totalDebtUsd,
-                revenue,
-                costs: revenue - netProfit,
+                revenue: blendedRevenue,
+                costs: blendedCosts,
                 netProfit,
                 brandPts: newBrand,
                 opsPts: r.opsPts,

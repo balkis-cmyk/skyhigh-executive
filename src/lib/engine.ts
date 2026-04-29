@@ -1223,24 +1223,63 @@ export function computeRouteEconomics(
   const loyaltyFactor = loyaltyRetentionFactor(team.customerLoyaltyPct);
 
   // PRD §5.4 — competitor pressure on shared markets.
-  // When rivals have hubs at our route endpoints, they capture some of the
-  // demand pool. Player's own brand strength resists this pressure.
+  // Three signals, in increasing order of strength:
+  //   (1) Hub-at-endpoint   — rival's hub touches our origin or dest.
+  //                           Light pressure (legacy behavior).
+  //   (2) Endpoint-overlap  — rival flies a route from one of our endpoints
+  //                           but to a different city. Medium pressure.
+  //   (3) OD-overlap        — rival flies the SAME origin→dest pair.
+  //                           Strong pressure (we share the demand pool).
+  //
+  // Earlier this only checked (1), so a rival that opened a parallel
+  // LHR↔DXB lane wasn't visible to the engine — the player's revenue
+  // didn't move when a Hard bot started running the same lane. Now the
+  // OD-overlap signal is dominant, and when a bot has zero recorded
+  // routes (early-game / save migration) we still fall back on hub
+  // pressure so the model stays continuous.
+  const odK = odKey(route.originCode, route.destCode);
   let competitorPressure = 1.0;
   if (rivals && rivals.length > 0) {
     let pressure = 0;
     for (const rv of rivals) {
+      const rvAttractiveness =
+        (rv.brandPts / 100) * 0.5 + (rv.customerLoyaltyPct / 100) * 0.5;
       const rvHubs = new Set([rv.hubCode, ...(rv.secondaryHubCodes ?? [])]);
-      // Direct-hub rival at either endpoint = strongest pressure
-      if (rvHubs.has(origin.code) || rvHubs.has(dest.code)) {
-        // Brand-weighted: a stronger rival takes a bigger bite
-        const rvAttractiveness = (rv.brandPts / 100) * 0.5 + (rv.customerLoyaltyPct / 100) * 0.5;
-        pressure += rvAttractiveness * 0.12;
+      const rvActiveRoutes = rv.routes.filter(
+        (r) => r.status === "active" || r.status === "pending",
+      );
+      // Direct OD overlap — the strongest signal. A rival flying our
+      // exact LHR↔DXB lane splits the OD demand pool with us.
+      const directOverlap = rvActiveRoutes.some(
+        (r) => odKey(r.originCode, r.destCode) === odK,
+      );
+      // Endpoint touch — rival flies *from* one of our endpoints but to
+      // a different city. Captures partial demand via connecting traffic.
+      const endpointTouch =
+        !directOverlap &&
+        rvActiveRoutes.some(
+          (r) =>
+            r.originCode === origin.code ||
+            r.destCode === origin.code ||
+            r.originCode === dest.code ||
+            r.destCode === dest.code,
+        );
+      const hubAtEndpoint = rvHubs.has(origin.code) || rvHubs.has(dest.code);
+
+      if (directOverlap) {
+        pressure += rvAttractiveness * 0.28; // strongest
+      } else if (endpointTouch) {
+        pressure += rvAttractiveness * 0.16;
+      } else if (hubAtEndpoint) {
+        // Legacy fallback when the rival has no recorded routes yet —
+        // hub presence still signals competition.
+        pressure += rvAttractiveness * 0.10;
       }
     }
     // Player's own attractiveness mitigates the pressure
     const ownAttractiveness =
       (team.brandPts / 100) * 0.5 + (team.customerLoyaltyPct / 100) * 0.5;
-    competitorPressure = Math.max(0.55, 1 - pressure + ownAttractiveness * 0.15);
+    competitorPressure = Math.max(0.45, 1 - pressure + ownAttractiveness * 0.15);
   }
 
   const demand = {
@@ -1286,8 +1325,8 @@ export function computeRouteEconomics(
     // gets 70% of the pool (full pallets) and belly gets the remaining
     // 30% (parcels/mail). Avoids the 130%-of-pool double-count when
     // both modes are wired up. UI preview callers (no cargoPool ctx)
-    // see the legacy "freighter takes all" behavior.
-    const odK = odKey(route.originCode, route.destCode);
+    // see the legacy "freighter takes all" behavior. `odK` is reused
+    // from the competitorPressure block above — same key.
     const freighterPoolShare = cargoPool?.hasBellyOD.has(odK) ? 0.70 : 1.0;
     const cargoDemandT = Math.max(
       0,

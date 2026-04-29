@@ -49,17 +49,19 @@ export interface WorldMapProps {
   className?: string;
 }
 
-/** Hand-picked plausible route pattern per mocked rival hub. */
-const RIVAL_ROUTES: Record<string, string[]> = {
-  SIN: ["HKG", "BKK", "KUL", "BOM", "SYD", "NRT"],
-  LHR: ["JFK", "DXB", "CDG", "FRA", "HKG", "LAX"],
-  DXB: ["LHR", "JFK", "NRT", "BOM", "CDG", "JNB"],
-  NRT: ["HKG", "SIN", "LAX", "SFO", "ICN", "PVG"],
-  CPH: ["ARN", "OSL", "LHR", "JFK", "FRA"],
+/** Fallback when a rival has zero recorded routes (early game / save
+ *  migration). The startNewGame seed already builds a 4-6 route network
+ *  per rival hub so this is rarely hit in normal play. */
+const RIVAL_HUB_FALLBACKS: Record<string, string[]> = {
+  SIN: ["HKG", "BKK", "KUL", "BOM"],
+  LHR: ["JFK", "DXB", "CDG", "FRA"],
+  DXB: ["LHR", "JFK", "NRT", "BOM"],
+  NRT: ["HKG", "SIN", "LAX", "SFO"],
+  CPH: ["ARN", "OSL", "LHR", "JFK"],
   JNB: ["LHR", "DXB", "NBO", "CDG"],
-  GRU: ["EZE", "MIA", "LIM", "JFK", "CDG"],
-  HKG: ["NRT", "SIN", "BKK", "PVG", "SYD", "LAX"],
-  ORD: ["JFK", "LAX", "SFO", "LHR", "CDG", "FRA"],
+  GRU: ["EZE", "MIA", "LIM", "JFK"],
+  HKG: ["NRT", "SIN", "BKK", "PVG"],
+  ORD: ["JFK", "LAX", "SFO", "LHR"],
 };
 
 /** Sample N points along a great-circle path from a→b, blended
@@ -493,15 +495,48 @@ export function WorldMap({
 
         <MapEventBridge onClickEmpty={() => onClearSelection?.()} />
 
-        {/* Rival routes (muted dashed) — opacity dropped to 0.28 so a
-            cluster of overlapping rival lanes (e.g. Pacific Crest's
-            Tokyo→US west-coast trio) reads as a soft hint of competition
-            rather than a brown sheaf. */}
+        {/* Rival routes (muted dashed) — driven from each rival's actual
+            `routes` array so the map reflects bot activity in real time:
+            when a Hard bot opens 3 new lanes this quarter, those lanes
+            appear next quarter. Falls back to the static seed only when
+            a rival has zero recorded routes (early game / save migration).
+            Opacity dropped to 0.28 so overlapping rival lanes read as a
+            soft hint of competition rather than a brown sheaf. Suspended
+            and closed routes are filtered out — only `active` and
+            `pending` shown so the map stays current. */}
         {(rivals ?? []).flatMap((rv) => {
-          const dests = RIVAL_ROUTES[rv.hubCode] ?? [];
           const hub = CITIES_BY_CODE[rv.hubCode];
           if (!hub) return [];
-          return dests
+          // Real routes: every active or pending lane the bot owns.
+          const realRoutes = rv.routes.filter(
+            (r) => r.status === "active" || r.status === "pending",
+          );
+          if (realRoutes.length > 0) {
+            return realRoutes
+              .map((r) => {
+                const a = CITIES_BY_CODE[r.originCode];
+                const b = CITIES_BY_CODE[r.destCode];
+                if (!a || !b) return null;
+                const positions = greatCirclePath(a.lon, a.lat, b.lon, b.lat, 32);
+                return (
+                  <Polyline
+                    key={`r-${rv.id}-${r.id}`}
+                    positions={positions}
+                    pathOptions={{
+                      color: rv.color,
+                      weight: 0.8,
+                      opacity: r.status === "pending" ? 0.18 : 0.28,
+                      dashArray: r.status === "pending" ? "1 6" : "2 4",
+                    }}
+                  />
+                );
+              })
+              .filter(Boolean) as React.ReactElement[];
+          }
+          // Fallback: hand-seeded hub spokes — only if the rival has no
+          // recorded routes yet.
+          const fallbackDests = RIVAL_HUB_FALLBACKS[rv.hubCode] ?? [];
+          return fallbackDests
             .map((destCode) => {
               const d = CITIES_BY_CODE[destCode];
               if (!d) return null;

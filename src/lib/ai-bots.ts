@@ -28,7 +28,7 @@ import { CITIES, CITIES_BY_CODE } from "@/data/cities";
 import { AIRCRAFT, AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { distanceBetween, maxRouteDailyFrequency, baseFareForDistance } from "@/lib/engine";
 import { BASE_SLOT_PRICE_BY_TIER } from "@/lib/slots";
-import type { Team, FleetAircraft, Route, City, PricingTier } from "@/types/game";
+import type { Team, FleetAircraft, PricingTier } from "@/types/game";
 
 export type BotDifficulty = "easy" | "medium" | "hard";
 
@@ -123,11 +123,22 @@ export function botPickScenarioOption(
 
 /** Plan a bot's route-opening actions for this quarter. Returns up to N
  *  candidate routes the bot would like to open (origin, dest, plane,
- *  weekly freq, fares) — the caller validates + executes. */
+ *  weekly freq, fares) — the caller validates + executes.
+ *
+ *  Profitability + competition awareness (Wave 4):
+ *    - Saturated ODs penalised: when player + other rivals already fly
+ *      the same OD, score drops sharply (avoid bidding into a glut).
+ *    - Yield sanity check: estimated daily fuel cost must be < estimated
+ *      daily revenue at base fare × 0.6 occupancy. Anything below this
+ *      threshold is dropped before scoring (bot won't open a route that
+ *      bleeds cash on day one).
+ *    - Range/comfort fit kept (wides like 8000km+, narrows like ~4000km).
+ *    - Tier preference kept (T1 dests preferred). */
 export function planBotRoutes(
   team: Team,
   difficulty: BotDifficulty,
   currentQuarter: number,
+  rivals: Team[] = [],
 ): Array<{
   origin: string;
   dest: string;
@@ -153,8 +164,23 @@ export function planBotRoutes(
     }
   }
 
+  // Build a map of OD pair → competitor count from rivals' active routes.
+  // Used to penalise routes that are already crowded so the bot picks
+  // emptier markets. Direction-agnostic via odKey-style sorted pair.
+  const odSorted = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const odCompetitorCount: Record<string, number> = {};
+  for (const rv of rivals) {
+    if (rv.id === team.id) continue;
+    for (const r of rv.routes) {
+      if (r.status !== "active" && r.status !== "pending") continue;
+      const k = odSorted(r.originCode, r.destCode);
+      odCompetitorCount[k] = (odCompetitorCount[k] ?? 0) + 1;
+    }
+  }
+
   // Candidate destinations: hub + secondary hubs as origins, every other
-  // city as dest. Score each by demand × amplifier × distance fit.
+  // city as dest. Score each by demand × amplifier × distance fit, then
+  // discount by competitor saturation and apply yield filter.
   const hubs = [team.hubCode, ...(team.secondaryHubCodes ?? [])];
   const candidates: Array<{
     origin: string;
@@ -174,6 +200,24 @@ export function planBotRoutes(
         const dist = distanceBetween(origin, dest.code);
         if (dist > spec.rangeKm) continue;
         if (existing.has(`${origin}-${dest.code}`)) continue;
+
+        // Yield sanity — drop routes that would bleed cash on day one.
+        // Approx daily revenue at 60% occupancy × base fare ÷ 1.4 (the
+        // fare-fee discount factor most class mixes apply); approx daily
+        // fuel cost at $0.85/L × spec.fuelLPerKm × dist × 1 flight/day.
+        // If revenue doesn't beat fuel by ≥ 1.4× we skip. Hard bots
+        // accept thinner margins (1.15×); easy bots want comfort (1.6×).
+        const isCargo = spec.family === "cargo";
+        if (!isCargo) {
+          const seats = spec.seats.first + spec.seats.business + spec.seats.economy;
+          const dailyRev = seats * 0.6 * (baseFareForDistance(dist) / 1.4);
+          const dailyFuel = (spec.fuelBurnPerKm ?? 4) * dist * 0.85;
+          const margin =
+            difficulty === "hard" ? 1.15 :
+            difficulty === "easy" ? 1.6 : 1.35;
+          if (dailyRev < dailyFuel * margin) continue;
+        }
+
         // Score: bigger total demand on shorter distance wins for narrow,
         // longer distance for wide-body. Tier-1 dests preferred.
         const baseDemand = (originCity.tourism + originCity.business)
@@ -184,7 +228,20 @@ export function planBotRoutes(
         const distFit = isWide
           ? Math.min(1, dist / 8000) // wides like long
           : Math.max(0.3, 1 - Math.abs(dist - 4000) / 6000); // narrows mid-range
-        const score = baseDemand * tierBonus * distFit;
+
+        // Saturation penalty: if N rivals already fly this OD, demand
+        // pool is shared. 0 rivals → 1.0×, 1 → 0.7×, 2 → 0.5×, 3+ → 0.35×.
+        // Hard bots are more willing to muscle in (less penalty).
+        const compCount = odCompetitorCount[odSorted(origin, dest.code)] ?? 0;
+        const baseSat = compCount === 0 ? 1.0
+          : compCount === 1 ? 0.7
+          : compCount === 2 ? 0.5
+          : 0.35;
+        const satPenalty = difficulty === "hard"
+          ? 1 - (1 - baseSat) * 0.5  // hard bots discount the saturation hit
+          : baseSat;
+
+        const score = baseDemand * tierBonus * distFit * satPenalty;
         candidates.push({ origin, dest: dest.code, aircraft: plane, score });
       }
     }
