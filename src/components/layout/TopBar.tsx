@@ -194,6 +194,22 @@ function CloseQuarterButton() {
   const currentQuarter = useGame((s) => s.currentQuarter);
   const player = useGame(selectPlayer);
   const openPanel = useUi((u) => u.openPanel);
+  // Multiplayer-aware ready flag wiring — when in self-guided mode
+  // with ≥2 humans, the Next Quarter button becomes a Ready toggle
+  // for the active player (instead of running closeQuarter directly).
+  // The auto-advance hook in setActiveTeamReady fires close once
+  // every human has flipped ready. Solo + facilitated keep the
+  // existing instant-close flow.
+  const sessionMode = useGame((s) => s.session?.mode ?? null);
+  const humanCount = useGame(
+    (s) => s.teams.filter((t) => t.controlledBy === "human").length,
+  );
+  const activeTeamId = useGame((s) => s.activeTeamId ?? s.playerTeamId);
+  const myReady = useGame(
+    (s) => s.teams.find((t) => t.id === (s.activeTeamId ?? s.playerTeamId))?.readyForNextQuarter ?? false,
+  );
+  const setActiveTeamReady = useGame((s) => s.setActiveTeamReady);
+  const isMultiplayerSelfGuided = sessionMode === "self_guided" && humanCount >= 2;
   // Quarter close readiness modal — replaces the simple "you have N
   // pending decisions, close anyway?" prompt with a full pre-close
   // checklist (recommendation #1: stronger quarter cockpit). The
@@ -202,6 +218,8 @@ function CloseQuarterButton() {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   if (!player) return null;
+  // activeTeamId fallback already handled above; just satisfy TS
+  void activeTeamId;
 
   const pending = (SCENARIOS_BY_QUARTER[currentQuarter] ?? []).filter(
     (sc) => !player.decisions.some((d) => d.scenarioId === sc.id && d.quarter === currentQuarter),
@@ -303,15 +321,38 @@ function CloseQuarterButton() {
 
   const issueCount = checks.filter((c) => c.status === "warn" || c.status === "danger").length;
 
+  // In multiplayer self-guided mode, the primary CTA flips to a Ready
+  // toggle: clicking it marks the active player ready (so the cohort
+  // close fires when everyone's done) and clicking it again unmarks.
+  // The pre-flight modal still appears the FIRST time so the player
+  // sees the readiness checks; subsequent toggles bypass it.
+  const primaryLabel = isMultiplayerSelfGuided
+    ? (myReady ? "Ready ✓ — waiting on cohort" : "Mark Ready →")
+    : "Next Quarter →";
+  const primaryTitle = isMultiplayerSelfGuided
+    ? (myReady
+        ? "You're ready. Quarter advances automatically once every player marks ready. Click again to unmark."
+        : "Lock your decisions for this round. The quarter closes when every player has marked ready.")
+    : "Lock decisions + run quarter close.";
+
   return (
     <>
       <Button
-        variant="primary"
+        variant={isMultiplayerSelfGuided && myReady ? "ghost" : "primary"}
         size="sm"
-        onClick={() => setConfirmOpen(true)}
-        title="Lock decisions + run quarter close. In multi-team play this signals 'I'm ready' — the round advances when all teams (or admin) confirm."
+        onClick={() => {
+          if (isMultiplayerSelfGuided && myReady) {
+            // Already ready — clicking unmarks. No modal.
+            setActiveTeamReady(false);
+            return;
+          }
+          // Open the readiness modal (solo + facilitated + first-mark
+          // multiplayer all surface the pre-flight check first).
+          setConfirmOpen(true);
+        }}
+        title={primaryTitle}
       >
-        Next Quarter →
+        {primaryLabel}
       </Button>
 
       <Modal open={confirmOpen} onClose={() => setConfirmOpen(false)} className="max-w-xl">
@@ -378,10 +419,18 @@ function CloseQuarterButton() {
             variant="primary"
             onClick={() => {
               setConfirmOpen(false);
-              closeQuarter();
+              if (isMultiplayerSelfGuided) {
+                // Mark ready; the auto-advance hook in the store fires
+                // closeQuarter when every human team is ready.
+                setActiveTeamReady(true);
+              } else {
+                closeQuarter();
+              }
             }}
           >
-            {issueCount === 0 ? "Close quarter →" : "Close anyway →"}
+            {isMultiplayerSelfGuided
+              ? (issueCount === 0 ? "Mark ready →" : "Mark ready anyway →")
+              : (issueCount === 0 ? "Close quarter →" : "Close anyway →")}
           </Button>
         </ModalFooter>
       </Modal>
