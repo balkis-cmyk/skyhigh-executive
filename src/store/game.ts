@@ -77,6 +77,7 @@ import {
   hubPriceUsd,
   ONBOARDING_TOTAL_BUDGET_USD,
 } from "@/lib/hub-pricing";
+import { createInitializedTeamFromOnboarding } from "@/lib/games/team-factory";
 import type {
   AirportBid,
   AirportLease,
@@ -360,6 +361,18 @@ export interface GameStore extends GameState {
   advanceToNext(): void;
   resetGame(): void;
 
+  /** Toggle this team's ready-for-next-quarter flag. In self-guided
+   *  multiplayer the engine auto-advances when every active human
+   *  team is ready; in facilitated mode the facilitator still drives
+   *  the close but can see who's submitted. Solo runs ignore this —
+   *  the existing Next Quarter button advances directly. */
+  setActiveTeamReady(ready: boolean): void;
+
+  /** True when every active human team has marked ready. Self-guided
+   *  quarter-close gate. Always false in solo runs (one team only,
+   *  but the player advances via Next Quarter, not ready-flag). */
+  allActiveTeamsReady(): boolean;
+
   /** Quarter-versioned saves. The auto-save fires at the start of every
    *  new round; the facilitator can also trigger saves manually. Each
    *  snapshot carries the entire persisted game state so a restore
@@ -513,9 +526,12 @@ function emptyStreaks() {
   return out;
 }
 
-function mkId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-}
+// Re-exported from src/lib/id.ts so the team-factory + future
+// server API routes share the same id shape. Kept as a local
+// const so the store's many call sites (mkId('ac') / mkId('route') /
+// mkId('team') / etc.) need no edit.
+import { mkId as mkIdShared } from "@/lib/id";
+const mkId = mkIdShared;
 
 function fmtMoneyPlain(n: number): string {
   if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
@@ -641,7 +657,23 @@ function makeStartingTeam(args: {
   salaryPhilosophy?: Team["salaryPhilosophy"];
   marketingLevel?: Team["marketingLevel"];
   csrTheme?: Team["csrTheme"];
+  /** Multiplayer-aware fields. When omitted, the team behaves the same
+   *  as the legacy single-browser solo flow:
+   *    - human team → controlledBy: "human", claimedBySessionId: null
+   *      (the local session is bound at startNewGame via activeTeamId)
+   *    - rival team → controlledBy: "bot" + a bot difficulty.
+   *  Future lobby-driven creators can pass these explicitly. */
+  controlledBy?: "human" | "bot";
+  claimedBySessionId?: string | null;
+  playerDisplayName?: string | null;
 }): Team {
+  // Derive controlledBy from isPlayer when not passed explicitly. In
+  // legacy solo runs, isPlayer === true means "this browser's human"
+  // and isPlayer === false means "rival bot". The new fields make
+  // both cases explicit; isPlayer is kept in sync for the 30+ legacy
+  // call sites that still read it.
+  const controlledBy: "human" | "bot" =
+    args.controlledBy ?? (args.isPlayer ? "human" : "bot");
   return {
     id: mkId("team"),
     name: args.airlineName,
@@ -651,6 +683,9 @@ function makeStartingTeam(args: {
     secondaryHubCodes: [],
     doctrine: args.doctrine,
     isPlayer: args.isPlayer,
+    controlledBy,
+    claimedBySessionId: args.claimedBySessionId ?? null,
+    playerDisplayName: args.playerDisplayName ?? null,
     members: [
       { role: "CEO",  name: args.isPlayer ? "Your CEO"  : `${args.code} CEO`,  mvpPts: 0, cards: [] },
       { role: "CFO",  name: args.isPlayer ? "Your CFO"  : `${args.code} CFO`,  mvpPts: 0, cards: [] },
@@ -743,9 +778,23 @@ export const useGame = create<GameStore>()(
       airportBids: [],
       worldCupHostCode: null,
       olympicHostCode: null,
+      // Legacy session fields — kept synced with the new `session` block
+      // so the existing /facilitator + /join surfaces keep reading them.
+      // Will be retired in Step 5 of the multiplayer rollout once those
+      // pages migrate to read `session` directly.
       sessionCode: null,
       sessionLocked: false,
       sessionSlots: [],
+      // Multiplayer/lobby-aware state. `session` is null in legacy
+      // single-browser solo runs (created via the existing onboarding
+      // flow). Games created via /games/new always carry a session.
+      // `activeTeamId` binds THIS browser to one team for the run;
+      // panels/HUD branch on it instead of `team.isPlayer` so the
+      // same engine state can render correctly for any human team.
+      // `localSessionId` is the per-browser id we set on first paint.
+      session: null,
+      activeTeamId: null,
+      localSessionId: null,
       preOrders: [],
       productionCapOverrides: {},
 
@@ -756,91 +805,21 @@ export const useGame = create<GameStore>()(
           salaryPhilosophy, marketingLevel, csrTheme,
         } = args;
 
-        const player = makeStartingTeam({
+        // Player team — built via the shared factory so a solo run
+        // produces the SAME starting position as a player joining a
+        // multiplayer lobby. Every detail (hub-cost deduction, $350M
+        // budget, 2× A320 starter fleet, 30 free slots at popular
+        // dests, Q1 financials backfill, slider nudges from
+        // marketingLevel/salaryPhilosophy) lives in the factory.
+        // Lobby-driven creators just call the same function with
+        // their own session id and display name.
+        const player = createInitializedTeamFromOnboarding({
           airlineName, code, doctrine, hubCode,
-          isPlayer: true, color: "#14355E",
+          color: "#14355E",
           tagline, marketFocus, geographicPriority, pricingPhilosophy,
           salaryPhilosophy, marketingLevel, csrTheme,
+          controlledBy: "human",
         });
-
-        // Apply pricing philosophy to initial sliders as a nudge
-        if (marketingLevel) {
-          const lvl: Record<typeof marketingLevel, SliderLevel> = {
-            low: 1, medium: 2, high: 3, aggressive: 4,
-          };
-          player.sliders.marketing = lvl[marketingLevel];
-        }
-        if (salaryPhilosophy) {
-          player.sliders.staff = salaryPhilosophy === "below" ? 1
-            : salaryPhilosophy === "above" ? 3 : 2;
-        }
-
-        // Hub-cost deduction. Player gets ONBOARDING_TOTAL_BUDGET ($350M
-        // = $150M base + $200M onboarding capital) and pays for their
-        // hub from that pool. Premium gateways (LHR/CDG/JFK/SFO/DXB)
-        // cost $300M; T1 hubs $200M; T2 $100M; T3 $50M. Replaces the
-        // old L0 presentation-rank scoring system entirely — that
-        // mechanic is now facilitator-driven via direct cash/brand
-        // adjustments from the admin panel if a session wants it.
-        const hubCity = CITIES_BY_CODE[hubCode];
-        const hubCost = hubCity ? hubPriceUsd(hubCity) : 0;
-        player.cashUsd = ONBOARDING_TOTAL_BUDGET_USD - hubCost;
-        player.brandPts = 50;
-
-        // Seed: give player 2× A320 to start. Onboarding *is* the PRD's Q1
-        // brand-building phase — the player commits to doctrine, market focus,
-        // pricing, salary, marketing and CSR there, then walks into Q2 with
-        // the resulting cash injection and brand bonus already baked in.
-        const starter1: FleetAircraft = {
-          id: mkId("ac"), specId: "A320", status: "active",
-          acquisitionType: "buy", purchaseQuarter: 1,
-          purchasePrice: 25_000_000, bookValue: 25_000_000,
-          leaseQuarterly: null, ecoUpgrade: false, ecoUpgradeQuarter: null, ecoUpgradeCost: 0,
-          cabinConfig: "default", routeId: null,
-          retirementQuarter: 1 + 28, // 7-year (28Q) lifespan
-          maintenanceDeficit: 0, satisfactionPct: 75,
-        };
-        const starter2: FleetAircraft = { ...starter1, id: mkId("ac") };
-        player.fleet = [starter1, starter2];
-
-        // PRD update — give the player a small grant of free starter slots
-        // at their hub's nearest popular destinations so they can open
-        // routes in Q2 without waiting for the first auction round.
-        // Per-airport allocation: 30 free slots, no recurring fee.
-        const STARTER_DESTINATIONS_BY_HUB: Record<string, string[]> = {
-          DXB: ["LHR", "JFK", "SIN", "CDG", "BOM"],
-          LHR: ["JFK", "DXB", "CDG", "FRA", "AMS"],
-          JFK: ["LHR", "CDG", "LAX", "MIA", "ORD"],
-          SIN: ["HKG", "BKK", "KUL", "BOM", "SYD"],
-          NRT: ["HKG", "SIN", "LAX", "ICN", "PVG"],
-          HKG: ["NRT", "SIN", "BKK", "PVG", "SYD"],
-          CDG: ["LHR", "JFK", "FRA", "AMS", "MAD"],
-          FRA: ["LHR", "CDG", "JFK", "AMS", "ZRH"],
-          ORD: ["JFK", "LAX", "SFO", "LHR", "FRA"],
-          LAX: ["JFK", "ORD", "SFO", "NRT", "SYD"],
-        };
-        const starterDests = STARTER_DESTINATIONS_BY_HUB[hubCode] ??
-          ["LHR", "JFK", "SIN", "CDG", "DXB"];
-        for (const dest of starterDests) {
-          player.slotsByAirport[dest] = 30;
-          player.airportLeases[dest] = { slots: 30, totalWeeklyCost: 0 };
-        }
-
-        // Backfill a Q1 "brand-building" snapshot so charts/sparklines have
-        // an honest starting point. Costs/revenue are 0 — Q1 was about
-        // identity, not operations.
-        player.financialsByQuarter = [{
-          quarter: 1,
-          cash: player.cashUsd,
-          debt: 0,
-          revenue: 0,
-          costs: 0,
-          netProfit: 0,
-          brandPts: player.brandPts,
-          opsPts: player.opsPts,
-          loyalty: player.customerLoyaltyPct,
-          brandValue: player.brandValue,
-        }];
 
         // Mock competitors
         const rivals: Team[] = [];
@@ -1008,6 +987,11 @@ export const useGame = create<GameStore>()(
           baseInterestRatePct: 5.5, // Q1 2015 baseline (BASE_RATE_BY_QUARTER)
           teams: [player, ...rivals],
           playerTeamId: player.id,
+          // Multiplayer-aware "you" binding. selectActiveTeam reads
+          // activeTeamId first, falling back to playerTeamId for
+          // legacy save compat. Solo runs get the same id in both
+          // fields so panels can branch on whichever they prefer.
+          activeTeamId: player.id,
           lastCloseResult: null,
           airportSlots: makeInitialAirportSlots(),
           airportBids: [],
@@ -1017,10 +1001,15 @@ export const useGame = create<GameStore>()(
 
         // Welcome toast — surface the hub purchase + remaining cash
         // so the player understands the trade-off they just made.
-        if (hubCity) {
+        // (`hubCity` and `hubCost` were locals in the old inline init;
+        // re-derive from the city table now that the factory has
+        // absorbed that logic.)
+        const hubCityForToast = CITIES_BY_CODE[hubCode];
+        const hubCostForToast = hubCityForToast ? hubPriceUsd(hubCityForToast) : 0;
+        if (hubCityForToast) {
           toast.accent(
-            `${hubCity.name} (${hubCity.code}) hub secured`,
-            `Hub cost ${fmtMoneyPlain(hubCost)} · ${fmtMoneyPlain(player.cashUsd)} cash to operate.`,
+            `${hubCityForToast.name} (${hubCityForToast.code}) hub secured`,
+            `Hub cost ${fmtMoneyPlain(hubCostForToast)} · ${fmtMoneyPlain(player.cashUsd)} cash to operate.`,
           );
         }
       },
@@ -4500,6 +4489,13 @@ export const useGame = create<GameStore>()(
           code: code2,
           color: ["#1E6B5C", "#2B6B88", "#7A4B2E", "#C38A1E", "#4A6480", "#9A7D3D", "#C23B1F", "#6B5F88", "#4B7A2E", "#2E5C7A"][s.teams.length % 10],
           isPlayer: true,
+          // Multiplayer-aware fields. The legacy /join flow doesn't
+          // know about the new `localSessionId` yet — Step 5 will wire
+          // it through. For now claimedBySessionId stays null and
+          // `displayName` carries the company name as the visible label.
+          controlledBy: "human",
+          claimedBySessionId: null,
+          playerDisplayName: companyName.trim(),
           hubCode,
           secondaryHubCodes: [],
           doctrine: "premium-service",
@@ -4636,6 +4632,8 @@ export const useGame = create<GameStore>()(
           baseInterestRatePct: 5.5, // Q1 2015 baseline (BASE_RATE_BY_QUARTER)
           teams: [],
           playerTeamId: null,
+          activeTeamId: null,
+          session: null,
           lastCloseResult: null,
           quarterTimerSecondsRemaining: null,
           quarterTimerPaused: false,
@@ -4649,6 +4647,33 @@ export const useGame = create<GameStore>()(
           preOrders: [],
           productionCapOverrides: {},
         });
+      },
+
+      // ── Multiplayer-aware ready flag ─────────────────────────
+      // In self-guided runs each team flips this when they're done
+      // configuring the next quarter. The engine advances when
+      // allActiveTeamsReady() returns true. In facilitated runs the
+      // flag is informational — facilitator console reads it to see
+      // who's submitted but the close button still drives.
+      setActiveTeamReady: (ready) => {
+        const s = get();
+        const meId = s.activeTeamId ?? s.playerTeamId;
+        if (!meId) return;
+        set({
+          teams: s.teams.map((t) =>
+            t.id === meId ? { ...t, readyForNextQuarter: ready } : t,
+          ),
+        });
+      },
+
+      allActiveTeamsReady: () => {
+        const s = get();
+        // Only humans count for the ready-gate. Bots fill empty
+        // seats but don't have a "ready" decision to make — they
+        // act in their own quarter-close hook.
+        const humans = s.teams.filter((t) => t.controlledBy === "human");
+        if (humans.length === 0) return false;
+        return humans.every((t) => t.readyForNextQuarter === true);
       },
 
       // ── Quarter snapshots (V1.5: rollback + reconnect resync) ──
@@ -5813,10 +5838,53 @@ export const useGame = create<GameStore>()(
 );
 
 // ─── Selectors ──────────────────────────────────────────────
+
+/** Legacy "the player team" selector — works when there's a single
+ *  human at the table (solo runs). In multiplayer-aware code prefer
+ *  `selectActiveTeam` which returns the team this BROWSER controls,
+ *  not "the team flagged isPlayer at any point in the run."
+ *
+ *  Kept until Step 7 of the multiplayer rollout migrates the 30+
+ *  callsites that still read it. */
 export function selectPlayer(s: GameStore): Team | null {
   return s.teams.find((t) => t.id === s.playerTeamId) ?? null;
 }
 
+/** "You" — the team the local browser controls. In solo runs this
+ *  matches selectPlayer(). In multiplayer it's whichever team the
+ *  user claimed at /games/[id]/lobby (bound via activeTeamId).
+ *  Falls back to the legacy playerTeamId if activeTeamId hasn't
+ *  been set yet, so existing single-browser solo runs keep working
+ *  without a save migration. */
+export function selectActiveTeam(s: GameStore): Team | null {
+  const id = s.activeTeamId ?? s.playerTeamId;
+  if (!id) return null;
+  return s.teams.find((t) => t.id === id) ?? null;
+}
+
+/** "The other teams" from this browser's perspective. Replaces
+ *  `selectRivals` for multiplayer surfaces — in a 4-player lobby
+ *  with one bot, this returns 3 teams (humans + bot), all of which
+ *  are rivals from THIS browser's seat. Legacy `selectRivals`
+ *  filtered on `!isPlayer` and worked only because exactly one
+ *  team had isPlayer=true; in multiplayer every claimed seat is
+ *  isPlayer-ish. */
+export function selectOtherTeams(s: GameStore): Team[] {
+  const meId = s.activeTeamId ?? s.playerTeamId;
+  if (!meId) return s.teams;
+  return s.teams.filter((t) => t.id !== meId);
+}
+
+/** @deprecated Use selectOtherTeams. Kept until Step 7 sweeps the
+ *  TopBar / LeaderboardPanel / RoutesPanel call sites. */
 export function selectRivals(s: GameStore): Team[] {
   return s.teams.filter((t) => !t.isPlayer);
+}
+
+/** True when the given team is "you" — single source of truth for
+ *  badges, highlights, and write gates. Replaces `team.isPlayer`
+ *  in multiplayer-aware UI. */
+export function isActiveTeam(s: GameStore, teamId: string): boolean {
+  const id = s.activeTeamId ?? s.playerTeamId;
+  return id !== null && id === teamId;
 }

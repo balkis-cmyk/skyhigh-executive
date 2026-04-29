@@ -1,11 +1,12 @@
 "use client";
 
-import { X, ArrowRight } from "lucide-react";
+import { X, ArrowRight, Plane, Users, MapPin } from "lucide-react";
 import { Button, Badge } from "@/components/ui";
 import { CITIES_BY_CODE } from "@/data/cities";
 import { useGame, selectPlayer } from "@/store/game";
-import { distanceBetween } from "@/lib/engine";
+import { distanceBetween, routeDemandPerDay } from "@/lib/engine";
 import { cn } from "@/lib/cn";
+import type { City, Team } from "@/types/game";
 
 export interface RouteLaunchBarProps {
   origin: string | null;
@@ -15,109 +16,265 @@ export interface RouteLaunchBarProps {
 }
 
 /**
- * Compact top-center toolbar that appears once the user has picked both
- * endpoints. It shows the pair + a Launch button — the big detail modal only
- * opens when Launch is clicked, so the destination city stays visible.
+ * Floating city-card popup for route picking.
  *
- * Cargo flag is now derived inside RouteSetupModal from the selected
- * aircraft (commit 6300e08 removed the explicit toggle from the launch
- * bar and HUD). Callers still pass `forceCargo` to the setup modal.
+ * Replaces the prior top-of-screen toolbar with a pair of small
+ * cards anchored at the bottom-center of the map. Each card carries
+ * the city's name + IATA code, demand split (tourism + business
+ * pax/day for THIS quarter), and the player's slot count at that
+ * airport. Picking a second city slides a second card in beside
+ * the first; an "Open route →" button appears once both are set.
+ *
+ * Why the redesign:
+ *   - The old top toolbar pulled the player's gaze away from the
+ *     map exactly when they needed to compare cities.
+ *   - The "Origin in network" badge was the only signal; demand,
+ *     slots, and tier were invisible at the picking moment.
+ *   - The bidirectional issue (clicking LHR-DXB then DXB-LHR
+ *     looking like a different route) is engine-correct in
+ *     openRoute(), but the UI didn't surface that fact. The new
+ *     cards always render with the player's HUB on the left so
+ *     the player sees the canonical orientation that the engine
+ *     will use, regardless of click order.
  */
 export function RouteLaunchBar({
   origin, dest, onCancel, onLaunch,
 }: RouteLaunchBarProps) {
   const player = useGame(selectPlayer);
+  const currentQuarter = useGame((s) => s.currentQuarter);
   if (!player) return null;
+  if (!origin && !dest) return null;
 
-  // Stage 1: only origin picked — hint to pick destination
-  if (origin && !dest) {
-    const o = CITIES_BY_CODE[origin];
-    if (!o) return null;
-    const isInNetwork =
-      o.code === player.hubCode ||
-      player.secondaryHubCodes.includes(o.code) ||
-      player.routes.some((r) =>
-        r.status !== "closed" &&
-        (r.originCode === o.code || r.destCode === o.code),
-      );
-    return (
-      <div className="pointer-events-none fixed top-[4.25rem] left-1/2 -translate-x-1/2 z-50">
-        <div
-          className={cn(
-            "pointer-events-auto flex items-center gap-3 px-3 py-2 rounded-lg",
-            "border bg-surface/95 backdrop-blur-md shadow-[var(--shadow-3)]",
-            isInNetwork ? "border-primary" : "border-warning",
-          )}
-        >
-          <Badge tone={isInNetwork ? "primary" : "warning"}>
-            {isInNetwork ? "Origin in network" : "Not in network"}
-          </Badge>
-          <span className="font-mono text-[0.9375rem] text-ink">
-            {o.code}
-          </span>
-          <span className="text-[0.8125rem] text-ink-2">
-            {o.name}
-          </span>
-          <span className="text-[0.75rem] text-ink-muted">
-            → pick a destination city
-          </span>
+  const o = origin ? CITIES_BY_CODE[origin] : null;
+  const d = dest ? CITIES_BY_CODE[dest] : null;
+
+  // Hub-first orientation — same logic as openRoute()'s normalizer.
+  // Whichever city the player picked, the player's hub renders on
+  // the left so LHR→DXB and DXB→LHR show identically once both
+  // ends are set. Eliminates the "feels like a different route"
+  // confusion the user flagged.
+  const hubs = new Set([player.hubCode, ...player.secondaryHubCodes]);
+  let leftCity: City | null = o;
+  let rightCity: City | null = d;
+  if (o && d) {
+    if (hubs.has(d.code) && !hubs.has(o.code)) {
+      leftCity = d;
+      rightCity = o;
+    } else if (hubs.has(d.code) && hubs.has(o.code)) {
+      // Both hubs — primary hub on left.
+      if (o.code !== player.hubCode && d.code === player.hubCode) {
+        leftCity = d;
+        rightCity = o;
+      }
+    }
+  }
+
+  const distKm = leftCity && rightCity
+    ? distanceBetween(leftCity.code, rightCity.code)
+    : 0;
+
+  return (
+    <div className="pointer-events-none fixed bottom-6 left-1/2 -translate-x-1/2 z-[1080]">
+      <div className="pointer-events-auto flex items-end gap-2">
+        {/* Left card (origin or hub-side) */}
+        {leftCity && (
+          <CityCard
+            city={leftCity}
+            player={player}
+            currentQuarter={currentQuarter}
+            otherCity={rightCity}
+            role={leftCity === o ? "primary" : "primary"}
+          />
+        )}
+
+        {/* Connector + open-route button */}
+        {leftCity && rightCity && (
+          <div className="flex flex-col items-center gap-2 pb-3">
+            <div className="flex items-center gap-1.5 text-ink-muted">
+              <ArrowRight size={14} />
+              <span className="text-[0.75rem] tabular font-mono">
+                {Math.round(distKm).toLocaleString()} km
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => onLaunch({ isCargo: false })}
+            >
+              Open route →
+            </Button>
+          </div>
+        )}
+
+        {/* Right card (destination) — slides in once both are picked */}
+        {rightCity && (
+          <CityCard
+            city={rightCity}
+            player={player}
+            currentQuarter={currentQuarter}
+            otherCity={leftCity}
+            role="secondary"
+          />
+        )}
+
+        {/* Inline hint when only origin is picked */}
+        {leftCity && !rightCity && (
+          <div className="flex flex-col gap-2 pl-2 pb-2">
+            <div className="text-[0.75rem] text-ink-muted leading-tight max-w-[10rem]">
+              Pick a destination on the map
+            </div>
+            <button
+              onClick={onCancel}
+              aria-label="Cancel"
+              className="w-7 h-7 rounded-md text-ink-2 hover:bg-surface-hover hover:text-ink flex items-center justify-center"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* Cancel pill once both cards are visible */}
+        {leftCity && rightCity && (
           <button
             onClick={onCancel}
             aria-label="Cancel"
-            className="ml-1 w-7 h-7 rounded-md text-ink-2 hover:bg-surface-hover hover:text-ink flex items-center justify-center"
+            className="w-7 h-7 rounded-md text-ink-2 hover:bg-surface-hover hover:text-ink flex items-center justify-center self-end mb-1"
           >
             <X size={14} />
           </button>
-        </div>
-        {!isInNetwork && (
-          <div className="mt-2 mx-auto max-w-md pointer-events-auto rounded-md border border-warning bg-surface px-3 py-2 text-[0.75rem] text-ink-2 shadow-[var(--shadow-3)]">
-            Routes must start from your hub or a city you already fly to.
-            Continue picking a destination — if the destination is in your
-            network, you&apos;ll be offered to add this as a secondary hub
-            (costs 2× terminal fee).
-          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// City card
+// ============================================================================
+
+function CityCard({
+  city, player, currentQuarter, otherCity, role,
+}: {
+  city: City;
+  player: Team;
+  currentQuarter: number;
+  /** When set, surface OD-pair demand instead of single-city demand
+   *  on the destination card so the player sees the actual market
+   *  size for the chosen route. */
+  otherCity: City | null;
+  role: "primary" | "secondary";
+}) {
+  const isHub = city.code === player.hubCode;
+  const isSecondaryHub = player.secondaryHubCodes.includes(city.code);
+  const inNetwork =
+    isHub ||
+    isSecondaryHub ||
+    player.routes.some(
+      (r) =>
+        r.status !== "closed" &&
+        (r.originCode === city.code || r.destCode === city.code),
     );
-  }
 
-  // Stage 2: both picked — launch bar
-  if (!origin || !dest) return null;
-  const o = CITIES_BY_CODE[origin];
-  const d = CITIES_BY_CODE[dest];
-  if (!o || !d) return null;
+  // Slots the player owns at this airport (across leases). Shows the
+  // actual capacity number the route launch will be checked against.
+  const slotsHeld = player.airportLeases?.[city.code]?.slots ?? 0;
 
-  const distKm = distanceBetween(origin, dest);
+  // Demand context — when both endpoints are set, show the OD's
+  // shared daily demand (this is the actual pool the route would
+  // compete for). Otherwise show the city's own tourism/business
+  // baseline at the current quarter.
+  const demand = (() => {
+    if (otherCity) {
+      const od = routeDemandPerDay(city.code, otherCity.code, currentQuarter);
+      return {
+        kind: "od" as const,
+        total: Math.round(od.total),
+        tourism: Math.round(od.tourism),
+        business: Math.round(od.business),
+      };
+    }
+    return {
+      kind: "city" as const,
+      total: Math.round(city.tourism + city.business),
+      tourism: Math.round(city.tourism),
+      business: Math.round(city.business),
+    };
+  })();
 
   return (
-    <div className="pointer-events-none fixed top-[4.25rem] left-1/2 -translate-x-1/2 z-50">
-      <div
-        className={cn(
-          "pointer-events-auto flex items-center gap-3 px-3 py-2 rounded-lg",
-          "border border-primary bg-surface/95 backdrop-blur-md shadow-[var(--shadow-3)]",
+    <div
+      className={cn(
+        "min-w-[14rem] rounded-xl border bg-surface/95 backdrop-blur-md shadow-[var(--shadow-3)]",
+        "animate-in fade-in slide-in-from-bottom-2 duration-200",
+        role === "primary" ? "border-primary/40" : "border-line",
+      )}
+    >
+      {/* Header: code + name + tier pill */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-line/60">
+        <MapPin size={11} className="text-primary shrink-0" />
+        <span className="font-mono text-[0.9375rem] font-bold tabular text-ink">
+          {city.code}
+        </span>
+        <span className="text-[0.75rem] text-ink-2 truncate flex-1">
+          {city.name}
+        </span>
+        {isHub && (
+          <Badge tone="primary">Hub</Badge>
         )}
-      >
-        <span className="font-mono text-[0.9375rem] text-ink font-medium">
-          {o.code}
-        </span>
-        <ArrowRight size={14} className="text-ink-muted" />
-        <span className="font-mono text-[0.9375rem] text-ink font-medium">
-          {d.code}
-        </span>
-        <span className="text-[0.75rem] text-ink-muted tabular">
-          {Math.round(distKm).toLocaleString()} km
-        </span>
+        {!isHub && isSecondaryHub && (
+          <Badge tone="accent">2°</Badge>
+        )}
+        {!isHub && !isSecondaryHub && inNetwork && (
+          <Badge tone="neutral">In network</Badge>
+        )}
+      </div>
 
-        <Button size="sm" variant="primary" onClick={() => onLaunch({ isCargo: false })}>
-          Launch route →
-        </Button>
-        <button
-          onClick={onCancel}
-          aria-label="Cancel"
-          className="w-7 h-7 rounded-md text-ink-2 hover:bg-surface-hover hover:text-ink flex items-center justify-center"
-        >
-          <X size={14} />
-        </button>
+      {/* Body: demand + slots */}
+      <div className="px-3 py-2 space-y-1.5">
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="flex items-center gap-1.5 text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+            <Users size={10} />
+            {demand.kind === "od" ? "OD demand · day" : "City demand · day"}
+          </div>
+          <span className="font-mono text-[0.875rem] font-semibold tabular text-ink">
+            {demand.total.toLocaleString()}
+          </span>
+        </div>
+        {/* Tourism / business split bar */}
+        <div className="flex items-center gap-2 text-[0.6875rem] tabular">
+          <span className="text-ink-muted">Leisure</span>
+          <div className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+            {demand.total > 0 && (
+              <div
+                className="h-full bg-primary/70"
+                style={{
+                  width: `${Math.round((demand.tourism / demand.total) * 100)}%`,
+                }}
+              />
+            )}
+          </div>
+          <span className="text-ink-muted">Business</span>
+        </div>
+
+        <div className="flex items-baseline justify-between pt-1.5 border-t border-line/40">
+          <div className="flex items-center gap-1.5 text-[0.6875rem] uppercase tracking-wider text-ink-muted">
+            <Plane size={10} />
+            Your slots
+          </div>
+          <span
+            className={cn(
+              "font-mono text-[0.875rem] font-semibold tabular",
+              slotsHeld > 0 ? "text-ink" : "text-warning",
+            )}
+          >
+            {slotsHeld}
+            {slotsHeld === 0 && (
+              <span className="ml-1 text-[0.6875rem] font-normal text-warning">
+                bid required
+              </span>
+            )}
+          </span>
+        </div>
       </div>
     </div>
   );

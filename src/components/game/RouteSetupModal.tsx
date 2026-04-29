@@ -431,16 +431,16 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
   })();
   const hasShortfall = shortfall.atOrigin > 0 || shortfall.atDest > 0;
 
-  // The button is enabled when every shortfall airport has SOME bid in
-  // place. We auto-prime each BidRow's price to the tier minimum on
-  // mount, so an unset entry should never persist past the first
-  // render — but if the parent's reset effect clears bidPrices in
-  // response to a player ref change, BidRow's empty-deps useEffect
-  // doesn't re-fire and the entry stays undefined. The slider is still
-  // visibly showing minPrice though, so treating undefined as
-  // "implicit minimum bid" matches what the player sees and prevents
-  // the Submit button from getting stuck disabled.
-  const allBidsSet = !hasShortfall;
+  // Submit is enabled the moment the form has aircraft + a valid
+  // schedule. Slot bids on shortfall airports default to the tier
+  // minimum (visibly shown in the slider) and confirmRoute reads
+  // BASE_SLOT_PRICE_BY_TIER as a fallback for any still-undefined
+  // entries. Earlier this was `allBidsSet = !hasShortfall`, which
+  // made the button greyed out FOREVER on shortfall routes — even
+  // after the player moved the slider — because the gate only
+  // looked at "no shortfall" instead of "bids present". That's the
+  // production bug being fixed here.
+  const allBidsSet = true;
   // (bid-price prime useEffect lives above the early return — see the
   // hook ordering note further up. We can't safely keep it here because
   // it would render conditionally on `if (!player) return null;`.)
@@ -618,8 +618,23 @@ export function RouteSetupModal({ open, origin, dest, forceCargo, onClose }: Rou
                   route's family is set. Mixed cargo+passenger on a
                   single route makes no sense — different revenue
                   models, different capacity units. The off-family
-                  planes grey out below. */}
-              {idlePlanes.map((p) => {
+                  planes grey out below.
+
+                  Sort order: in-range aircraft first, out-of-range
+                  pushed to the bottom. Family-mismatch is NOT used
+                  as a sort key because the locked family changes
+                  with selection, and reshuffling the list on every
+                  click would jump the UI under the player's
+                  pointer. Sort is stable on player.fleet insertion
+                  order within each range tier. */}
+              {[...idlePlanes].sort((a, b) => {
+                const specA = AIRCRAFT_BY_ID[a.specId];
+                const specB = AIRCRAFT_BY_ID[b.specId];
+                const reachA = !!specA && effectiveRangeKm(specA, a.engineUpgrade ?? null) >= dist;
+                const reachB = !!specB && effectiveRangeKm(specB, b.engineUpgrade ?? null) >= dist;
+                if (reachA !== reachB) return reachA ? -1 : 1;
+                return 0;
+              }).map((p) => {
                 const spec = AIRCRAFT_BY_ID[p.specId];
                 if (!spec) return null;
                 const canReach = effectiveRangeKm(spec, p.engineUpgrade ?? null) >= dist;

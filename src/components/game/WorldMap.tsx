@@ -62,11 +62,28 @@ const RIVAL_ROUTES: Record<string, string[]> = {
   ORD: ["JFK", "LAX", "SFO", "LHR", "CDG", "FRA"],
 };
 
-/** Sample N points along a great-circle path from a→b for smooth route arcs. */
+/** Sample N points along a great-circle path from a→b, blended
+ *  toward the rhumb-line for a more visually subtle curve, and
+ *  unwrapped across the antimeridian so trans-Pacific routes
+ *  (LAX→SYD, JFK→HKG, etc.) don't draw a horizontal stripe across
+ *  the whole map.
+ *
+ *  `flatness` (0..1) blends each great-circle point toward the
+ *  straight rhumb-line interpolation at the same t. 0 = pure great
+ *  circle (heavily curved on Mercator), 1 = straight Mercator line.
+ *  Default 0.4 — keeps the arc readable without exaggerating it.
+ *
+ *  Antimeridian unwrap: after sampling, walk through the points
+ *  and add ±360° to consecutive longitudes if their delta exceeds
+ *  180°. Leaflet's `worldCopyJump` paints the polyline correctly
+ *  in the chosen world copy, so a continuous monotonic longitude
+ *  sequence renders as one clean arc instead of a wraparound
+ *  stripe. */
 function greatCirclePath(
   aLon: number, aLat: number,
   bLon: number, bLat: number,
   steps = 64,
+  flatness = 0.4,
 ): [number, number][] {
   const toRad = (d: number) => (d * Math.PI) / 180;
   const toDeg = (r: number) => (r * 180) / Math.PI;
@@ -84,9 +101,28 @@ function greatCirclePath(
     const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
     const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
     const z = A * Math.sin(φ1) + B * Math.sin(φ2);
-    const φ = Math.atan2(z, Math.sqrt(x * x + y * y));
-    const λ = Math.atan2(y, x);
-    out.push([toDeg(φ), toDeg(λ)]);
+    const gcLat = toDeg(Math.atan2(z, Math.sqrt(x * x + y * y)));
+    const gcLon = toDeg(Math.atan2(y, x));
+    // Rhumb-line interpolation at the same t. We blend longitudes
+    // along the SHORTER of the two directions around the globe so
+    // antipodal routes still take the natural visual path.
+    let dLon = bLon - aLon;
+    if (dLon > 180) dLon -= 360;
+    if (dLon < -180) dLon += 360;
+    const linLat = aLat + (bLat - aLat) * f;
+    const linLon = aLon + dLon * f;
+    out.push([
+      gcLat + (linLat - gcLat) * flatness,
+      gcLon + (linLon - gcLon) * flatness,
+    ]);
+  }
+  // Antimeridian unwrap — accumulate longitude deltas so the polyline
+  // never jumps ±360 in one step. Leaflet renders the resulting
+  // out-of-range longitudes correctly via worldCopyJump.
+  for (let i = 1; i < out.length; i++) {
+    const dlon = out[i][1] - out[i - 1][1];
+    if (dlon > 180) out[i][1] -= 360;
+    else if (dlon < -180) out[i][1] += 360;
   }
   return out;
 }
@@ -655,8 +691,53 @@ export function WorldMap({
           const isNetworkAirport = isHub || isSecondaryHub || inNetwork;
 
           return (
+            <Fragment key={c.code}>
+              {/* Invisible click halo — sits beneath the visible dot
+                  with a much larger radius (≥14px) so the city is
+                  comfortably clickable without pixel-precision aim.
+                  Leaflet z-orders later markers ABOVE earlier ones,
+                  so this halo lives BELOW the visible CircleMarker
+                  yet still receives clicks via the same handler.
+                  Single + double click both bubble to the visible
+                  marker's handlers via the shared callback.
+
+                  Replaces the prior "click slightly above the dot"
+                  bug — visible radius was 1.4-2.5px on most cities,
+                  so the player had to pixel-aim. Now there's a 14px
+                  invisible target around every dot. */}
+              <CircleMarker
+                center={[c.lat, c.lon]}
+                radius={Math.max(14, finalRadius + 6)}
+                pathOptions={{
+                  color: "transparent",
+                  fillColor: "transparent",
+                  fillOpacity: 0,
+                  weight: 0,
+                  // Important: setting opacity 0 on a Path keeps it in
+                  // the DOM and click-targetable, just visually absent.
+                  opacity: 0,
+                  className: "sf-city-hit",
+                }}
+                eventHandlers={{
+                  click: () => onCityClick?.(c),
+                  dblclick: (e) => {
+                    if (e.originalEvent) {
+                      e.originalEvent.stopPropagation();
+                      e.originalEvent.preventDefault();
+                    }
+                    onCityDoubleClick?.(c);
+                  },
+                  mouseover: () => {
+                    setHoverCode(c.code);
+                    onCityHover?.(c);
+                  },
+                  mouseout: () => {
+                    setHoverCode(null);
+                    onCityHover?.(null);
+                  },
+                }}
+              />
             <CircleMarker
-              key={c.code}
               center={[c.lat, c.lon]}
               radius={finalRadius}
               pathOptions={{
@@ -734,6 +815,7 @@ export function WorldMap({
                 </div>
               </Tooltip>
             </CircleMarker>
+            </Fragment>
           );
         })}
 
