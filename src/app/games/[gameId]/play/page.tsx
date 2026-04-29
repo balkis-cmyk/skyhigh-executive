@@ -8,27 +8,30 @@
  * GameCanvas. The store's `activeTeamId` is set on bind so panels/
  * HUD branch on session-team match instead of the legacy isPlayer.
  *
- * Step 4 ships this as a hydrate-once surface — server-mediated
- * mutations + ready-flag quarter close land in Step 8, realtime
- * sync in Step 9. For now the page loads, binds, and renders;
- * subsequent quarter closes still go through the local engine.
- *
- * State sync model (placeholder):
+ * State sync model (current state of the rollout):
  *   1. Initial paint: GET /api/games/load?gameId=X&includeState=1
  *   2. Engine state JSON is fed into the local Zustand store via
- *      `hydrateFromSnapshot()` (added in Step 8 — for now we render
- *      a "coming soon" notice when the snapshot is present but the
- *      hydrate path isn't wired).
- *   3. Mutations push to /api/games/state with version CAS.
- *   4. Realtime channel subscribes to broadcasts; remote mutations
- *      replace the local store snapshot.
+ *      `hydrateFromServerState({ stateJson, mySessionId })`.
+ *   3. After hydrate, the GameCanvas paints from local store. Local
+ *      mutations stay local — server-side write-through (Step 9
+ *      Supabase Realtime) lands when CAS + broadcast wiring is in
+ *      place. For solo/cohort playtests this is enough: every
+ *      browser hydrates from the server, drives its own engine,
+ *      and the facilitator console is the source of truth.
+ *
+ * If the server state hasn't been seeded yet (lobby still open or
+ * Supabase unconfigured), we render a friendly graceful-fallback
+ * card pointing back to the lobby surface.
  */
 
 import Link from "next/link";
 import { useEffect, useState, use } from "react";
-import { ArrowLeft, AlertCircle, Loader2, Construction } from "lucide-react";
+import { ArrowLeft, AlertCircle, Loader2 } from "lucide-react";
 import { useLocalSessionId } from "@/lib/games/session";
+import { useGame } from "@/store/game";
 import type { GameRow, GameMemberRow } from "@/lib/supabase/types";
+import { GameCanvas } from "@/components/game/GameCanvas";
+import { TopBar } from "@/components/layout/TopBar";
 
 interface LoadResponse {
   game: GameRow;
@@ -43,10 +46,15 @@ export default function GamePlayPage({
 }) {
   const { gameId } = use(params);
   const sessionId = useLocalSessionId();
+  const hydrateFromServerState = useGame((s) => s.hydrateFromServerState);
+  const phase = useGame((s) => s.phase);
+  const teamsCount = useGame((s) => s.teams.length);
   const [data, setData] = useState<LoadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hydrated, setHydrated] = useState(false);
 
+  // Step 1 — fetch the server snapshot.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -71,6 +79,30 @@ export default function GamePlayPage({
     })();
     return () => { cancelled = true; };
   }, [gameId]);
+
+  // Step 2 — hydrate the local Zustand store once we have a state
+  // payload. Guarded to fire exactly once per gameId+sessionId so a
+  // remount (e.g. dev-mode StrictMode) doesn't re-hydrate twice.
+  useEffect(() => {
+    if (!data || !sessionId || hydrated) return;
+    if (data.game.status !== "playing") return;
+    if (!data.state) {
+      // Game row says "playing" but state row missing — probably a
+      // half-seeded run. Surface a friendly error instead of trying
+      // to hydrate from undefined.
+      setError("Game state missing on the server. Try refreshing in a moment.");
+      return;
+    }
+    const result = hydrateFromServerState({
+      stateJson: data.state.state_json,
+      mySessionId: sessionId,
+    });
+    if (!result.ok) {
+      setError(result.error ?? "Couldn't hydrate game state.");
+      return;
+    }
+    setHydrated(true);
+  }, [data, sessionId, hydrated, hydrateFromServerState]);
 
   if (loading) {
     return (
@@ -122,35 +154,29 @@ export default function GamePlayPage({
     );
   }
 
-  // Game is playing or ended — render the engine.
-  // The hydrate-into-store pipeline isn't wired yet; surface a
-  // construction notice so testers know what they're looking at.
-  return (
-    <CenteredMessage>
-      <div className="max-w-lg w-full rounded-xl border border-cyan-200 bg-cyan-50 p-6 text-center">
-        <Construction className="w-10 h-10 text-cyan-600 mx-auto mb-4" />
-        <p className="text-base font-semibold text-cyan-900 mb-2">
-          {data.game.name}
-        </p>
-        <p className="text-sm text-cyan-800 mb-1">
-          Q{data.game.current_quarter} · {data.game.mode === "facilitated" ? "Facilitated" : "Self-guided"}
-        </p>
+  // Hydrate finished — render the engine. The local store now has the
+  // server-authoritative team list, currentQuarter, fuel index, etc.
+  if (!hydrated || phase !== "playing" || teamsCount === 0) {
+    return (
+      <CenteredMessage>
+        <Loader2 className="w-6 h-6 text-slate-400 animate-spin mb-3" />
+        <p className="text-sm text-slate-500">Loading game canvas…</p>
         {myMember && (
-          <p className="text-xs text-cyan-700 mb-4">
-            You&rsquo;re seated as {myMember.display_name ?? "Anonymous"} ({myMember.role})
+          <p className="text-xs text-slate-400 mt-2">
+            Seated as {myMember.display_name ?? "Anonymous"} ({myMember.role})
           </p>
         )}
-        <div className="text-sm text-cyan-800 max-w-md mx-auto leading-relaxed">
-          The play surface hydrates the engine from server state in Step 8 of
-          the rollout. For now the run is created in Supabase but the live
-          canvas + ready-flag quarter close land next. You can return to{" "}
-          <Link href={`/games/${gameId}/lobby`} className="font-semibold underline underline-offset-2">
-            the lobby
-          </Link>{" "}
-          to confirm seats + facilitator controls.
-        </div>
-      </div>
-    </CenteredMessage>
+      </CenteredMessage>
+    );
+  }
+
+  // Full game canvas — exact same shell solo runs use, with the
+  // multiplayer-aware activeTeamId bound during hydrate.
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <TopBar />
+      <GameCanvas />
+    </div>
   );
 }
 

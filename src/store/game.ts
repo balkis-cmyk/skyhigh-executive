@@ -387,6 +387,19 @@ export interface GameStore extends GameState {
   saveQuarterSnapshot(): void;
   restoreQuarterSnapshot(snapshotId: string): { ok: boolean; error?: string };
   deleteQuarterSnapshot(snapshotId: string): void;
+
+  /** Multiplayer hydrate path. Replaces the local store with the
+   *  server-authoritative game state for this gameId, then binds
+   *  `activeTeamId` to whichever team the local browser session
+   *  has claimed. Used by /games/[gameId]/play on initial paint
+   *  to render the engine for a returning player. Returns ok:false
+   *  when the state JSON doesn't look like a fully-formed engine
+   *  state (no teams, no currentQuarter) — caller should fall back
+   *  to the lobby. */
+  hydrateFromServerState(args: {
+    stateJson: unknown;
+    mySessionId: string;
+  }): { ok: boolean; error?: string };
   /** Re-issue the session code without creating a new game state.
    *  Players reconnecting use the new code; existing saved snapshots
    *  are preserved. Useful after a facilitator restores a snapshot. */
@@ -5015,6 +5028,70 @@ export const useGame = create<GameStore>()(
 
       deleteQuarterSnapshot: (id) => {
         snapDelete(id);
+      },
+
+      // ── Multiplayer hydrate ──────────────────────────────────
+      // Server-authoritative state lands here when /games/[gameId]/play
+      // hydrates on initial paint or after a remote mutation. The
+      // shape mirrors the persist `partialize` payload so we can reuse
+      // the rehydrate fixups (flag Set conversion, slot pool backfill)
+      // that already exist for localStorage rehydration. ActiveTeamId
+      // is set from whichever team has `claimedBySessionId === my
+      // sessionId`; if no claim is found we leave activeTeamId null
+      // and the player lands in spectator-y view-only mode (still
+      // valuable for facilitators dropping in mid-game).
+      hydrateFromServerState: ({ stateJson, mySessionId }) => {
+        if (!stateJson || typeof stateJson !== "object") {
+          return { ok: false, error: "Empty or invalid state payload." };
+        }
+        const restored = stateJson as Partial<GameStore> & {
+          teams?: Array<Team & { flags?: string[] | Set<string> }>;
+        };
+        if (!Array.isArray(restored.teams) || restored.teams.length === 0) {
+          return { ok: false, error: "State has no teams — game not yet seeded." };
+        }
+        if (typeof restored.currentQuarter !== "number") {
+          return { ok: false, error: "State has no currentQuarter — game not yet started." };
+        }
+        try {
+          // Mirror the onRehydrateStorage hook: flags arrays → Sets.
+          const teams = restored.teams.map((t) => ({
+            ...t,
+            flags: new Set<string>(
+              Array.isArray(t.flags)
+                ? t.flags
+                : t.flags
+                  ? Array.from(t.flags)
+                  : [],
+            ),
+          })) as Team[];
+
+          // Bind activeTeamId to whichever team this session has
+          // claimed. Falls back to the legacy playerTeamId if no
+          // claim is found (e.g. host watching a game they didn't
+          // join as a player), so single-browser solo continues to
+          // work without explicit re-claim.
+          const claimed = teams.find(
+            (t) => t.claimedBySessionId === mySessionId,
+          );
+          const activeTeamId = claimed?.id ?? null;
+
+          set({
+            ...restored,
+            teams,
+            activeTeamId,
+            // Reset transient UI — a fresh hydrate is a hard reload
+            // of the campaign, not a continuation of a paused close.
+            lastCloseResult: null,
+            phase: restored.phase === "endgame" ? "endgame" : "playing",
+          } as Partial<GameStore>);
+          return { ok: true };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "Hydrate failed",
+          };
+        }
       },
 
       rebroadcastSessionCode: () => {
