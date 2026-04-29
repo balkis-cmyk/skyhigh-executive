@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Badge, Button, Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui";
-import { useGame, selectPlayer } from "@/store/game";
+import { useGame, selectPlayer, selectActiveTeam } from "@/store/game";
 import { CITIES_BY_CODE } from "@/data/cities";
 import { fmtMoney, fmtQuarter } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -38,6 +38,11 @@ export function AirportDetailModal({
 }) {
   const s = useGame();
   const player = selectPlayer(s);
+  // Multiplayer-aware "you" id — falls back to legacy player id so
+  // older saves keep their highlight. This component already keys
+  // most things off `player.id` for solo runs; in multiplayer the
+  // active team takes over.
+  const youId = selectActiveTeam(s)?.id ?? player?.id ?? null;
 
   const data = useMemo(() => {
     if (!city) return null;
@@ -309,6 +314,9 @@ function AirportOwnership({ cityCode }: { cityCode: string }) {
   // permanently change slot dynamics for every airline at this hub —
   // the confirmation UX has to feel proportional to that.
   const player = useGame(selectPlayer);
+  // Multiplayer-aware "you" id — falls back to legacy player id when
+  // unset (solo runs, older saves).
+  const youId = useGame((s) => s.activeTeamId ?? s.playerTeamId);
   const teams = useGame((s) => s.teams);
   const slotState = useGame((s) => s.airportSlots?.[cityCode]);
   const airportBids = useGame((s) => s.airportBids);
@@ -368,7 +376,7 @@ function AirportOwnership({ cityCode }: { cityCode: string }) {
           teamName: t.name,
           teamCode: t.code,
           teamColor: t.color,
-          isPlayer: t.id === player.id,
+          isPlayer: t.id === (youId ?? player.id),
           slots: lease.slots,
           weeklyCost: lease.totalWeeklyCost,
           quarterlyCost: lease.totalWeeklyCost * 13,

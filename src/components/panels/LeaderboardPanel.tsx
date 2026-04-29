@@ -1,7 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui";
-import { useGame } from "@/store/game";
+import { useGame, selectActiveTeam } from "@/store/game";
 import { fmtMoney } from "@/lib/format";
 import { computeAirlineValue, fleetCount, brandRating } from "@/lib/engine";
 import { Plane, Crown, Trophy, ArrowUp, ArrowDown, Minus } from "lucide-react";
@@ -9,6 +9,10 @@ import { cn } from "@/lib/cn";
 
 export function LeaderboardPanel() {
   const s = useGame();
+  // Multiplayer-aware "you" — falls back to legacy isPlayer flag for
+  // any persisted save that predates the activeTeamId binding so
+  // existing solo runs don't lose their highlight.
+  const activeTeamId = selectActiveTeam(s)?.id ?? null;
   const ranked = [...s.teams].sort(
     (a, b) => computeAirlineValue(b) - computeAirlineValue(a),
   );
@@ -25,7 +29,9 @@ export function LeaderboardPanel() {
           announce "list item N of M" with the rank built in. */}
       <ol className="space-y-1.5 list-none p-0">
         {ranked.map((t, i) => {
-          const isPlayer = t.isPlayer;
+          const isPlayer = activeTeamId !== null
+            ? t.id === activeTeamId
+            : t.isPlayer; // legacy save fallback
           const rankIcon = i === 0 ? Crown : i === 1 || i === 2 ? Trophy : null;
           const RankIcon = rankIcon;
           const av = computeAirlineValue(t);

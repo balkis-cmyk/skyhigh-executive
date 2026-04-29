@@ -1644,10 +1644,15 @@ function CompetitorsTable({
 }) {
   const teams = useGame((state) => state.teams);
   const player = useGame(selectPlayer);
+  // Multiplayer-aware "you" — falls back to legacy player so this
+  // works in both solo and multiplayer modes.
+  const youId = useGame((state) => state.activeTeamId ?? state.playerTeamId);
   if (!player) return null;
-  // Find rivals flying the same OD pair (either direction)
+  // Find rivals flying the same OD pair (either direction). In
+  // multiplayer "rival" means "not you", which excludes other humans
+  // too — they're competing on the same OD just like a bot would.
   const rivals = teams
-    .filter((t) => !t.isPlayer)
+    .filter((t) => t.id !== (youId ?? player.id))
     .map((rv) => {
       const matchingRoute = rv.routes.find(
         (r) =>

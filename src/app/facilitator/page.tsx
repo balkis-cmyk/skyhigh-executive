@@ -467,7 +467,12 @@ function TeamsView({
                       {t.name}
                     </span>
                     {isActive && <Badge tone="primary">Active</Badge>}
-                    {t.isPlayer && <Badge tone="accent">Player</Badge>}
+                    {/* In multiplayer, every claimed seat is "Player" —
+                        the facilitator wants to see who's a human vs a
+                        bot. controlledBy is the right signal here, not
+                        the legacy isPlayer flag (which only tags one
+                        seat in solo runs). */}
+                    {t.controlledBy === "human" && <Badge tone="accent">Player</Badge>}
                   </div>
                   <div className="text-[0.75rem] text-ink-muted font-mono">
                     Hub {t.hubCode} · {t.doctrine}

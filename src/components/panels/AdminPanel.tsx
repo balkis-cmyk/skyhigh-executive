@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Input, Modal, ModalFooter, ModalHeader, Sparkline } from "@/components/ui";
-import { useGame, selectPlayer } from "@/store/game";
+import { useGame, selectPlayer, selectActiveTeam } from "@/store/game";
 import { fmtMoney, fmtQuarter, TOTAL_GAME_ROUNDS } from "@/lib/format";
 import { CITIES } from "@/data/cities";
 import { runQuarterClose } from "@/lib/engine";
@@ -13,6 +13,8 @@ import { cn } from "@/lib/cn";
 export function AdminPanel() {
   const s = useGame();
   const player = selectPlayer(s);
+  // Multiplayer-aware "you" — same fallback pattern as LeaderboardPanel.
+  const activeTeamId = selectActiveTeam(s)?.id ?? null;
   const router = useRouter();
   const [cashAdjust, setCashAdjust] = useState(0);
   const [secondaryHub, setSecondaryHub] = useState("");
@@ -265,7 +267,9 @@ export function AdminPanel() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className="tabular font-mono text-ink-muted">{t.brandValue.toFixed(1)}</span>
-                {t.isPlayer ? <Badge tone="primary">You</Badge> : <Badge tone="neutral">Rival</Badge>}
+                {(activeTeamId !== null ? t.id === activeTeamId : t.isPlayer)
+                  ? <Badge tone="primary">You</Badge>
+                  : <Badge tone="neutral">Rival</Badge>}
               </div>
             </div>
           ))}
