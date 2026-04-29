@@ -25,12 +25,14 @@ import {
   ArrowRight, Sparkles, Plane, Trophy, MapPin, Wallet, Users,
   Zap, Gem, PackageCheck, Globe2, ClipboardList,
   Clock, Landmark, Hotel, Wheat, Building2, Stethoscope,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { useGame } from "@/store/game";
 import { GameCanvas } from "@/components/game/GameCanvas";
 import { MarketingHeader } from "@/components/marketing/MarketingHeader";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
+import { useAuth } from "@/lib/auth-context";
 
 export default function Home() {
   const phase = useGame((s) => s.phase);
@@ -83,6 +85,17 @@ function Landing() {
 
 // ─── Hero ────────────────────────────────────────────────────
 function Hero() {
+  const { signInWithGoogle, user, authConfigured } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleGoogle() {
+    setError(null);
+    setLoading(true);
+    const r = await signInWithGoogle();
+    if (!r.ok) { setError(r.error); setLoading(false); }
+  }
+
   return (
     <section className="relative overflow-hidden bg-slate-950 text-white -mt-16 pt-16">
       {/* Backdrop gradients */}
@@ -141,15 +154,34 @@ function Hero() {
               How it works
             </Link>
           </div>
-          <div className="mb-8">
-            <Link
-              href="/login"
-              className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-white transition-colors"
-            >
-              Already have an account?{" "}
-              <span className="underline underline-offset-2">Sign in</span>
-            </Link>
-          </div>
+          {!user && authConfigured && (
+            <div className="mb-8 flex flex-col items-start gap-2">
+              <button
+                type="button"
+                onClick={handleGoogle}
+                disabled={loading}
+                className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white transition-colors disabled:opacity-50"
+              >
+                {loading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <GoogleIcon className="w-4 h-4 shrink-0" />
+                )}
+                Sign in with Google
+              </button>
+              {error && <p className="text-xs text-rose-400">{error}</p>}
+              <Link href="/login" className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
+                More sign-in options →
+              </Link>
+            </div>
+          )}
+          {user && (
+            <div className="mb-8">
+              <Link href="/lobby" className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors">
+                Welcome back — go to your games →
+              </Link>
+            </div>
+          )}
         </div>
       </div>
     </section>
@@ -609,6 +641,15 @@ function FacilitatorStat({ label, value }: { label: string; value: React.ReactNo
 
 // ─── Final CTA ───────────────────────────────────────────────
 function FinalCta() {
+  const { signInWithGoogle, user, authConfigured } = useAuth();
+  const [loading, setLoading] = useState(false);
+
+  async function handleGoogle() {
+    setLoading(true);
+    const r = await signInWithGoogle();
+    if (!r.ok) setLoading(false);
+  }
+
   return (
     <section className="relative py-24 overflow-hidden bg-gradient-to-b from-white to-cyan-50/40">
       <div className="relative max-w-3xl mx-auto px-6 text-center">
@@ -627,14 +668,47 @@ function FinalCta() {
             Join game
             <ArrowRight className="w-4 h-4" />
           </Link>
-          <Link
-            href="/login"
-            className="inline-flex items-center gap-1.5 px-5 py-3 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
-          >
-            Sign in to save progress →
-          </Link>
+          {!user && authConfigured && (
+            <button
+              type="button"
+              onClick={handleGoogle}
+              disabled={loading}
+              className="inline-flex items-center gap-2.5 px-5 py-3 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 transition-colors shadow-sm disabled:opacity-50"
+            >
+              {loading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <GoogleIcon className="w-4 h-4 shrink-0" />
+              )}
+              Sign in with Google
+            </button>
+          )}
+          {user && (
+            <Link href="/lobby" className="inline-flex items-center gap-1.5 px-5 py-3 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
+              Go to my games →
+            </Link>
+          )}
         </div>
+        {!user && authConfigured && (
+          <p className="mt-4 text-xs text-slate-400">
+            Or{" "}
+            <Link href="/login" className="underline underline-offset-2 hover:text-slate-600">
+              sign in with Microsoft or email
+            </Link>
+          </p>
+        )}
       </div>
     </section>
+  );
+}
+
+function GoogleIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none">
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+    </svg>
   );
 }
