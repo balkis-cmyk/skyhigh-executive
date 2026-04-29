@@ -219,6 +219,14 @@ function CloseQuarterButton() {
   const humanCount = useGame(
     (s) => s.teams.filter((t) => t.controlledBy === "human").length,
   );
+  // How many of those humans are ready right now — drives the
+  // "N of M ready" counter chip beside the Next Quarter / Mark Ready
+  // button, so each player can see cohort progress at a glance.
+  const readyCount = useGame(
+    (s) => s.teams.filter(
+      (t) => t.controlledBy === "human" && t.readyForNextQuarter === true,
+    ).length,
+  );
   const activeTeamId = useGame((s) => s.activeTeamId ?? s.playerTeamId);
   const myReady = useGame(
     (s) => s.teams.find((t) => t.id === (s.activeTeamId ?? s.playerTeamId))?.readyForNextQuarter ?? false,
@@ -352,6 +360,28 @@ function CloseQuarterButton() {
 
   return (
     <>
+      {/* Ready cohort counter — only shown in multiplayer self-guided
+          runs. Helps each player see how close the cohort is to the
+          auto-advance gate. The chip updates live as other players
+          mark/unmark — once realtime sync lands, this reflects every
+          browser's state. Today (no realtime), it reflects this
+          browser's local view. */}
+      {isMultiplayerSelfGuided && (
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-md px-2 py-1",
+            "text-[0.6875rem] font-mono font-semibold tabular border",
+            readyCount === humanCount
+              ? "border-positive/40 bg-[var(--positive-soft)]/40 text-positive"
+              : "border-line bg-surface-2 text-ink-2",
+          )}
+          title={`${readyCount} of ${humanCount} players ready for the next round`}
+          aria-label={`${readyCount} of ${humanCount} players ready`}
+        >
+          <span aria-hidden="true">{readyCount === humanCount ? "✓" : "·"}</span>
+          {readyCount}/{humanCount}
+        </span>
+      )}
       <Button
         variant={isMultiplayerSelfGuided && myReady ? "ghost" : "primary"}
         size="sm"

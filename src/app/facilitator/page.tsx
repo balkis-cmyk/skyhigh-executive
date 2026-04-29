@@ -58,6 +58,32 @@ export default function FacilitatorPage() {
           <span className="text-[0.6875rem] uppercase tracking-[0.18em] text-ink-muted">
             {fmtQuarter(s.currentQuarter)} · {s.teams.length} team{s.teams.length === 1 ? "" : "s"}
           </span>
+          {/* Cohort readiness counter — visible in any mode where 2+
+              humans exist. In self-guided mode the engine auto-fires
+              closeQuarter once this hits N/N; in facilitated mode the
+              facilitator still drives close but can see at a glance
+              how many seats finished their submission flow. */}
+          {(() => {
+            const humans = s.teams.filter((t) => t.controlledBy === "human");
+            const ready = humans.filter((t) => t.readyForNextQuarter === true).length;
+            if (humans.length < 2) return null;
+            const allReady = ready === humans.length;
+            return (
+              <span
+                className={cn(
+                  "ml-1 inline-flex items-center gap-1 rounded-md px-2 py-0.5 border",
+                  "text-[0.6875rem] font-mono font-semibold tabular",
+                  allReady
+                    ? "border-positive/40 bg-[var(--positive-soft)]/40 text-positive"
+                    : "border-line bg-surface-2 text-ink-2",
+                )}
+                title={`${ready} of ${humans.length} players ready for the next round`}
+              >
+                <span aria-hidden="true">{allReady ? "✓" : "·"}</span>
+                {ready}/{humans.length} ready
+              </span>
+            );
+          })()}
         </div>
         {player && (
           <div className="flex items-center gap-2 text-[0.75rem]">
