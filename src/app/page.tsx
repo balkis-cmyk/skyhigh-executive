@@ -69,6 +69,7 @@ function Landing() {
 
       <Hero />
       <SocialProof />
+      <Portfolio />
       <Features />
       <Doctrines />
       <HowItWorks />
@@ -103,28 +104,29 @@ function Hero() {
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 backdrop-blur-sm mb-6">
             <Sparkles className="w-3 h-3 text-cyan-400" />
             <span className="text-[11px] font-semibold text-cyan-100 uppercase tracking-wider">
-              Executive simulation · 2015 → 2024
+              Executive simulations by ICAN MENA
             </span>
           </div>
 
           <h1 className="text-5xl md:text-6xl lg:text-7xl font-display font-bold tracking-tight leading-[1.04] mb-6">
-            Run a global airline.
+            Lead an industry.
             <br />
-            <span className="text-cyan-300">For 40 quarters.</span>
+            <span className="text-cyan-300">Not a spreadsheet.</span>
           </h1>
 
           <p className="text-lg text-slate-400 max-w-2xl leading-relaxed mb-10">
-            SkyForce is the strategy simulation boards and operating teams use
-            to stress-test capital allocation, fleet decisions, and crisis
-            response. Open routes across 380+ cities, run a fleet of 40+
-            commercial aircraft, navigate 18 board scenarios — and survive a
-            decade of fuel shocks, recessions, and rival expansion.
+            ICAN&rsquo;s executive simulations put senior leaders in the chair
+            of an entire industry — pricing, capital, talent, regulation, and
+            rival pressure all moving at once.
+            {" "}<strong className="text-white font-semibold">SkyForce</strong>,
+            our airline simulation, is the first to ship. Banking, Hospitality,
+            Agriculture, Real Estate, and Healthcare are next.
           </p>
 
           <div className="flex items-center gap-3 flex-wrap mb-4">
             {/* Single primary CTA — every entry path lives inside the
                 /lobby (browse public games, enter a private code, or
-                hit Create game). No more 6-card non-MECE picker. */}
+                hit Create game). */}
             <Link
               href="/lobby"
               className="inline-flex items-center gap-2 px-6 py-3.5 bg-[#00C2CB] text-white text-sm font-semibold rounded-full hover:bg-[#00a9b1] transition-colors shadow-[0_8px_30px_-8px_rgba(0,194,203,0.5)]"
@@ -147,27 +149,12 @@ function Hero() {
               <span className="underline underline-offset-2">Sign in</span>
             </Link>
           </div>
-
-          <div className="flex items-center gap-6 text-xs text-slate-500">
-            <Stat icon={<Calendar className="w-3.5 h-3.5" />} label="40 rounds · 10 years" />
-            <Stat icon={<MapPin className="w-3.5 h-3.5" />} label="380+ cities" />
-            <Stat icon={<Plane className="w-3.5 h-3.5" />} label="40+ aircraft" />
-            <Stat icon={<ClipboardList className="w-3.5 h-3.5" />} label="18 board scenarios" />
-          </div>
         </div>
       </div>
     </section>
   );
 }
 
-function Stat({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-slate-400">
-      <span className="text-cyan-400">{icon}</span>
-      {label}
-    </span>
-  );
-}
 
 // ─── Social proof strip ──────────────────────────────────────
 function SocialProof() {
@@ -175,20 +162,138 @@ function SocialProof() {
     <section className="border-b border-slate-100 bg-white">
       <div className="max-w-6xl mx-auto px-6 py-14">
         <p className="text-center text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-8">
-          Built for the people who decide where the airline flies
+          Built for senior executives who run real industries
         </p>
         <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-6 text-slate-500">
           {[
             "Boards & C-suite",
             "Strategy teams",
-            "Aviation MBAs",
-            "Ops leadership",
+            "Operating leadership",
             "Family-office reviews",
-            "Cohort training",
+            "Executive education",
+            "Industry cohorts",
           ].map((segment, i) => (
             <div key={segment} className="flex items-center gap-x-10">
               <span className="text-sm font-medium tracking-wide">{segment}</span>
               {i < 5 && <span className="hidden md:inline w-1 h-1 rounded-full bg-slate-300" />}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Industry portfolio (SkyForce + roadmap) ─────────────────
+function Portfolio() {
+  const industries = [
+    {
+      name: "SkyForce",
+      industry: "Airline",
+      status: "live",
+      desc: "Network, fleet, pricing, board scenarios. The live product.",
+      accent: "cyan",
+    },
+    {
+      name: "Banking",
+      industry: "Banking & Capital Markets",
+      status: "next",
+      desc: "Lending, treasury, capital ratios, regulatory pressure.",
+      accent: "violet",
+    },
+    {
+      name: "Hospitality",
+      industry: "Hospitality",
+      status: "next",
+      desc: "Property portfolio, RevPAR, brand, demand cycles.",
+      accent: "emerald",
+    },
+    {
+      name: "Agriculture",
+      industry: "Agriculture",
+      status: "next",
+      desc: "Land, commodities, weather risk, supply chain.",
+      accent: "amber",
+    },
+    {
+      name: "Real Estate",
+      industry: "Real Estate",
+      status: "next",
+      desc: "Acquisition, development, leasing, capital structure.",
+      accent: "violet",
+    },
+    {
+      name: "Healthcare",
+      industry: "Healthcare",
+      status: "next",
+      desc: "Capacity, payor mix, outcomes, regulatory landscape.",
+      accent: "emerald",
+    },
+  ] as const;
+  const ring: Record<typeof industries[number]["accent"], string> = {
+    cyan: "bg-cyan-50 text-cyan-700 ring-cyan-100",
+    violet: "bg-violet-50 text-violet-700 ring-violet-100",
+    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+    amber: "bg-amber-50 text-amber-700 ring-amber-100",
+  };
+  return (
+    <section
+      id="portfolio"
+      className="relative py-24 lg:py-32 bg-slate-50 border-y border-slate-100"
+    >
+      <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-2xl mb-12">
+          <p className="text-xs font-semibold text-cyan-600 uppercase tracking-widest mb-3">
+            The simulation portfolio
+          </p>
+          <h2 className="text-4xl md:text-5xl font-display font-bold text-slate-900 tracking-tight mb-6 leading-[1.1]">
+            One platform.
+            <br />
+            <span className="text-slate-500">An industry per simulation.</span>
+          </h2>
+          <p className="text-lg text-slate-500 leading-relaxed">
+            ICAN is building executive simulations across the industries our
+            clients lead. Each one models the operating reality of its sector —
+            not a generic management game with the names changed.
+          </p>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {industries.map((it) => (
+            <div
+              key={it.name}
+              className={
+                "rounded-2xl border bg-white p-5 transition-all relative " +
+                (it.status === "live"
+                  ? "border-slate-900 ring-2 ring-slate-900/10"
+                  : "border-slate-200")
+              }
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className={`inline-flex items-center justify-center w-9 h-9 rounded-lg ring-4 ${ring[it.accent]}`}>
+                  <span className="text-xs font-mono font-bold">
+                    {it.industry.slice(0, 1)}
+                  </span>
+                </div>
+                <span
+                  className={
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider " +
+                    (it.status === "live"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-slate-100 text-slate-500")
+                  }
+                >
+                  {it.status === "live" ? "Live now" : "Coming"}
+                </span>
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-0.5">
+                {it.name}
+              </h3>
+              <p className="text-xs text-slate-400 uppercase tracking-wider mb-2">
+                {it.industry}
+              </p>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                {it.desc}
+              </p>
             </div>
           ))}
         </div>
@@ -204,16 +309,19 @@ function Features() {
       <div className="max-w-6xl mx-auto px-6">
         <div className="max-w-2xl mb-16">
           <p className="text-xs font-semibold text-cyan-600 uppercase tracking-widest mb-3">
-            What you control
+            Inside SkyForce — our airline simulation
           </p>
           <h2 className="text-4xl md:text-5xl font-display font-bold text-slate-900 tracking-tight mb-6 leading-[1.1]">
-            Every lever a real airline pulls.
+            Every lever the executive
+            <br />
+            <span className="text-slate-500">actually pulls.</span>
           </h2>
           <p className="text-lg text-slate-500 leading-relaxed">
             Not a board game. A complete operating model — fleet, network,
             pricing, slots, cabin demand, fuel hedging, debt, sliders, and
-            board-level decisions — all running on the same engine you'd
-            review at a real strategy offsite.
+            board-level decisions — running on the same depth you&rsquo;d
+            review at a real strategy offsite. Every other industry in our
+            roadmap ships with the same fidelity.
           </p>
         </div>
 
@@ -380,18 +488,22 @@ function HowItWorks() {
       <div className="max-w-5xl mx-auto px-6">
         <div className="max-w-xl mb-12">
           <p className="text-xs font-semibold text-cyan-600 uppercase tracking-widest mb-3">
-            The quarterly loop
+            The round loop
           </p>
           <h2 className="text-4xl md:text-5xl font-display font-bold text-slate-900 tracking-tight mb-6 leading-[1.1]">
-            How a quarter plays.
+            How a round plays.
           </h2>
+          <p className="text-base text-slate-500 leading-relaxed mt-3">
+            Same five-step rhythm in every ICAN simulation. Industry-specific
+            decisions live inside step 1; the rest is universal.
+          </p>
         </div>
         <ol className="space-y-6">
-          <Step n={1} title="Open and price routes" desc="Drop a pin on the map. Pick aircraft. Set per-class fares. Bid for slots if you're short. The launch flow checks physics-real frequency caps for every spec." />
-          <Step n={2} title="Tune the ops sliders" desc="Six dials shape payroll, brand, loyalty, and cost discipline. Each tick has a real downstream effect — a quarter at customer-service 5 lifts loyalty but blows up payroll." />
-          <Step n={3} title="Resolve any board scenarios" desc="Some quarters carry a boardroom decision. Cyber breach response. Hedge timing. Government deals. Each option is a real trade-off — one outcome wins this quarter, costs next." />
-          <Step n={4} title="Click Next Quarter" desc="The engine settles fuel, demand, cargo, fares, costs, payroll, debt service, brand drift, milestones — and then writes the digest." />
-          <Step n={5} title="Read the digest, adapt" desc="Quarter close shows what happened: route P&Ls, milestones earned, decision consequences fired, scenario aftermath. Then you walk into the next quarter." />
+          <Step n={1} title="Make industry decisions" desc="In SkyForce: open and price routes, pick aircraft, bid for scarce slots. In Banking: write loans, set capital ratios. In Hospitality: set property mix and rate. Each simulation models its sector's real moves." />
+          <Step n={2} title="Tune the operating sliders" desc="Six universal dials — staff, marketing, service, rewards, ops, customer service. Each tick shapes payroll, brand, loyalty, and cost discipline downstream." />
+          <Step n={3} title="Resolve any board scenarios" desc="Some rounds carry a boardroom decision. Cyber breach response. Hedge timing. Government deals. Each option is a real trade-off — one outcome wins this round, costs next." />
+          <Step n={4} title="Advance the round" desc="The engine settles markets, demand, costs, debt service, brand drift, milestones — and then writes the executive digest." />
+          <Step n={5} title="Read the digest, adapt" desc="Round close shows what happened: P&L, milestones earned, decision consequences fired, scenario aftermath. Then you walk into the next round." />
         </ol>
       </div>
     </section>
@@ -421,37 +533,37 @@ function FacilitatorBlock() {
           <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-violet-500/10 rounded-full blur-3xl" />
           <div className="relative">
             <p className="text-xs font-semibold text-violet-300 uppercase tracking-widest mb-3">
-              For facilitators
+              For Game Masters
             </p>
             <h2 className="text-3xl md:text-4xl font-display font-bold tracking-tight mb-4 leading-tight">
-              Run a classroom or boardroom workshop.
+              Run an executive workshop.
             </h2>
             <p className="text-base text-slate-400 max-w-2xl mb-8 leading-relaxed">
-              Generate a 4-digit join code, share it with the room, watch teams
-              claim seats from their own laptops. Switch the active view, force
-              quarter-close, push live admin overrides, review the audit log —
-              all from one console.
+              Create a private game, share the 4-digit code, watch teams claim
+              seats from their own laptops. Switch the active view, force the
+              round close, push admin overrides, review the audit log — all
+              from one console. The same console powers every ICAN simulation.
             </p>
             <div className="flex items-center gap-3 flex-wrap">
               <Link
-                href="/facilitator"
+                href="/games/new"
                 className="inline-flex items-center gap-2 px-5 py-3 bg-white text-slate-900 text-sm font-semibold rounded-full hover:bg-slate-100 transition-colors"
               >
                 <ClipboardList className="w-4 h-4" />
-                Open the facilitator console
+                Create a session
               </Link>
               <a
-                href="mailto:hello@icanmena.com?subject=SkyForce%20cohort%20licensing"
+                href="mailto:info@icanmena.com?subject=ICAN%20simulation%20cohort%20licensing"
                 className="inline-flex items-center gap-1.5 px-5 py-3 text-sm font-medium text-slate-300 hover:text-white transition-colors"
               >
                 Talk to ICAN about cohort licensing →
               </a>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-10 pt-8 border-t border-slate-800">
-              <FacilitatorStat label="Per cohort" value="6 teams" />
-              <FacilitatorStat label="Session length" value="2-4 hrs" />
-              <FacilitatorStat label="Decisions" value="18 boardroom" />
-              <FacilitatorStat label="Setup" value={<><Clock className="inline w-3 h-3 mr-1 align-baseline" />5 min</>} />
+              <FacilitatorStat label="Per cohort" value="up to 8 teams" />
+              <FacilitatorStat label="Session length" value="flexible" />
+              <FacilitatorStat label="Game Master" value="optional" />
+              <FacilitatorStat label="Setup" value={<><Clock className="inline w-3 h-3 mr-1 align-baseline" />minutes</>} />
             </div>
           </div>
         </div>

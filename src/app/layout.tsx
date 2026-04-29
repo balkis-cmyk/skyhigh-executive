@@ -3,9 +3,9 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
-  title: "SkyForce — Airline Strategy Simulation",
+  title: "SkyForce — Executive Industry Simulation by ICAN MENA",
   description:
-    "40-round airline strategy simulation across 2015–2024. Build an airline, survive crises, outmaneuver rivals.",
+    "Senior-executive simulations for industry leaders. SkyForce is the airline product; Banking, Hospitality, Agriculture, Real Estate, and Healthcare are next.",
 };
 
 // Explicit viewport so the marketing landing page renders correctly on

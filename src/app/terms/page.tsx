@@ -53,8 +53,8 @@ export default function TermsPage() {
             <p>
               Facilitator licensing for classroom and workshop use is a
               separate agreement with ICAN MENA. Email{" "}
-              <a className="text-cyan-700 underline" href="mailto:hello@icanmena.com">
-                hello@icanmena.com
+              <a className="text-cyan-700 underline" href="mailto:info@icanmena.com">
+                info@icanmena.com
               </a>{" "}
               if you&rsquo;re running a paid workshop using SkyForce.
             </p>
@@ -77,8 +77,8 @@ export default function TermsPage() {
           <Section title="Contact">
             <p>
               Questions go to{" "}
-              <a className="text-cyan-700 underline" href="mailto:hello@icanmena.com">
-                hello@icanmena.com
+              <a className="text-cyan-700 underline" href="mailto:info@icanmena.com">
+                info@icanmena.com
               </a>
               .
             </p>

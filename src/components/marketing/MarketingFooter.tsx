@@ -41,14 +41,14 @@ const COLUMNS = [
     links: [
       { label: "Facilitator console", href: "/facilitator" },
       { label: "Run a workshop", href: "/about#facilitators" },
-      { label: "Cohort licensing", href: "mailto:hello@icanmena.com?subject=SkyForce%20cohort%20licensing" },
+      { label: "Cohort licensing", href: "mailto:info@icanmena.com?subject=SkyForce%20cohort%20licensing" },
     ],
   },
   {
     title: "Company",
     links: [
       { label: "ICAN MENA", href: "https://www.icanmena.com", external: true },
-      { label: "Get in touch", href: "mailto:hello@icanmena.com" },
+      { label: "Get in touch", href: "mailto:info@icanmena.com" },
       { label: "Privacy", href: "/privacy" },
       { label: "Terms", href: "/terms" },
     ],
@@ -71,14 +71,15 @@ export function MarketingFooter() {
               </span>
             </div>
             <p className="text-xs leading-relaxed text-slate-500 max-w-[220px] mb-5">
-              Run a global airline for 40 quarters. The executive simulation
-              built by ICAN MENA for boards, classrooms, and ops teams.
+              Executive simulations by ICAN MENA. SkyForce (airline) is live.
+              Banking, Hospitality, Agriculture, Real Estate, and Healthcare
+              are next.
             </p>
             <a
-              href="mailto:hello@icanmena.com"
+              href="mailto:info@icanmena.com"
               className="inline-block text-xs text-cyan-300 hover:text-cyan-200 font-medium"
             >
-              hello@icanmena.com
+              info@icanmena.com
             </a>
           </div>
 
@@ -127,11 +128,11 @@ export function MarketingFooter() {
         {/* Bottom bar */}
         <div className="pt-8 border-t border-slate-900 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <p className="text-[11px] text-slate-500">
-            © {new Date().getFullYear()} ICAN MENA. SkyForce is a strategic
-            simulation; gameplay events are fictional.
+            © {new Date().getFullYear()} ICAN MENA. Executive simulations are
+            stylized for learning; gameplay events are fictional.
           </p>
           <p className="text-[11px] text-slate-600">
-            Built in Dubai · 40 quarters · 380+ cities · 40+ aircraft
+            Built in Dubai · For senior executives · One platform, every industry
           </p>
         </div>
       </div>

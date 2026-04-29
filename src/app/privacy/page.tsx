@@ -76,8 +76,8 @@ export default function PrivacyPage() {
             <p>
               You can request deletion of your multiplayer session and all
               associated game-state rows by emailing{" "}
-              <a className="text-cyan-700 underline" href="mailto:hello@icanmena.com">
-                hello@icanmena.com
+              <a className="text-cyan-700 underline" href="mailto:info@icanmena.com">
+                info@icanmena.com
               </a>{" "}
               with the session id (visible in your browser&rsquo;s
               localStorage under <code>skyforce:sessionId:v1</code>).
@@ -86,8 +86,8 @@ export default function PrivacyPage() {
           <Section title="Questions">
             <p>
               SkyForce is a product of ICAN MENA, based in Dubai. Reach us at{" "}
-              <a className="text-cyan-700 underline" href="mailto:hello@icanmena.com">
-                hello@icanmena.com
+              <a className="text-cyan-700 underline" href="mailto:info@icanmena.com">
+                info@icanmena.com
               </a>
               .
             </p>
