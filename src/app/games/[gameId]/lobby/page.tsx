@@ -55,6 +55,7 @@ const POPULAR_HUBS = [
 interface LobbyResponse {
   game: GameRow;
   members: GameMemberRow[];
+  state?: { state_json: unknown };
 }
 
 export default function GameLobbyPage({
@@ -87,7 +88,7 @@ export default function GameLobbyPage({
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/games/load?gameId=${encodeURIComponent(gameId)}`, {
+      const res = await fetch(`/api/games/load?gameId=${encodeURIComponent(gameId)}&includeState=1`, {
         cache: "no-store",
       });
       const json = await res.json();
@@ -226,6 +227,13 @@ export default function GameLobbyPage({
   ).length;
   const seatsRemaining = Math.max(0, game.max_teams - seatsClaimed);
 
+  // Which session IDs have saved their airline setup (from server state_json)
+  const playerSetups = (
+    (data.state?.state_json as Record<string, unknown> | undefined)?.playerSetups as
+      Record<string, unknown> | undefined
+  ) ?? {};
+  const mySetupSaved = setupSaved || (sessionId != null && sessionId in playerSetups);
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
@@ -277,7 +285,14 @@ export default function GameLobbyPage({
             onCopyCode={handleCopyCode}
             copyHint={copyHint}
             onToggleLock={() => action("/api/games/lock", { gameId, locked: !game.locked })}
-            onStart={() => action("/api/games/start", { gameId })}
+            setupSaved={mySetupSaved}
+            onStart={() => {
+              if (!mySetupSaved) {
+                setError("Please set up your airline below before starting the game.");
+                return;
+              }
+              action("/api/games/start", { gameId });
+            }}
             onDelete={async () => {
               await action("/api/games/delete", { gameId, sessionId });
               router.replace("/lobby");
@@ -291,7 +306,7 @@ export default function GameLobbyPage({
             <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-3">
               Set up your airline
             </h2>
-            {setupSaved ? (
+            {mySetupSaved ? (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 flex items-center gap-3">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                 <div>
@@ -402,7 +417,8 @@ export default function GameLobbyPage({
             {Array.from({ length: game.max_teams }).map((_, i) => {
               const member = data.members[i];
               const isMe = member?.session_id === sessionId;
-              return <SeatCard key={i} index={i + 1} member={member ?? null} isMe={isMe} />;
+              const hasSetup = member ? member.session_id in playerSetups : false;
+              return <SeatCard key={i} index={i + 1} member={member ?? null} isMe={isMe} hasSetup={hasSetup} />;
             })}
           </div>
           {seatsRemaining > 0 && game.locked && (
@@ -467,11 +483,12 @@ function ShareCodeBanner({
 }
 
 function HostPanel({
-  game, isFacilitator, actionPending, onCopyCode, copyHint, onToggleLock, onStart, onDelete,
+  game, isFacilitator, actionPending, setupSaved, onCopyCode, copyHint, onToggleLock, onStart, onDelete,
 }: {
   game: GameRow;
   isFacilitator: boolean;
   actionPending: boolean;
+  setupSaved: boolean;
   onCopyCode: () => void;
   copyHint: boolean;
   onToggleLock: () => void;
@@ -483,8 +500,13 @@ function HostPanel({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <p className="text-xs font-semibold uppercase tracking-widest text-violet-600 mb-3">
-        {isFacilitator ? "Facilitator controls" : "Host controls"}
+        {isFacilitator ? "Game Master controls" : "Host controls"}
       </p>
+      {!setupSaved && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+          ⚠️ Set up your airline below before you can start the game.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         {/* Join code (private only) */}
         {game.join_code && (
@@ -541,8 +563,8 @@ function HostPanel({
         <div className="ml-auto">
           <button
             onClick={onStart}
-            disabled={actionPending}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            disabled={actionPending || !setupSaved}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {actionPending ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -559,11 +581,12 @@ function HostPanel({
 }
 
 function SeatCard({
-  index, member, isMe,
+  index, member, isMe, hasSetup,
 }: {
   index: number;
   member: GameMemberRow | null;
   isMe: boolean;
+  hasSetup: boolean;
 }) {
   const claimed = !!member;
   return (
@@ -590,7 +613,7 @@ function SeatCard({
                 {isMe && <span className="ml-2 text-xs font-medium text-cyan-700">· you</span>}
               </div>
               <div className="text-xs text-slate-500 truncate">
-                {member.role === "facilitator" ? "Facilitator" :
+                {member.role === "facilitator" ? "Game Master" :
                  member.role === "host" ? "Host" :
                  member.role === "spectator" ? "Spectator" : "Player"}
               </div>
@@ -601,6 +624,17 @@ function SeatCard({
             </div>
           )}
         </div>
+        {/* Setup status badge */}
+        {claimed && member.role !== "spectator" && (
+          <div className={
+            "shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full " +
+            (hasSetup
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-amber-50 text-amber-600")
+          }>
+            {hasSetup ? "✓ Ready" : "Setting up…"}
+          </div>
+        )}
       </div>
     </div>
   );
