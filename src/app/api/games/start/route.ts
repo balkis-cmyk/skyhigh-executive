@@ -71,11 +71,11 @@ export async function POST(req: NextRequest) {
       : [];
 
     if (existingTeams.length === 0 && stateJson) {
-      // ALL non-spectator members get a team — including the game master /
-      // facilitator. Previously excluding the facilitator caused their browser
-      // to fall back to local Zustand state (solo onboarding) while other
-      // browsers hydrated from server state, producing mismatched team lists.
-      const humanMembers = members.filter((m) => m.role !== "spectator");
+      // Only actual players get teams. The facilitator/game master manages the
+      // session but does not compete — they see all teams in admin/spectator view.
+      const humanMembers = members.filter(
+        (m) => m.role !== "spectator" && m.role !== "facilitator",
+      );
 
       // Player setups saved from the lobby form
       const playerSetups = (stateJson.playerSetups as Record<string, {

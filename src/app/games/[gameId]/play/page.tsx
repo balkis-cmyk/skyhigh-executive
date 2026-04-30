@@ -144,6 +144,9 @@ export default function GamePlayPage({
   }
 
   const myMember = data.members.find((m) => m.session_id === sessionId);
+  const isFacilitator =
+    myMember?.role === "facilitator" ||
+    (sessionId != null && sessionId === (data.game as unknown as Record<string, unknown>).facilitator_session_id);
 
   if (data.game.status === "lobby") {
     // Game hasn't started yet — bounce back to the lobby surface.
@@ -167,14 +170,16 @@ export default function GamePlayPage({
 
   // Hydrate finished — render the engine. The local store now has the
   // server-authoritative team list, currentQuarter, fuel index, etc.
-  if (!hydrated || phase !== "playing" || teamsCount === 0) {
+  // Facilitators have no team (teamsCount may still be 0 if seeding just
+  // happened), but we still render the canvas so they can observe the game.
+  if (!hydrated || phase !== "playing" || (!isFacilitator && teamsCount === 0)) {
     return (
       <CenteredMessage>
         <Loader2 className="w-6 h-6 text-slate-400 animate-spin mb-3" />
         <p className="text-sm text-slate-500">Loading game canvas…</p>
         {myMember && (
           <p className="text-xs text-slate-400 mt-2">
-            Seated as {myMember.display_name ?? "Anonymous"} ({myMember.role})
+            Joined as {myMember.display_name ?? "Anonymous"} ({myMember.role})
           </p>
         )}
       </CenteredMessage>
@@ -185,6 +190,13 @@ export default function GamePlayPage({
   // multiplayer-aware activeTeamId bound during hydrate.
   return (
     <div className="flex-1 min-h-0 flex flex-col">
+      {/* Game Master observer banner */}
+      {isFacilitator && (
+        <div className="bg-violet-900 text-violet-100 text-xs font-medium px-4 py-1.5 flex items-center gap-2 shrink-0">
+          <span className="text-violet-300">👁</span>
+          Game Master — observer mode. Use &ldquo;Switch view&rdquo; to inspect any team.
+        </div>
+      )}
       <TopBar />
       <GameCanvas />
     </div>

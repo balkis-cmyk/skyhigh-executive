@@ -219,11 +219,9 @@ export default function GameLobbyPage({
   const isFacilitator =
     (sessionId !== null && sessionId === game.facilitator_session_id) ||
     myMember?.role === "facilitator";
-  // Count all non-spectator members as seat holders — including the game master
-  // who now gets their own team (previously they were excluded which caused them
-  // to fall back to local state and not see other players).
+  // Count player seats only (not facilitator/spectator).
   const seatsClaimed = data.members.filter(
-    (m) => m.role !== "spectator"
+    (m) => m.role !== "spectator" && m.role !== "facilitator"
   ).length;
   const seatsRemaining = Math.max(0, game.max_teams - seatsClaimed);
 
@@ -232,7 +230,8 @@ export default function GameLobbyPage({
     (data.state?.state_json as Record<string, unknown> | undefined)?.playerSetups as
       Record<string, unknown> | undefined
   ) ?? {};
-  const mySetupSaved = setupSaved || (sessionId != null && sessionId in playerSetups);
+  // Track whether MY airline setup is saved (players only — facilitator has no team)
+  const mySetupSaved = !isFacilitator && (setupSaved || (sessionId != null && sessionId in playerSetups));
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto bg-slate-50">
@@ -285,14 +284,7 @@ export default function GameLobbyPage({
             onCopyCode={handleCopyCode}
             copyHint={copyHint}
             onToggleLock={() => action("/api/games/lock", { gameId, locked: !game.locked })}
-            setupSaved={mySetupSaved}
-            onStart={() => {
-              if (!mySetupSaved) {
-                setError("Please set up your airline below before starting the game.");
-                return;
-              }
-              action("/api/games/start", { gameId });
-            }}
+            onStart={() => action("/api/games/start", { gameId })}
             onDelete={async () => {
               await action("/api/games/delete", { gameId, sessionId });
               router.replace("/lobby");
@@ -300,8 +292,8 @@ export default function GameLobbyPage({
           />
         )}
 
-        {/* Airline setup — shown to every participant including game master */}
-        {myMember && myMember.role !== "spectator" && game.status === "lobby" && (
+        {/* Airline setup — shown to players; facilitator/game master has no team */}
+        {myMember && !isFacilitator && myMember.role !== "spectator" && game.status === "lobby" && (
           <section className="mt-8">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-3">
               Set up your airline
@@ -314,7 +306,7 @@ export default function GameLobbyPage({
                     {airlineName} ({airlineCode}) · Hub {airlineHub}
                   </p>
                   <p className="text-xs text-emerald-700 mt-0.5">
-                    {isFacilitator ? "Saved! You can start the game when everyone is ready." : "Saved! The game master will start shortly."}
+                    Saved! The game master will start shortly.
                     <button
                       onClick={() => setSetupSaved(false)}
                       className="ml-2 underline text-emerald-700 hover:text-emerald-900"
@@ -483,12 +475,11 @@ function ShareCodeBanner({
 }
 
 function HostPanel({
-  game, isFacilitator, actionPending, setupSaved, onCopyCode, copyHint, onToggleLock, onStart, onDelete,
+  game, isFacilitator, actionPending, onCopyCode, copyHint, onToggleLock, onStart, onDelete,
 }: {
   game: GameRow;
   isFacilitator: boolean;
   actionPending: boolean;
-  setupSaved: boolean;
   onCopyCode: () => void;
   copyHint: boolean;
   onToggleLock: () => void;
@@ -502,11 +493,6 @@ function HostPanel({
       <p className="text-xs font-semibold uppercase tracking-widest text-violet-600 mb-3">
         {isFacilitator ? "Game Master controls" : "Host controls"}
       </p>
-      {!setupSaved && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
-          ⚠️ Set up your airline below before you can start the game.
-        </p>
-      )}
       <div className="flex flex-wrap items-center gap-3">
         {/* Join code (private only) */}
         {game.join_code && (
@@ -563,8 +549,8 @@ function HostPanel({
         <div className="ml-auto">
           <button
             onClick={onStart}
-            disabled={actionPending || !setupSaved}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            disabled={actionPending}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
           >
             {actionPending ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
