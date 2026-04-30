@@ -45,8 +45,22 @@ export function OverviewPanel() {
   if (!player) return null;
 
   const doctrineMeta = DOCTRINE_BY_ID[player.doctrine] ?? DOCTRINE_BY_ID["premium-service"];
+  // Mid-campaign doctrine review — fires once at the round corresponding
+  // to half the configured campaign length. For the default 40-round
+  // game this is round 20 (end of the first half / start of the second);
+  // for shorter cohort formats it scales: 24 → R12, 16 → R8, 8 → R4.
+  // Players are NOT told this is coming — onboarding just says "Choose
+  // your doctrine"; the surprise reveal at mid-campaign is part of the
+  // game's design. The legacy `doctrine_revised_r20` flag is preserved
+  // alongside the new `doctrine_revised_midgame` so saves from the old
+  // hardcoded-Q20 era still gate correctly.
+  const totalRounds = s.session?.totalRounds ?? 40;
+  const midRound = Math.floor(totalRounds / 2);
+  const alreadyRevised =
+    player.flags.has("doctrine_revised_midgame") ||
+    player.flags.has("doctrine_revised_r20");
   const canReviewDoctrine =
-    s.currentQuarter === 20 && !player.flags.has("doctrine_revised_r20");
+    s.currentQuarter === midRound && !alreadyRevised;
   const airlineValue = computeAirlineValue(player);
   const activeRoutes = player.routes.filter((r) => r.status === "active");
   const totalRevenueLast = player.financialsByQuarter.at(-1)?.revenue ?? 0;
@@ -538,11 +552,11 @@ export function OverviewPanel() {
       >
         <ModalHeader>
           <div className="text-[0.6875rem] uppercase tracking-wider text-accent mb-1">
-            Quarter 20 doctrine review
+            Mid-campaign doctrine review
           </div>
           <h2 className="font-display text-2xl text-ink">Revise operating doctrine</h2>
           <p className="text-[0.8125rem] text-ink-muted mt-1">
-            One strategic reset is available at the midpoint. The new doctrine applies immediately.
+            One strategic reset is unlocked. The new doctrine applies immediately and persists for the rest of the campaign.
           </p>
         </ModalHeader>
         <ModalBody

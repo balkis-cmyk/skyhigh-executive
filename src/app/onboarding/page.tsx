@@ -151,8 +151,11 @@ export default function Onboarding() {
             </Step>
           )}
 
+          {/* Sub-text intentionally avoids hinting at the mid-campaign
+              doctrine review — the surprise reveal is part of the
+              game's design. */}
           {step === 1 && (
-            <Step title="Choose your doctrine" sub="Your starting operating model. You can revisit it once at Quarter 20.">
+            <Step title="Choose your doctrine" sub="Your starting operating model. Pick the strategy you'll execute on from day one.">
               {/* role=radiogroup + role=radio on each card so assistive
                   tech announces the cards as a single-select group with
                   the active option correctly checked. */}
