@@ -31,8 +31,10 @@ interface AuthState {
   /** True when Supabase env vars are populated. Marketing header etc.
    *  hide the sign-in chip when false to avoid a 500 on click. */
   authConfigured: boolean;
-  signInWithGoogle: () => Promise<{ ok: true } | { ok: false; error: string }>;
-  signInWithMicrosoft: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Optional `next` path (e.g. "/games/new") is appended to the
+   *  OAuth callback URL so the user lands back where they started. */
+  signInWithGoogle: (next?: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  signInWithMicrosoft: (next?: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   signInWithPassword: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   signUpWithPassword: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   signOut: () => Promise<void>;
@@ -74,11 +76,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function signInWithGoogle() {
+  async function signInWithGoogle(next?: string) {
     if (!supa) return { ok: false as const, error: "Auth not configured" };
-    const redirectTo = typeof window !== "undefined"
-      ? `${window.location.origin}/auth/callback`
-      : undefined;
+    const base = typeof window !== "undefined" ? window.location.origin : "";
+    const redirectTo = next
+      ? `${base}/auth/callback?next=${encodeURIComponent(next)}`
+      : `${base}/auth/callback`;
     const { error } = await supa.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo },
@@ -87,11 +90,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { ok: true as const };
   }
 
-  async function signInWithMicrosoft() {
+  async function signInWithMicrosoft(next?: string) {
     if (!supa) return { ok: false as const, error: "Auth not configured" };
-    const redirectTo = typeof window !== "undefined"
-      ? `${window.location.origin}/auth/callback`
-      : undefined;
+    const base = typeof window !== "undefined" ? window.location.origin : "";
+    const redirectTo = next
+      ? `${base}/auth/callback?next=${encodeURIComponent(next)}`
+      : `${base}/auth/callback`;
     const { error } = await supa.auth.signInWithOAuth({
       provider: "azure",
       options: { redirectTo, scopes: "email" },
@@ -152,8 +156,8 @@ export function useAuth(): AuthState {
       session: null,
       loading: false,
       authConfigured: false,
-      signInWithGoogle: async () => ({ ok: false, error: "Auth provider not mounted" }),
-      signInWithMicrosoft: async () => ({ ok: false, error: "Auth provider not mounted" }),
+      signInWithGoogle: async (_next?: string) => ({ ok: false, error: "Auth provider not mounted" }),
+      signInWithMicrosoft: async (_next?: string) => ({ ok: false, error: "Auth provider not mounted" }),
       signInWithPassword: async () => ({ ok: false, error: "Auth provider not mounted" }),
       signUpWithPassword: async () => ({ ok: false, error: "Auth provider not mounted" }),
       signOut: async () => {},

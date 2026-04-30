@@ -25,7 +25,7 @@ import {
   ArrowRight, Sparkles, Plane, Trophy, MapPin, Wallet, Users,
   Zap, Gem, PackageCheck, Globe2, ClipboardList,
   Clock, Landmark, Hotel, Wheat, Building2, Stethoscope,
-  Loader2,
+  Loader2, Mail as MailIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useGame } from "@/store/game";
@@ -161,13 +161,13 @@ function Hero() {
               How it works
             </Link>
           </div>
-          {!user && authConfigured && (
+          {!user && (
             <div className="mb-8 flex flex-col items-start gap-2">
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={handleGoogle}
-                  disabled={loading !== null}
+                  disabled={!authConfigured || loading !== null}
                   className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white transition-colors disabled:opacity-50"
                 >
                   {loading === "google" ? (
@@ -180,7 +180,7 @@ function Hero() {
                 <button
                   type="button"
                   onClick={handleMicrosoft}
-                  disabled={loading !== null}
+                  disabled={!authConfigured || loading !== null}
                   className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white transition-colors disabled:opacity-50"
                 >
                   {loading === "microsoft" ? (
@@ -190,11 +190,15 @@ function Hero() {
                   )}
                   Sign in with Microsoft
                 </button>
+                <Link
+                  href="/login"
+                  className="inline-flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white transition-colors"
+                >
+                  <MailIcon className="w-4 h-4 shrink-0" />
+                  Sign in with Email
+                </Link>
               </div>
               {error && <p className="text-xs text-rose-400">{error}</p>}
-              <Link href="/login" className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
-                More sign-in options →
-              </Link>
             </div>
           )}
           {user && (
@@ -696,12 +700,12 @@ function FinalCta() {
             Join game
             <ArrowRight className="w-4 h-4" />
           </Link>
-          {!user && authConfigured && (
+          {!user && (
             <>
               <button
                 type="button"
                 onClick={handleGoogle}
-                disabled={loading !== null}
+                disabled={!authConfigured || loading !== null}
                 className="inline-flex items-center gap-2.5 px-5 py-3 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 transition-colors shadow-sm disabled:opacity-50"
               >
                 {loading === "google" ? <Loader2 className="w-4 h-4 animate-spin" /> : <GoogleIcon className="w-4 h-4 shrink-0" />}
@@ -710,12 +714,19 @@ function FinalCta() {
               <button
                 type="button"
                 onClick={handleMicrosoft}
-                disabled={loading !== null}
+                disabled={!authConfigured || loading !== null}
                 className="inline-flex items-center gap-2.5 px-5 py-3 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 transition-colors shadow-sm disabled:opacity-50"
               >
                 {loading === "microsoft" ? <Loader2 className="w-4 h-4 animate-spin" /> : <MicrosoftIcon className="w-4 h-4 shrink-0" />}
                 Sign in with Microsoft
               </button>
+              <Link
+                href="/login"
+                className="inline-flex items-center gap-2.5 px-5 py-3 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 transition-colors shadow-sm"
+              >
+                <MailIcon className="w-4 h-4 shrink-0" />
+                Sign in with Email
+              </Link>
             </>
           )}
           {user && (
@@ -724,14 +735,6 @@ function FinalCta() {
             </Link>
           )}
         </div>
-        {!user && authConfigured && (
-          <p className="mt-4 text-xs text-slate-400">
-            Or{" "}
-            <Link href="/login" className="underline underline-offset-2 hover:text-slate-600">
-              sign in with Microsoft or email
-            </Link>
-          </p>
-        )}
       </div>
     </section>
   );

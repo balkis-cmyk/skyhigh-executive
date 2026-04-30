@@ -28,11 +28,10 @@ function LoginInner() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Surface auth errors from /auth/callback redirects. The setError
-  // is guarded by the `if (authError)` check so it only fires when
-  // there's actually an error to show. React 19's set-state-in-effect
-  // rule flags it via static analysis; for a one-time URL-param read
-  // this is the right pattern.
+  // Where to send the user after a successful sign-in.
+  const nextPath = search.get("next") || "/lobby";
+
+  // Surface auth errors from /auth/callback redirects.
   useEffect(() => {
     const authError = search.get("error");
     if (authError) {
@@ -45,10 +44,10 @@ function LoginInner() {
     }
   }, [search]);
 
-  // If already signed in, bounce
+  // If already signed in, bounce to next destination
   useEffect(() => {
-    if (!authLoading && user) router.replace("/lobby");
-  }, [authLoading, user, router]);
+    if (!authLoading && user) router.replace(nextPath);
+  }, [authLoading, user, router, nextPath]);
 
   async function go(fn: () => Promise<{ ok: true } | { ok: false; error: string }>, label: typeof loading) {
     setError(null);
@@ -58,7 +57,7 @@ function LoginInner() {
       setError(r.error);
       setLoading(null);
     }
-    // OAuth redirects away; password sign-in flips user via onAuthStateChange.
+    // OAuth redirects away; password sign-in flips user via onAuthStateChange → effect above handles redirect.
   }
 
   async function handleEmail(e: React.FormEvent) {
@@ -106,7 +105,7 @@ function LoginInner() {
         <div className="space-y-3">
           <button
             type="button"
-            onClick={() => go(signInWithGoogle, "google")}
+            onClick={() => go(() => signInWithGoogle(nextPath), "google")}
             disabled={!authConfigured || loading !== null}
             className="w-full inline-flex items-center justify-center gap-3 px-4 py-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 disabled:opacity-50 transition-colors"
           >
@@ -115,7 +114,7 @@ function LoginInner() {
           </button>
           <button
             type="button"
-            onClick={() => go(signInWithMicrosoft, "microsoft")}
+            onClick={() => go(() => signInWithMicrosoft(nextPath), "microsoft")}
             disabled={!authConfigured || loading !== null}
             className="w-full inline-flex items-center justify-center gap-3 px-4 py-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 disabled:opacity-50 transition-colors"
           >

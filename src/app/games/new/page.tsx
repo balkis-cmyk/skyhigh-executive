@@ -25,7 +25,7 @@
  */
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, ArrowRight, Loader2, Lock, Globe2, Sparkles,
@@ -60,8 +60,21 @@ function mkSlotId() {
 export default function CreateGamePage() {
   const router = useRouter();
   const sessionId = useLocalSessionId();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const mpAvailable = isMultiplayerAvailable();
+
+  // Require sign-in to create a game. Redirect to login with a ?next
+  // param so the user lands back here after authenticating.
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace("/login?next=/games/new");
+    }
+  }, [authLoading, user, router]);
+
+  // Show nothing while auth resolves or redirect is in flight.
+  if (authLoading || !user) {
+    return <div className="flex-1 bg-slate-50" aria-hidden />;
+  }
 
   const [name, setName] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("public");
