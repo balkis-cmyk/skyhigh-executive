@@ -24,9 +24,10 @@ import { useEffect, useState, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, ArrowRight, Lock, Unlock, Copy, Sparkles, Globe2,
-  Loader2, AlertCircle, Play,
+  Loader2, AlertCircle, Play, Trash2,
 } from "lucide-react";
 import { useLocalSessionId } from "@/lib/games/session";
+import { useAuth } from "@/lib/auth-context";
 import type { GameRow, GameMemberRow } from "@/lib/supabase/types";
 
 interface LobbyResponse {
@@ -42,7 +43,11 @@ export default function GameLobbyPage({
   // Next 16 unwraps async params via React.use()
   const { gameId } = use(params);
   const router = useRouter();
-  const sessionId = useLocalSessionId();
+  const localSessionId = useLocalSessionId();
+  const { user } = useAuth();
+  // Use Supabase user ID when signed in — must match what create-game
+  // sends as hostSessionId (user?.id ?? sessionId).
+  const sessionId = user?.id ?? localSessionId;
   const [data, setData] = useState<LobbyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -214,6 +219,10 @@ export default function GameLobbyPage({
             copyHint={copyHint}
             onToggleLock={() => action("/api/games/lock", { gameId, locked: !game.locked })}
             onStart={() => action("/api/games/start", { gameId })}
+            onDelete={async () => {
+              await action("/api/games/delete", { gameId, sessionId });
+              router.replace("/lobby");
+            }}
           />
         )}
 
@@ -291,7 +300,7 @@ function ShareCodeBanner({
 }
 
 function HostPanel({
-  game, isFacilitator, actionPending, onCopyCode, copyHint, onToggleLock, onStart,
+  game, isFacilitator, actionPending, onCopyCode, copyHint, onToggleLock, onStart, onDelete,
 }: {
   game: GameRow;
   isFacilitator: boolean;
@@ -300,7 +309,10 @@ function HostPanel({
   copyHint: boolean;
   onToggleLock: () => void;
   onStart: () => void;
+  onDelete: () => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <p className="text-xs font-semibold uppercase tracking-widest text-violet-600 mb-3">
@@ -328,6 +340,36 @@ function HostPanel({
           {game.locked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
           {game.locked ? "Unlock lobby" : "Lock lobby"}
         </button>
+
+        {/* Delete game */}
+        {!confirmDelete ? (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            disabled={actionPending}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 text-sm font-medium disabled:opacity-50 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete game
+          </button>
+        ) : (
+          <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-rose-300 bg-rose-50">
+            <span className="text-xs text-rose-700 font-medium">Delete permanently?</span>
+            <button
+              onClick={onDelete}
+              disabled={actionPending}
+              className="text-xs font-semibold text-rose-700 hover:text-rose-900 underline disabled:opacity-50"
+            >
+              Yes, delete
+            </button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="text-xs text-slate-500 hover:text-slate-700"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
         {/* Start button — sticky right */}
         <div className="ml-auto">
           <button
