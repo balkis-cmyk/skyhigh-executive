@@ -124,6 +124,14 @@ export interface GameStore extends GameState {
   // Last quarter close result (for the modal)
   lastCloseResult: QuarterCloseResult | null;
 
+  /**
+   * True while this browser is hydrated from a server-side multiplayer game.
+   * Persisted so the custom storage can detect it and refuse to overwrite the
+   * solo save slot while a multiplayer session is active. Reset to false by
+   * startNewGame / resetGame so solo play never bleeds into multiplayer saves.
+   */
+  isMultiplayerSession: boolean;
+
   // ── Actions ───────────────────────────────────────────────
   startNewGame(args: {
     airlineName: string;
@@ -827,6 +835,7 @@ export const useGame = create<GameStore>()(
       localSessionId: null,
       preOrders: [],
       productionCapOverrides: {},
+      isMultiplayerSession: false,
 
       startNewGame: (args) => {
         const {
@@ -4985,6 +4994,9 @@ export const useGame = create<GameStore>()(
         // suppressing them as "already seen".
         if (typeof window !== "undefined") {
           try { window.localStorage.removeItem("skyforce:milestonesShown:v1"); } catch {}
+          // Also clear the multiplayer active-game redirect key so the
+          // home page goes back to the marketing landing / solo canvas.
+          try { window.localStorage.removeItem("skyforce:activeGame"); } catch {}
         }
         set({
           phase: "idle",
@@ -4995,6 +5007,7 @@ export const useGame = create<GameStore>()(
           playerTeamId: null,
           activeTeamId: null,
           session: null,
+          isMultiplayerSession: false,
           lastCloseResult: null,
           quarterTimerSecondsRemaining: null,
           quarterTimerPaused: false,
@@ -5216,6 +5229,11 @@ export const useGame = create<GameStore>()(
             // of the campaign, not a continuation of a paused close.
             lastCloseResult: null,
             phase: restored.phase === "endgame" ? "endgame" : "playing",
+            // Flag this browser as being in a multiplayer session.
+            // The custom persist storage checks this flag and refuses to
+            // write to the solo save slot, so solo saves are never
+            // overwritten by multiplayer state.
+            isMultiplayerSession: true,
           } as Partial<GameStore>);
           return { ok: true };
         } catch (err) {
@@ -6200,7 +6218,32 @@ export const useGame = create<GameStore>()(
     }),
     {
       name: "skyforce-game-v1",
-      storage: createJSONStorage(() => localStorage),
+      // Custom storage that protects the solo save from being overwritten
+      // while a multiplayer session is active. Multiplayer state is always
+      // re-hydrated from the server on play-page load, so there is nothing
+      // useful to persist locally for multiplayer. The solo save is never
+      // touched by a multiplayer game, and multiple multiplayer games
+      // never interfere with each other.
+      storage: createJSONStorage(() => ({
+        getItem: (name: string) => {
+          try { return localStorage.getItem(name); } catch { return null; }
+        },
+        setItem: (name: string, value: string) => {
+          try {
+            // Check the isMultiplayerSession flag embedded in the
+            // partialize payload. If true, silently skip the write so the
+            // solo save is left untouched.
+            const parsed = JSON.parse(value) as {
+              state?: { isMultiplayerSession?: boolean };
+            };
+            if (parsed?.state?.isMultiplayerSession === true) return;
+            localStorage.setItem(name, value);
+          } catch { /* ignore */ }
+        },
+        removeItem: (name: string) => {
+          try { localStorage.removeItem(name); } catch { /* ignore */ }
+        },
+      })),
       partialize: (s) => ({
         phase: s.phase,
         currentQuarter: s.currentQuarter,
@@ -6225,6 +6268,9 @@ export const useGame = create<GameStore>()(
         preOrders: s.preOrders,
         productionCapOverrides: s.productionCapOverrides,
         marketHistory: s.marketHistory,
+        // Included so the custom storage setItem can read it and decide
+        // whether to skip the write. Not used by onRehydrateStorage.
+        isMultiplayerSession: s.isMultiplayerSession,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
