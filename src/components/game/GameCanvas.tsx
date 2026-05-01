@@ -74,7 +74,19 @@ function CanvasInner() {
   const multiplayerGameId = useGame(
     (s) => ((s.session as Record<string, unknown> | null)?.gameId as string) ?? null,
   );
+  const setActiveTeam = useGame((s) => s.setActiveTeam);
+  const firstTeamId = useGame((s) => s.teams[0]?.id ?? null);
   const player = useGame(selectPlayer);
+
+  // Game Master auto-view: when the GM is in a multiplayer game but has no
+  // claimed team, automatically pin their view to the first available team
+  // so the canvas renders immediately. They can use "Switch view" to hop
+  // between players at any time.
+  useEffect(() => {
+    if (multiplayerGameId && !playerTeamId && firstTeamId) {
+      setActiveTeam(firstTeamId);
+    }
+  }, [multiplayerGameId, playerTeamId, firstTeamId, setActiveTeam]);
   // View-only competitor mode (Sprint 7): when set, the map renders
   // the named rival's network instead of the player's. Click handlers
   // are still bound to the player so route creation always targets
