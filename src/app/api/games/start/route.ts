@@ -82,13 +82,34 @@ export async function POST(req: NextRequest) {
 
       // Only actual players get teams. The facilitator/game master manages the
       // session but does not compete — they see all teams in admin/spectator view.
-      // Cap to the number of planned human seats so that duplicate member rows
-      // (e.g. same person joined anonymously then authenticated, creating two
-      // game_member entries with different session IDs) don't produce phantom teams.
       const plannedHumanCount = plannedSeats.filter((s) => s.type === "human").length;
-      const humanMembers = members
-        .filter((m) => m.role !== "spectator" && m.role !== "facilitator")
-        .slice(0, plannedHumanCount > 0 ? plannedHumanCount : members.length);
+      // Hard cap: use plannedHumanCount when available, otherwise game.max_teams
+      // (never members.length — that would include phantom rows from the same
+      // person joining twice with different session IDs).
+      const humanCap = plannedHumanCount > 0 ? plannedHumanCount : game.max_teams;
+
+      // Deduplicate by display_name: if the same physical person joined twice
+      // (anonymous session + authenticated session), keep only their most
+      // recently active session so claimedBySessionId matches what the play
+      // page will use as mySessionId.
+      const eligibleMembers = members.filter(
+        (m) => m.role !== "spectator" && m.role !== "facilitator",
+      );
+      const dedupedMap = new Map<string, typeof eligibleMembers[number]>();
+      for (const m of eligibleMembers) {
+        const key = m.display_name?.trim() || m.session_id;
+        const existing = dedupedMap.get(key);
+        if (!existing) {
+          dedupedMap.set(key, m);
+        } else {
+          // Keep the more recently seen session — that's the one the browser
+          // will present as its sessionId when hitting the play page.
+          const existingTs = existing.last_seen_at ? new Date(existing.last_seen_at).getTime() : 0;
+          const newTs = m.last_seen_at ? new Date(m.last_seen_at).getTime() : 0;
+          if (newTs > existingTs) dedupedMap.set(key, m);
+        }
+      }
+      const humanMembers = Array.from(dedupedMap.values()).slice(0, humanCap);
 
       // Only seed bots for seats that were explicitly configured as "bot" in the
       // lobby form. Never fill empty human seats with bots — if someone didn't

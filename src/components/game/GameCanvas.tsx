@@ -68,6 +68,12 @@ function CanvasInner() {
   const phase = useGame((state) => state.phase);
   const playerTeamId = useGame((state) => state.playerTeamId);
   const currentQuarter = useGame((state) => state.currentQuarter);
+  // Detect multiplayer context — session.gameId is set in-memory after
+  // hydrateFromServerState. Not persisted to localStorage, so this is
+  // null on solo runs and on home-page canvas mounts.
+  const multiplayerGameId = useGame(
+    (s) => ((s.session as Record<string, unknown> | null)?.gameId as string) ?? null,
+  );
   const player = useGame(selectPlayer);
   // View-only competitor mode (Sprint 7): when set, the map renders
   // the named rival's network instead of the player's. Click handlers
@@ -160,6 +166,34 @@ function CanvasInner() {
     return (
       <main className="flex-1 flex items-center justify-center text-ink-muted">
         Loading…
+      </main>
+    );
+  }
+
+  // ── Multiplayer: no claimed team (game master or session mismatch) ──────
+  // When we're hydrated from a server game but this browser has no claimed
+  // team, show an observer/waiting screen instead of the solo onboarding CTA.
+  // This covers the game master (facilitator, no team by design) and players
+  // whose session ID changed between joining and starting (anonymous → auth).
+  if (multiplayerGameId && !playerTeamId) {
+    return (
+      <main className="flex-1 flex items-center justify-center px-6 py-12">
+        <div className="max-w-md text-center">
+          <div className="w-14 h-14 rounded-2xl bg-violet-100 text-violet-600 flex items-center justify-center mx-auto mb-5 text-2xl">
+            👁
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 mb-2">Observer mode</h2>
+          <p className="text-sm text-slate-500 mb-6">
+            You are connected to the game as an observer. The leaderboard and team
+            panels update in real time. Use the nav rail to inspect any team.
+          </p>
+          <a
+            href={`/games/${multiplayerGameId}/lobby`}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors"
+          >
+            ← Back to lobby
+          </a>
+        </div>
       </main>
     );
   }

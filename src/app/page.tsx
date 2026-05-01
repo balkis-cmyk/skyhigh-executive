@@ -37,11 +37,30 @@ import { useAuth } from "@/lib/auth-context";
 export default function Home() {
   const phase = useGame((s) => s.phase);
   const [hydrated, setHydrated] = useState(false);
-  const [hasCode, setHasCode] = useState(false);
+  const [redirect, setRedirect] = useState<string | null>(null);
   useEffect(() => {
-    // Detect ?code= in URL — someone was given a join link.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setHasCode(new URLSearchParams(window.location.search).has("code"));
+    // ?code= → join lobby
+    if (new URLSearchParams(window.location.search).has("code")) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRedirect("/lobby");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHydrated(true);
+      return;
+    }
+    // Active multiplayer game → send player back to the play page so they
+    // don't land on their stale solo canvas. The key is written by the play
+    // page after successful server-state hydration and cleared when the
+    // player deliberately leaves via the lobby.
+    try {
+      const activeGame = localStorage.getItem("skyforce:activeGame");
+      if (activeGame) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setRedirect(`/games/${activeGame}/play`);
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setHydrated(true);
+        return;
+      }
+    } catch { /* localStorage blocked */ }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setHydrated(true);
   }, []);
@@ -50,17 +69,12 @@ export default function Home() {
     return <div className="flex-1 min-h-0 bg-slate-50" aria-hidden />;
   }
 
-  // If the URL has ?code=..., the visitor is trying to join a multiplayer game.
-  // Redirect them to /lobby regardless of any local solo state so they don't
-  // accidentally land in their own cached solo canvas instead of the game room.
-  if (hasCode) {
-    if (typeof window !== "undefined") {
-      window.location.replace("/lobby");
-    }
+  if (redirect) {
+    if (typeof window !== "undefined") window.location.replace(redirect);
     return <div className="flex-1 min-h-0 bg-slate-50" aria-hidden />;
   }
 
-  // Active or finished run — drop into the canvas. The TopBar's
+  // Active or finished solo run — drop into the canvas. The TopBar's
   // GameMenu has the "End game & start over" path so the player can
   // always escape back to this landing.
   if (

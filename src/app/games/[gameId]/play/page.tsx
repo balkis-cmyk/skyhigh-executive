@@ -111,6 +111,9 @@ export default function GamePlayPage({
       setError(result.error ?? "Couldn't hydrate game state.");
       return;
     }
+    // Persist the active game ID so the home page can redirect returning
+    // visitors back here instead of showing the stale solo canvas.
+    try { localStorage.setItem("skyforce:activeGame", gameId); } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setHydrated(true);
   }, [data, sessionId, hydrated, hydrateFromServerState]);

@@ -124,9 +124,14 @@ export default function GameLobbyPage({
 
   // Claim a seat as soon as we have a session id and the game is in lobby.
   // The join API is idempotent so re-running is safe.
+  // We also check localSessionId so a user who joined anonymously and then
+  // logged in doesn't create a second member row (which would produce a
+  // phantom team at game-start).
   useEffect(() => {
     if (!sessionId || !data) return;
-    const alreadyJoined = data.members.some((m) => m.session_id === sessionId);
+    const alreadyJoined = data.members.some(
+      (m) => m.session_id === sessionId || (localSessionId && m.session_id === localSessionId),
+    );
     if (alreadyJoined) return;
     if (data.game.status !== "lobby") return;
     fetch("/api/games/join", {
@@ -135,7 +140,7 @@ export default function GameLobbyPage({
       body: JSON.stringify({ gameId, sessionId }),
     }).then(load).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, data?.game.id, data?.game.status]);
+  }, [sessionId, localSessionId, data?.game.id, data?.game.status]);
 
   async function action(path: string, body: unknown) {
     if (!sessionId) return;
@@ -244,6 +249,9 @@ export default function GameLobbyPage({
         <div className="max-w-4xl mx-auto px-6 h-14 flex items-center justify-between">
           <Link
             href="/lobby"
+            onClick={() => {
+              try { localStorage.removeItem("skyforce:activeGame"); } catch { /* ignore */ }
+            }}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -292,6 +300,9 @@ export default function GameLobbyPage({
             onStart={() => action("/api/games/start", { gameId })}
             onDelete={async () => {
               await action("/api/games/delete", { gameId, sessionId });
+              // Clear the active-game key so the home page doesn't keep
+              // redirecting back to a game that no longer exists.
+              try { localStorage.removeItem("skyforce:activeGame"); } catch { /* ignore */ }
               router.replace("/lobby");
             }}
           />
