@@ -66,7 +66,7 @@ export default function FacilitatorPage() {
 function FacilitatorPageInner() {
   const search = useSearchParams();
   const gameId = search.get("gameId");
-  const sessionId = useMultiplayerSession();
+  const { sessionId } = useMultiplayerSession();
   const hydrateFromServerState = useGame((g) => g.hydrateFromServerState);
   const [hydrateState, setHydrateState] = useState<
     "idle" | "loading" | "ready" | "error"

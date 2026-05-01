@@ -45,8 +45,8 @@ export default function GamePlayPage({
   params: Promise<{ gameId: string }>;
 }) {
   const { gameId } = use(params);
-  // Stable server-side identity — Supabase user.id (real or anonymous auth).
-  const sessionId = useMultiplayerSession();
+  // Stable server-side identity — Supabase user.id only.
+  const { sessionId, authReady } = useMultiplayerSession();
   const hydrateFromServerState = useGame((s) => s.hydrateFromServerState);
   const phase = useGame((s) => s.phase);
   const teamsCount = useGame((s) => s.teams.length);
@@ -162,6 +162,26 @@ export default function GamePlayPage({
       supa.removeChannel(channel);
     };
   }, [hydrated, gameId, sessionId]);
+
+  // Auth gate — must be signed in to play
+  if (authReady && !sessionId) {
+    return (
+      <CenteredMessage>
+        <div className="max-w-md w-full rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
+          <p className="text-base font-semibold text-amber-900 mb-2">Sign in required</p>
+          <p className="text-sm text-amber-800 mb-4">
+            You need to be signed in to join a multiplayer game.
+          </p>
+          <Link
+            href={`/login?next=/games/${gameId}/play`}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors"
+          >
+            Sign in →
+          </Link>
+        </div>
+      </CenteredMessage>
+    );
+  }
 
   if (loading) {
     return (

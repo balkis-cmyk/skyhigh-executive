@@ -860,9 +860,9 @@ export interface GameState {
    *  single human). */
   activeTeamId: string | null;
 
-  /** @deprecated No longer used. Identity is now always Supabase user.id
-   *  (real or anonymous auth). Kept in the type so old persisted state
-   *  shapes don't cause a TS error on rehydration. */
+  /** Supabase user.id for the current player in a multiplayer session.
+   *  Set during hydrateFromServerState and read by pushStateToServer
+   *  as actorSessionId. Null in solo runs. Never a localStorage UUID. */
   localSessionId: string | null;
 
   /** @deprecated Use `state.session?.joinCode`. Kept as a shadow during

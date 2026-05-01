@@ -30,7 +30,7 @@ import type { GameRow } from "@/lib/supabase/types";
 
 export default function LobbyPage() {
   const router = useRouter();
-  const sessionId = useMultiplayerSession();
+  const { sessionId } = useMultiplayerSession();
   const [games, setGames] = useState<GameRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

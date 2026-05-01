@@ -831,7 +831,7 @@ export const useGame = create<GameStore>()(
       // same engine state can render correctly for any human team.
       session: null,
       activeTeamId: null,
-      localSessionId: null, // kept for backwards-compat with saved state shapes
+      localSessionId: null, // set to user.id during hydrateFromServerState; null in solo
       preOrders: [],
       productionCapOverrides: {},
       isMultiplayerSession: false,
@@ -5233,6 +5233,9 @@ export const useGame = create<GameStore>()(
             teams,
             activeTeamId,
             playerTeamId,
+            // Store the authenticated session ID so pushStateToServer
+            // can use it as actorSessionId without touching localStorage.
+            localSessionId: mySessionId,
             // Reset transient UI — a fresh hydrate is a hard reload
             // of the campaign, not a continuation of a paused close.
             lastCloseResult: null,
@@ -5259,19 +5262,9 @@ export const useGame = create<GameStore>()(
         // server-side gameId skip the write-back entirely. Returning
         // here is a no-op — the local engine has already advanced.
         if (!session?.gameId) return;
-        // Read the per-browser session id from localStorage directly
-        // — the value lives outside the Zustand store (lib/games/session
-        // owns it) but we need it here to satisfy the API's
-        // actorSessionId requirement. SSR / no-window path bails.
-        if (typeof window === "undefined") return;
-        let sessionId: string | null = null;
-        try {
-          sessionId = window.localStorage.getItem("skyforce:sessionId:v1");
-        } catch {
-          // localStorage blocked — skip write-back; the local engine
-          // already advanced.
-          return;
-        }
+        // Use the authenticated Supabase user.id stored during hydration.
+        // This is always server-side identity — never a localStorage UUID.
+        const sessionId = s.localSessionId;
         if (!sessionId) return;
         const actorTeamId = s.activeTeamId ?? s.playerTeamId ?? undefined;
 
