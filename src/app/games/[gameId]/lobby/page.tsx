@@ -109,6 +109,15 @@ export default function GameLobbyPage({
     }
   }, [gameId, router]);
 
+  // Clear any stale "active game" redirect key from localStorage the
+  // moment a lobby page loads. The lobby is always the entry point
+  // before a game starts, so if the player is here they haven't
+  // entered the new game yet. The play page will write the fresh key
+  // once the game actually starts and server state is hydrated.
+  useEffect(() => {
+    try { localStorage.removeItem("skyforce:activeGame"); } catch { /* ignore */ }
+  }, [gameId]);
+
   useEffect(() => {
     // load() is async — its setState calls fire after the await, not
     // synchronously inside the effect body. The lint rule flags it

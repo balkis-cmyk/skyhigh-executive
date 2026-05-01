@@ -71,8 +71,16 @@ export default function GamePlayPage({
         if (cancelled) return;
         if (!res.ok) {
           setError(json.error ?? "Game not found.");
+          // Game is gone or inaccessible — clear the redirect key so the
+          // home page stops bouncing the player back to a dead game URL.
+          try { localStorage.removeItem("skyforce:activeGame"); } catch { /* ignore */ }
         } else {
           setData(json);
+          // Also clear the key if the game has ended so returning visitors
+          // land on the marketing page rather than a finished-game error.
+          if (json.game?.status === "ended") {
+            try { localStorage.removeItem("skyforce:activeGame"); } catch { /* ignore */ }
+          }
         }
       } catch (e) {
         if (cancelled) return;
