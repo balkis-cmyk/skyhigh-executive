@@ -147,7 +147,7 @@ function Landing() {
         }}
       />
       <Features selectedSim={selectedSim} />
-      <Doctrines />
+      <Doctrines selectedSim={selectedSim} />
       <HowItWorks />
       <FacilitatorBlock />
       <FinalCta />
@@ -593,22 +593,21 @@ function Features({ selectedSim }: { selectedSim: IndustrySlug }) {
             {block.intro}
           </p>
           {block.status === "coming-soon" && (
-            <div className="mt-6 inline-flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-700">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                Coming soon
-              </span>
-              <span className="text-slate-600">
-                The Airline simulation is live today.{" "}
-                <Link href="/simulations" className="font-semibold text-slate-900 underline-offset-2 hover:underline">
-                  See the full pipeline
-                </Link>{" "}
-                or{" "}
-                <a href="mailto:info@icanmena.com?subject=ICAN%20Simulations%20early%20access" className="font-semibold text-slate-900 underline-offset-2 hover:underline">
-                  ask about early access
-                </a>.
-              </span>
-            </div>
+            // Plain inline note — no bordered box, no pill chip, just a
+            // small subtle line below the intro paragraph. The previous
+            // bordered panel + chip pulled too much attention for a
+            // status note that's meant to read as a footnote.
+            <p className="mt-4 text-xs text-slate-400 leading-relaxed">
+              <span className="text-slate-500">Coming soon.</span>{" "}
+              The Airline simulation is live today —{" "}
+              <Link href="/simulations" className="text-slate-600 underline-offset-2 hover:underline hover:text-slate-900">
+                see the full pipeline
+              </Link>{" "}
+              or{" "}
+              <a href="mailto:info@icanmena.com?subject=ICAN%20Simulations%20early%20access" className="text-slate-600 underline-offset-2 hover:underline hover:text-slate-900">
+                ask about early access
+              </a>.
+            </p>
           )}
         </div>
 
@@ -656,49 +655,125 @@ function FeatureCard({
 }
 
 // ─── Doctrines showcase ─────────────────────────────────────
-function Doctrines() {
-  const items = [
-    {
-      Icon: Zap,
-      accent: "amber",
-      name: "Budget Airline",
+//
+// Doctrines are sector-specific strategic commitments. Each industry
+// has its own four — for the live Airline these are real engine
+// multipliers; for coming-soon industries they preview what the
+// strategic-commitment dial will look like when the sim ships.
+type DoctrineAccent = "amber" | "violet" | "emerald" | "cyan";
+interface DoctrineCardData {
+  Icon: LucideIcon;
+  accent: DoctrineAccent;
+  name: string;
+  tagline: string;
+  desc: string;
+}
+const INDUSTRY_DOCTRINES: Record<IndustrySlug, DoctrineCardData[]> = {
+  airline: [
+    { Icon: Zap, accent: "amber", name: "Budget Airline",
       tagline: "Fast turns, lean costs, wider reach.",
-      desc: "Build around access and efficiency. Reach price-sensitive travelers across Tier 2 + Tier 3. Downturns hit harder.",
-    },
-    {
-      Icon: Gem,
-      accent: "violet",
-      name: "Premium Airline",
+      desc: "Build around access and efficiency. Reach price-sensitive travelers across Tier 2 + Tier 3. Downturns hit harder." },
+    { Icon: Gem, accent: "violet", name: "Premium Airline",
       tagline: "Protect yield and loyalty.",
-      desc: "Compete on service, brand, cabin quality. Price above the market and recover loyalty faster — pay for it in payroll.",
-    },
-    {
-      Icon: PackageCheck,
-      accent: "emerald",
-      name: "Cargo Dominance",
+      desc: "Compete on service, brand, cabin quality. Price above the market and recover loyalty faster — pay for it in payroll." },
+    { Icon: PackageCheck, accent: "emerald", name: "Cargo Dominance",
       tagline: "Make the network move freight.",
-      desc: "Use every connection as a logistics corridor. Cargo capacity and turnarounds compound across linked cities.",
-    },
-    {
-      Icon: Globe2,
-      accent: "cyan",
-      name: "Global Network",
+      desc: "Use every connection as a logistics corridor. Cargo capacity and turnarounds compound across linked cities." },
+    { Icon: Globe2, accent: "cyan", name: "Global Network",
       tagline: "Connectivity compounds demand.",
-      desc: "Grow a connected international system. Pax demand rises across linked cities; mixed fleet brands cost more to maintain.",
-    },
-  ] as const;
-  const ring: Record<typeof items[number]["accent"], string> = {
-    amber: "bg-amber-50 text-amber-700 ring-amber-100",
-    violet: "bg-violet-50 text-violet-700 ring-violet-100",
-    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
-    cyan: "bg-cyan-50 text-cyan-700 ring-cyan-100",
-  };
+      desc: "Grow a connected international system. Pax demand rises across linked cities; mixed fleet brands cost more to maintain." },
+  ],
+  banking: [
+    { Icon: Globe2, accent: "cyan", name: "Conservative Lender",
+      tagline: "Tight underwriting, strong capital.",
+      desc: "Hold capital well above minima, write the cleanest loans, accept slower growth. Built to survive every cycle. Sacrifices ROE in good years." },
+    { Icon: Zap, accent: "amber", name: "Aggressive Growth",
+      tagline: "Volume, share, fast capital recycling.",
+      desc: "Grow the loan book ahead of the market, recycle capital fast, push fee income. Strong returns when cycles cooperate; brutal in a downturn." },
+    { Icon: Gem, accent: "violet", name: "Specialist Bank",
+      tagline: "One segment, deep relationships.",
+      desc: "Concentrate on a single segment — corporate, SME, mortgage, private. Deep advisory edge and pricing power; concentration risk if the segment turns." },
+    { Icon: PackageCheck, accent: "emerald", name: "Universal Bank",
+      tagline: "Full-service, cross-sell every line.",
+      desc: "Retail + commercial + treasury + advisory under one roof. Cross-sell compounds wallet share; complexity raises operating cost and capital intensity." },
+  ],
+  hospitality: [
+    { Icon: Gem, accent: "violet", name: "Luxury-First",
+      tagline: "Top-tier brand, top-tier rate.",
+      desc: "Build around five-star brands and premium guest experience. Highest CapEx, slowest cycle, strongest rate power per room." },
+    { Icon: Zap, accent: "amber", name: "Volume-Budget",
+      tagline: "Scale across midscale and economy.",
+      desc: "Push room count and operational efficiency in midscale + economy tiers. Margin per room is thin; occupancy + cost discipline are everything." },
+    { Icon: PackageCheck, accent: "emerald", name: "Branded Portfolio",
+      tagline: "Multi-brand across every tier.",
+      desc: "Operate luxury, upscale, midscale, and economy brands in one portfolio. Diversified cycle exposure; brand-standard CapEx is constant." },
+    { Icon: Globe2, accent: "cyan", name: "Independent Boutique",
+      tagline: "Distinctive, soft-branded, loyalty-led.",
+      desc: "Run independent or soft-branded properties with a strong identity. Higher repeat-guest loyalty, less marketing reach, harder to scale." },
+  ],
+  agriculture: [
+    { Icon: PackageCheck, accent: "emerald", name: "Diversified Holdings",
+      tagline: "Spread the cycles across crops + storage.",
+      desc: "Mix row crops, cash crops, livestock, storage capacity. Cycles average out across the portfolio; specialization upside is given up." },
+    { Icon: Gem, accent: "violet", name: "Specialist Commodity",
+      tagline: "One commodity, scale advantage.",
+      desc: "Bet on a single commodity with deep operational expertise. Massive upside when the market is right; brutal exposure when it isn't." },
+    { Icon: Globe2, accent: "cyan", name: "Vertical Integration",
+      tagline: "Field to fork, margin captured.",
+      desc: "Own the chain — production, storage, processing, distribution. Capture margin at every step; capital tied up across the entire supply chain." },
+    { Icon: Zap, accent: "amber", name: "Sustainable Premium",
+      tagline: "Certified, regenerative, premium-priced.",
+      desc: "Organic, regenerative, certified-origin produce. Premium pricing + regulatory tailwind; higher input cost, longer payback on land conversion." },
+  ],
+  "real-estate": [
+    { Icon: Gem, accent: "violet", name: "Core Stabilized",
+      tagline: "Trophy assets, predictable income.",
+      desc: "Hold high-quality stabilized assets in supply-constrained markets. Lowest yield, lowest risk, most resilient through cap-rate expansion." },
+    { Icon: Zap, accent: "amber", name: "Opportunistic",
+      tagline: "Distressed entry, value-add exit.",
+      desc: "Buy distressed, reposition, sell. Highest upside, most leverage on the capital stack, most exposed when the cycle bends against you." },
+    { Icon: PackageCheck, accent: "emerald", name: "Development-Led",
+      tagline: "Build new supply, capture the spread.",
+      desc: "Develop ground-up across asset classes. Long lead times, big CapEx commitments, cycle timing is the whole game." },
+    { Icon: Globe2, accent: "cyan", name: "Net-Lease Specialist",
+      tagline: "Long-lease, single-tenant, bond-like.",
+      desc: "Long-duration net leases with credit tenants. Cash flow reads like a bond ladder; refinancing risk + tenant credit are the watch items." },
+  ],
+  healthcare: [
+    { Icon: Gem, accent: "violet", name: "Academic / Research",
+      tagline: "Tertiary care + teaching mission.",
+      desc: "Anchor on tertiary + quaternary care, research grants, teaching programs. Highest case complexity, biggest CapEx footprint, mission-defined." },
+    { Icon: Globe2, accent: "cyan", name: "Community Network",
+      tagline: "Broad reach, primary-care anchored.",
+      desc: "Geographic breadth with primary care as the anchor. Captures lower-acuity volume; payor mix sensitivity is high." },
+    { Icon: Zap, accent: "amber", name: "Specialty Focus",
+      tagline: "One service line, world-class outcomes.",
+      desc: "Cardiac, orthopedic, oncology — a single service line with the best outcomes in the region. Pricing power + reputation; concentration risk." },
+    { Icon: PackageCheck, accent: "emerald", name: "Ambulatory-Led",
+      tagline: "Outpatient + clinic, low-CapEx.",
+      desc: "Push volume to ambulatory surgery centers, outpatient clinics, retail health. Lower CapEx than acute, more exposed to payor reimbursement shifts." },
+  ],
+};
+
+const DOCTRINE_RING: Record<DoctrineAccent, string> = {
+  amber: "bg-amber-50 text-amber-700 ring-amber-100",
+  violet: "bg-violet-50 text-violet-700 ring-violet-100",
+  emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+  cyan: "bg-cyan-50 text-cyan-700 ring-cyan-100",
+};
+
+function Doctrines({ selectedSim }: { selectedSim: IndustrySlug }) {
+  const items = INDUSTRY_DOCTRINES[selectedSim];
+  // Sector label for the eyebrow line: matches the Portfolio card name.
+  const sectorName =
+    PORTFOLIO_INDUSTRIES.find((i) => i.slug === selectedSim)?.name ?? "Airline";
+  const isLive = selectedSim === "airline";
   return (
-    <section id="doctrines" className="relative bg-slate-50 border-y border-slate-100 py-24 lg:py-32">
+    <section id="doctrines" className="relative bg-slate-50 border-y border-slate-100 py-24 lg:py-32 scroll-mt-20">
       <div className="max-w-6xl mx-auto px-6">
         <div className="max-w-2xl mb-12">
-          <p className="text-xs font-semibold text-cyan-600 uppercase tracking-widest mb-3">
-            Pick a strategy
+          <p className={`text-xs font-semibold uppercase tracking-widest mb-3 ${isLive ? "text-cyan-600" : "text-slate-500"}`}>
+            {sectorName} doctrines
           </p>
           <h2 className="text-4xl md:text-5xl font-display font-bold text-slate-900 tracking-tight mb-6 leading-[1.1]">
             Four doctrines.
@@ -706,8 +781,9 @@ function Doctrines() {
             <span className="text-slate-500">Pick one. Live with it.</span>
           </h2>
           <p className="text-lg text-slate-500 leading-relaxed">
-            Your doctrine sets the multipliers that follow you through every
-            quarter — not a flavor pick, a strategic commitment.
+            Each industry has its own four. Your doctrine sets the multipliers
+            that follow you through every quarter — not a flavor pick, a
+            strategic commitment.
           </p>
         </div>
         <div className="grid md:grid-cols-2 gap-5">
@@ -719,7 +795,7 @@ function Doctrines() {
                 className="rounded-2xl border border-slate-200 bg-white p-6"
               >
                 <div className="flex items-start gap-4">
-                  <div className={`shrink-0 w-12 h-12 rounded-xl ring-4 flex items-center justify-center ${ring[d.accent]}`}>
+                  <div className={`shrink-0 w-12 h-12 rounded-xl ring-4 flex items-center justify-center ${DOCTRINE_RING[d.accent]}`}>
                     <Icon className="w-5 h-5" strokeWidth={1.75} />
                   </div>
                   <div className="min-w-0">
