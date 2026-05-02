@@ -35,12 +35,34 @@ export function MarketingHeader({ current, variant = "default" }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // Scroll-state detection.
+  //
+  // Earlier this listened on `window` scroll events with `window.scrollY`.
+  // That worked on classic pages where <body> scrolls, but our root layout
+  // is `body { overflow: hidden; flex }` with the actual scroll container
+  // being an inner <main> element. window.scrollY stays at 0 forever,
+  // `scrolled` never flips to true, and the header keeps `variant="onDark"`
+  // styling (white text on transparent backdrop) even after the user has
+  // scrolled past the dark hero into a light section — making the header
+  // invisible against white content.
+  //
+  // The fix: an IntersectionObserver on a 1px sentinel placed immediately
+  // above the sticky header. When the sentinel exits the viewport (because
+  // the user scrolled), `isIntersecting` flips to false and we set
+  // scrolled=true. This works regardless of which ancestor element is the
+  // actual scroll container, because IntersectionObserver computes
+  // visibility relative to the viewport, not a specific scroll target.
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    const sentinel = sentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setScrolled(!entry.isIntersecting),
+      { threshold: [1] },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
   }, []);
 
   // Click-away close for profile menu
@@ -58,6 +80,11 @@ export function MarketingHeader({ current, variant = "default" }: Props) {
 
   return (
     <>
+      {/* Sentinel for scroll-state detection. Sits just above the
+          sticky header; an IntersectionObserver flips `scrolled` to
+          true the moment it leaves the viewport. See useEffect above
+          for why we can't read window.scrollY here. */}
+      <div ref={sentinelRef} aria-hidden className="h-px w-full" />
       <header
         className={cn(
           "sticky top-0 z-40 transition-all duration-200",
