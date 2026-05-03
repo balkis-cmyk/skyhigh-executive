@@ -421,7 +421,10 @@ export interface GameStore extends GameState {
    *  on failure but doesn't unwind. Caller passes the eventType
    *  string + optional payload that lands in game_events for the
    *  audit trail. */
-  pushStateToServer(eventType: string, eventPayload?: unknown): void;
+  pushStateToServer(
+    eventType: string,
+    eventPayload?: unknown,
+  ): Promise<{ ok: true } | { ok: false; error: string; status?: number }>;
   /** Re-issue the session code without creating a new game state.
    *  Players reconnecting use the new code; existing saved snapshots
    *  are preserved. Useful after a facilitator restores a snapshot. */
@@ -2691,6 +2694,24 @@ export const useGame = create<GameStore>()(
 
         // If aircraft reassigned, validate range + availability
         const newAircraftIds = patch.aircraftIds ?? route.aircraftIds;
+
+        // Phase 4.5 — empty-aircraft guard. An active or pending route
+        // with zero assigned aircraft consumes slots at both endpoints
+        // but produces no revenue and no flights. The previous logic
+        // clamped to 1/7 daily frequency, leaving phantom capacity
+        // active. Now: reject the edit if it would result in an
+        // empty active or pending route. Closing or suspending uses
+        // the dedicated suspend/close store actions, not updateRoute.
+        if (
+          newAircraftIds.length === 0
+          && (route.status === "active" || route.status === "pending")
+        ) {
+          return {
+            ok: false,
+            error:
+              "An active route needs at least one aircraft. Add one, suspend the route, or close it.",
+          };
+        }
         if (patch.aircraftIds) {
           const planes = newAircraftIds
             .map((id) => player.fleet.find((f) => f.id === id));
@@ -5290,16 +5311,16 @@ export const useGame = create<GameStore>()(
       pushStateToServer: (eventType, eventPayload) => {
         const s = get();
         // Game Master is observer-only — never write state on their behalf.
-        if (s.isObserver) return;
+        if (s.isObserver) return Promise.resolve({ ok: true as const });
         const session = s.session;
         // Solo runs (no session) and runs that haven't been bound to a
         // server-side gameId skip the write-back entirely. Returning
         // here is a no-op — the local engine has already advanced.
-        if (!session?.gameId) return;
+        if (!session?.gameId) return Promise.resolve({ ok: true as const });
         // Use the authenticated Supabase user.id stored during hydration.
         // This is always server-side identity — never a localStorage UUID.
         const sessionId = s.localSessionId;
-        if (!sessionId) return;
+        if (!sessionId) return Promise.resolve({ ok: true as const });
         const actorTeamId = s.activeTeamId ?? s.playerTeamId ?? undefined;
 
         // Build a partialize-compatible payload mirroring the persist
@@ -5334,20 +5355,28 @@ export const useGame = create<GameStore>()(
           session: { ...session, version: session.version + 1 },
         };
 
-        // Fire-and-forget. Errors get logged + a soft toast on the
-        // facilitator/host side, but the local engine doesn't unwind
-        // — the next /api/games/load brings this browser back in sync
-        // if the server rejected the write.
-        if (typeof fetch === "undefined") return;
+        if (typeof fetch === "undefined") return Promise.resolve({ ok: true as const });
         const expectedVersion = session.version;
         const gameId = session.gameId;
-        fetch("/api/games/state-update", {
+
+        // Phase 4.1: returns a Promise so callers that want to await
+        // (closeQuarter especially) can do so. Existing fire-and-forget
+        // callers (open route, set sliders, etc.) continue to ignore
+        // the return value and operate optimistically. On 409 we
+        // auto-refetch the authoritative state via /api/games/load
+        // and hydrate locally — the user gets a clear toast that
+        // their last action was overridden by the cohort's lead and
+        // a hint to retry.
+        return fetch("/api/games/state-update", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             gameId,
             expectedVersion,
             newState: stateJson,
+            // actorSessionId is server-derived (Phase 1 hardening),
+            // but we still ship it for the audit log fallback when
+            // the cookie session is missing in dev.
             actorSessionId: sessionId,
             actorTeamId,
             eventType,
@@ -5356,38 +5385,55 @@ export const useGame = create<GameStore>()(
         })
           .then(async (res) => {
             if (res.ok) {
-              // Bump the local session.version to match the server's
-              // new row so the NEXT write-back uses the fresh CAS
-              // baseline. Other state already reflects the close.
               const cur = get();
               if (cur.session?.gameId === gameId) {
                 set({
                   session: { ...cur.session, version: cur.session.version + 1 },
                 });
               }
-              return;
+              return { ok: true as const };
             }
             const json = await res.json().catch(() => ({}));
             if (res.status === 409) {
-              // Stale state: someone else's close landed first. Log
-              // and let the next /api/games/load resync this browser.
               console.warn(
                 `[state-update] stale write — server rejected event ${eventType}. ` +
-                  `Refresh the page to pull the authoritative state.`,
+                  `Auto-refetching authoritative state.`,
               );
+              // Refetch + hydrate so this browser snaps to the cohort's
+              // canonical state. The local mutation is lost; the user
+              // sees a clear toast and retries.
+              try {
+                const loadRes = await fetch(
+                  `/api/games/load?gameId=${encodeURIComponent(gameId)}&includeState=1`,
+                  { cache: "no-store" },
+                );
+                if (loadRes.ok) {
+                  const loadJson = await loadRes.json();
+                  if (loadJson?.state?.state_json) {
+                    get().hydrateFromServerState({
+                      stateJson: loadJson.state.state_json,
+                      mySessionId: sessionId,
+                    });
+                  }
+                }
+              } catch (refetchErr) {
+                console.warn("[state-update] refetch after 409 failed:", refetchErr);
+              }
               toast.warning(
                 "Game state out of sync",
-                "Another player advanced the round before your write landed. Refresh the page to resync.",
+                "The cohort advanced before your action landed. We've pulled the latest state — please retry your action.",
               );
-              return;
+              return { ok: false as const, error: "stale state", status: 409 };
             }
             console.warn(
               `[state-update] failed (${res.status}) on event ${eventType}:`,
               json.error,
             );
+            return { ok: false as const, error: json.error ?? "Server error", status: res.status };
           })
           .catch((err) => {
             console.warn(`[state-update] network error on event ${eventType}:`, err);
+            return { ok: false as const, error: err instanceof Error ? err.message : "Network error" };
           });
       },
 
