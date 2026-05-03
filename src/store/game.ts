@@ -1125,7 +1125,13 @@ export const useGame = create<GameStore>()(
         cabinAmenities, cargoBelly,
       }) => {
         const s = get();
-        if (s.isObserver) return;
+        // Game Master / spectator observers cannot edit team state. The
+        // function signature requires the {ok, error?} envelope; an
+        // early `return;` would yield `undefined` and break the type
+        // contract (also surfaced by tsc and the playtest audit).
+        if (s.isObserver) {
+          return { ok: false, error: "Observer mode: cannot order aircraft" };
+        }
         const spec = AIRCRAFT_BY_ID[specId];
         if (!spec) return { ok: false, error: "Unknown aircraft" };
         // Pre-orders open at unlockQuarter − 2 (announcement window per
