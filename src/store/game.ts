@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { AIRCRAFT, AIRCRAFT_BY_ID } from "@/data/aircraft";
 import { CITIES, CITIES_BY_CODE } from "@/data/cities";
-import { SCENARIOS, SCENARIOS_BY_QUARTER } from "@/data/scenarios";
+import { SCENARIOS, SCENARIOS_BY_QUARTER, scenariosForQuarter } from "@/data/scenarios";
 import {
   applyOptionEffect,
   computeAirlineValue,
@@ -27,7 +27,7 @@ import {
   type BidEntry,
 } from "@/lib/slots";
 import { toast } from "./toasts";
-import { fmtQuarter, TOTAL_GAME_ROUNDS } from "@/lib/format";
+import { fmtQuarter, getTotalRounds, TOTAL_GAME_ROUNDS } from "@/lib/format";
 import {
   planBotAircraftOrder,
   planBotRoutes,
@@ -2793,7 +2793,11 @@ export const useGame = create<GameStore>()(
       submitDecision: ({ scenarioId, optionId, lockInQuarters }) => {
         const s = get();
         if (s.isObserver) return;
-        const scenario = SCENARIOS_BY_QUARTER[s.currentQuarter]?.find(
+        // Phase 3: scenarios are scaled to the configured totalRounds
+        // so 8/16/24/40-round games each see scenarios fire at the
+        // correct PROPORTIONAL quarter, not always at the absolute
+        // 40-round target.
+        const scenario = scenariosForQuarter(s.currentQuarter, getTotalRounds(s)).find(
           (sc) => sc.id === scenarioId);
         if (!scenario) return;
         const option = scenario.options.find((o) => o.id === optionId);
@@ -3158,7 +3162,10 @@ export const useGame = create<GameStore>()(
         // didn't explicitly answer. Calls submitDecision so all the
         // dedup + eligibility logic from above also applies.
         {
-          const pending = (SCENARIOS_BY_QUARTER[s.currentQuarter] ?? []).filter(
+          // Phase 3: pull scenarios from the scaled lookup so short-
+          // format games see their proportional scenarios at the right
+          // quarter (not always the absolute 40-round target).
+          const pending = scenariosForQuarter(s.currentQuarter, getTotalRounds(s)).filter(
             (sc) => !player.decisions.some(
               (d) => d.scenarioId === sc.id && d.quarter === s.currentQuarter,
             ),
@@ -3916,7 +3923,7 @@ export const useGame = create<GameStore>()(
         // their choices. Deferred / acquire / refinance effects are
         // not yet wired for bots — those need more plumbing and aren't
         // needed for the leaderboard signal.
-        const scenariosThisQuarter = SCENARIOS_BY_QUARTER[s.currentQuarter] ?? [];
+        const scenariosThisQuarter = scenariosForQuarter(s.currentQuarter, getTotalRounds(s));
         const teamsAfterBotScenarios = teamsAfterBotTurns.map((t) => {
           if (!t.botDifficulty) return t;
           if (scenariosThisQuarter.length === 0) return t;
@@ -4527,7 +4534,10 @@ export const useGame = create<GameStore>()(
 
       advanceToNext: () => {
         const s = get();
-        if (s.currentQuarter >= TOTAL_GAME_ROUNDS) {
+        // Phase 3: respect the configured totalRounds so 8 / 16 / 24
+        // round games end at their configured stop, not always at 40.
+        const totalRounds = getTotalRounds(s);
+        if (s.currentQuarter >= totalRounds) {
           set({ phase: "endgame", lastCloseResult: null });
           toast.accent("Final round complete", "Your legacy is sealed.");
           return;
@@ -4771,11 +4781,11 @@ export const useGame = create<GameStore>()(
           toQuarter: nextQ,
         });
 
-        // Player-facing label: "Round 13/40" headline with the calendar
-        // quarter as the detail line. Internal round numbers are 1..40;
-        // calendar quarters are Q1 2015..Q4 2024 derived from that.
+        // Player-facing label: "Round 13/N" headline with the calendar
+        // quarter as the detail line. N comes from the game's session
+        // (8 / 16 / 24 / 40) so short-format cohorts see the right total.
         toast.accent(
-          `Round ${nextQ}/${TOTAL_GAME_ROUNDS}`,
+          `Round ${nextQ}/${getTotalRounds(s)}`,
           fmtQuarter(nextQ),
         );
       },
@@ -6210,7 +6220,7 @@ export const useGame = create<GameStore>()(
         if (wasRunning && next === 0) {
           const player = s.teams.find((t) => t.id === s.playerTeamId);
           if (!player) return;
-          const scenariosThisQuarter = SCENARIOS_BY_QUARTER[s.currentQuarter] ?? [];
+          const scenariosThisQuarter = scenariosForQuarter(s.currentQuarter, getTotalRounds(s));
           const unsubmitted = scenariosThisQuarter.filter(
             (sc) => !player.decisions.some(
               (d) => d.scenarioId === sc.id && d.quarter === s.currentQuarter,
