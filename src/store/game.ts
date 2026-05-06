@@ -3240,6 +3240,37 @@ export const useGame = create<GameStore>()(
         if (s.isClosing) return;
         set({ isClosing: true });
 
+        // Phase 6 P1 — timing telemetry. closeQuarter is the
+        // heaviest hot path in the engine (route economics, slot
+        // auctions, scenario consequences, deferred events,
+        // financials backfill). On a 10-team cohort it can creep
+        // toward Vercel's 300s function ceiling under load. We
+        // log every close's wall-clock time and warn loudly when
+        // it crosses 60s so the operator catches the regression
+        // before workshops feel it. Replace `console.warn` with a
+        // Sentry call when wiring observability.
+        const closeStartedAt = typeof performance !== "undefined"
+          ? performance.now()
+          : Date.now();
+        const reportTiming = () => {
+          const elapsedMs = (typeof performance !== "undefined"
+            ? performance.now()
+            : Date.now()) - closeStartedAt;
+          if (elapsedMs > 60_000) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[ican-sims:closeQuarter] slow close",
+              { elapsedMs, quarter: s.currentQuarter, teams: s.teams.length },
+            );
+          } else if (process.env.NODE_ENV !== "production") {
+            // eslint-disable-next-line no-console
+            console.info(
+              "[ican-sims:closeQuarter] timing",
+              { elapsedMs: Math.round(elapsedMs), quarter: s.currentQuarter, teams: s.teams.length },
+            );
+          }
+        };
+
         // Phase 8.3 — defensive auto-end. If we're in a multiplayer
         // game (session.gameId is set) and zero human teams remain,
         // route straight to endgame. The forfeit API endpoint handles
@@ -3256,6 +3287,7 @@ export const useGame = create<GameStore>()(
               "All players forfeited",
               "Game ended — no human players remain.",
             );
+            reportTiming();
             return;
           }
         }
@@ -3263,6 +3295,7 @@ export const useGame = create<GameStore>()(
         const player = s.teams.find((t) => t.id === s.playerTeamId);
         if (!player) {
           set({ isClosing: false });
+          reportTiming();
           return;
         }
 
@@ -4666,6 +4699,8 @@ export const useGame = create<GameStore>()(
             );
           }
         }
+
+        reportTiming();
       },
 
       advanceToNext: () => {

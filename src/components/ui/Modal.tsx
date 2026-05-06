@@ -24,12 +24,42 @@ export function Modal({
   className,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // Phase 7 P2 — focus restoration. Native <dialog>'s showModal()
+  // moves focus into the dialog correctly, but on close() the
+  // browser sometimes fails to return focus to the original
+  // trigger (especially when the trigger was unmounted between
+  // open and close). We capture activeElement on every open and
+  // restore it on close so keyboard users land back exactly where
+  // they were.
+  const triggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const dlg = dialogRef.current;
     if (!dlg) return;
-    if (open && !dlg.open) dlg.showModal();
-    if (!open && dlg.open) dlg.close();
+    if (open && !dlg.open) {
+      // Capture the element that had focus right before opening.
+      const active = typeof document !== "undefined" ? document.activeElement : null;
+      triggerRef.current =
+        active instanceof HTMLElement && active !== document.body
+          ? active
+          : null;
+      dlg.showModal();
+    }
+    if (!open && dlg.open) {
+      dlg.close();
+      // Defer focus restoration to the next paint so any close
+      // animation / reflow has settled. If the trigger is still in
+      // the DOM, focus it; otherwise the browser's default behavior
+      // (focus → body) takes over.
+      const target = triggerRef.current;
+      if (target && typeof target.focus === "function") {
+        requestAnimationFrame(() => {
+          try {
+            target.focus({ preventScroll: false });
+          } catch { /* element no longer focusable — ignore */ }
+        });
+      }
+    }
   }, [open]);
 
   useEffect(() => {
