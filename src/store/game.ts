@@ -5323,17 +5323,83 @@ export const useGame = create<GameStore>()(
         //   - the flip was a "true" (player marked ready, not unmarked)
         //   - the game is multiplayer self-guided (session.mode)
         //   - more than one human team exists (solo doesn't auto-advance)
-        //   - all human teams are now ready
+        //   - all ACTIVE human teams are now ready (Phase 6 P1: long-
+        //     away humans count as ready so they don't stall the
+        //     cohort indefinitely — see below)
         if (!ready) return;
         const after = get();
         const session = after.session;
         if (!session || session.mode !== "self_guided") return;
         const humans = after.teams.filter((t) => t.controlledBy === "human");
         if (humans.length < 2) return;
-        if (!humans.every((t) => t.readyForNextQuarter === true)) return;
-        // All humans ready — auto-close. The engine handles the rest
-        // of the round close (procedural rivals, slot auctions, etc).
-        get().closeQuarter();
+
+        // Phase 6 P1 — fetch members + treat long-away humans as
+        // ready so the cohort can advance even when one player has
+        // closed their tab. Threshold: 5 minutes since heartbeat.
+        // We do this asynchronously so the user-facing setReady
+        // call returns immediately; auto-close fires once the
+        // member fetch resolves.
+        const gameId = session.gameId;
+        if (!gameId) return;
+        (async () => {
+          // Try to fetch the latest members (with last_seen_at).
+          // On failure, fall back to the strict "every human ready"
+          // gate — better to wait than to advance prematurely.
+          let staleHumans = new Set<string>();
+          try {
+            const res = await fetch(
+              `/api/games/load?gameId=${encodeURIComponent(gameId)}`,
+              { cache: "no-store" },
+            );
+            if (res.ok) {
+              const json = await res.json();
+              const now = Date.now();
+              const LONG_AWAY_MS = 5 * 60 * 1000;
+              for (const m of (json.members ?? []) as Array<{
+                session_id: string;
+                last_seen_at?: string | null;
+              }>) {
+                const ts = m.last_seen_at ? Date.parse(m.last_seen_at) : NaN;
+                if (Number.isFinite(ts) && now - ts > LONG_AWAY_MS) {
+                  staleHumans.add(m.session_id);
+                }
+              }
+            }
+          } catch {
+            // Network blip — fall back to strict gate by leaving
+            // staleHumans empty.
+            staleHumans = new Set();
+          }
+
+          // Re-pull state in case anything moved while we awaited.
+          const fresh = get();
+          const freshHumans = fresh.teams.filter(
+            (t) => t.controlledBy === "human",
+          );
+          const blockingHumans = freshHumans.filter((t) => {
+            // A human blocks auto-close only if they're (a) not
+            // marked ready AND (b) not long-away. Long-away humans
+            // are skipped — they get a forfeit/replacement decision
+            // from the facilitator UI later.
+            if (t.readyForNextQuarter === true) return false;
+            if (t.claimedBySessionId && staleHumans.has(t.claimedBySessionId)) {
+              return false;
+            }
+            return true;
+          });
+          if (blockingHumans.length > 0) return;
+
+          // All ACTIVE humans ready — auto-close. The engine handles
+          // the rest of the round close (procedural rivals, slot
+          // auctions, etc).
+          if (staleHumans.size > 0) {
+            toast.warning(
+              "Auto-advancing past stalled players",
+              `${staleHumans.size} player${staleHumans.size === 1 ? " was" : "s were"} away for 5+ min — facilitator can mark them forfeit later.`,
+            );
+          }
+          get().closeQuarter();
+        })();
       },
 
       allActiveTeamsReady: () => {
@@ -6473,19 +6539,38 @@ export const useGame = create<GameStore>()(
       },
 
       // ── Quarter timer (A12) ────────────────────────────────
+      // Phase 6 P1 — multiplayer-aware. The local tick still runs
+      // per-browser (drift is small at 1Hz), but every state change
+      // (start, pause, resume, extend) is pushed to the server so
+      // peer browsers re-hydrate. The play page already subscribes
+      // to game_state UPDATE via postgres_changes, so this is the
+      // last-mile change to make timer state cohort-coherent.
+      // Solo runs (no session.gameId) skip the push silently.
       startQuarterTimer: (seconds = 1800) => {
         set({ quarterTimerSecondsRemaining: seconds, quarterTimerPaused: false });
+        if (get().session?.gameId) {
+          void get().pushStateToServer("game.timerStarted", { seconds });
+        }
       },
       pauseQuarterTimer: () => {
         set({ quarterTimerPaused: true });
+        if (get().session?.gameId) {
+          void get().pushStateToServer("game.timerPaused");
+        }
       },
       resumeQuarterTimer: () => {
         set({ quarterTimerPaused: false });
+        if (get().session?.gameId) {
+          void get().pushStateToServer("game.timerResumed");
+        }
       },
       extendQuarterTimer: (seconds) => {
         const s = get();
         if (s.quarterTimerSecondsRemaining === null) return;
         set({ quarterTimerSecondsRemaining: s.quarterTimerSecondsRemaining + seconds });
+        if (s.session?.gameId) {
+          void get().pushStateToServer("game.timerExtended", { seconds });
+        }
       },
       tickQuarterTimer: (deltaSeconds) => {
         const s = get();
