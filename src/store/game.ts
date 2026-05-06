@@ -5210,13 +5210,26 @@ export const useGame = create<GameStore>()(
       },
 
       resetGame: () => {
-        // Clear the milestone-shown ledger so a fresh game's first
-        // close lights up the relevant milestones again instead of
-        // suppressing them as "already seen".
-        // Clear the milestone-shown ledger so fresh milestones show again.
+        // Clear every skyforce:* localStorage key so a fresh game
+        // doesn't carry stale toast history, snapshots, milestone
+        // dedup ledgers, or notification preferences from the
+        // previous run. The persisted Zustand store is one of those
+        // keys and gets cleared here too — the `set({ phase: 'idle',
+        // ... })` below then primes a clean idle state.
         if (typeof window !== "undefined") {
-          try { window.localStorage.removeItem("skyforce:milestonesShown:v1"); } catch {}
+          try {
+            const keys: string[] = [];
+            for (let i = 0; i < window.localStorage.length; i += 1) {
+              const k = window.localStorage.key(i);
+              if (k && k.startsWith("skyforce:")) keys.push(k);
+            }
+            for (const k of keys) {
+              try { window.localStorage.removeItem(k); } catch { /* ignore */ }
+            }
+          } catch { /* localStorage disabled (private mode) */ }
         }
+        // Active-game redirect is now handled via Supabase (game_members
+        // table) — no localStorage key to clear there.
         // Active-game redirect is now handled via Supabase (game_members
         // table) — no localStorage key to clear.
         set({
@@ -5357,12 +5370,26 @@ export const useGame = create<GameStore>()(
           // Convert flags arrays → Sets on each team (mirror of the
           // onRehydrateStorage hook, since we're skipping Zustand's
           // built-in rehydrate for this in-place restore).
-          const teams = (restored.teams ?? []).map((t) => ({
-            ...t,
-            flags: new Set(
-              Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? []),
-            ),
-          }));
+          // Phase 6 — also sweep stale routeId references on aircraft.
+          // Restoring a Q5 snapshot over a Q15 game can resurrect
+          // routes that were closed in Q6-Q14; fleet.routeId then
+          // points at a route id that doesn't exist in the snapshot.
+          // Detach the dangling reference so the aircraft list as
+          // "idle" instead of crashing the routes panel.
+          const teams = (restored.teams ?? []).map((t) => {
+            const validRouteIds = new Set((t.routes ?? []).map((r) => r.id));
+            return {
+              ...t,
+              fleet: (t.fleet ?? []).map((f) =>
+                f.routeId && !validRouteIds.has(f.routeId)
+                  ? { ...f, routeId: null }
+                  : f,
+              ),
+              flags: new Set(
+                Array.isArray(t.flags) ? t.flags : Array.from(t.flags ?? []),
+              ),
+            };
+          });
           set({
             ...restored,
             teams,
@@ -6483,7 +6510,21 @@ export const useGame = create<GameStore>()(
             };
             if (parsed?.state?.isMultiplayerSession === true) return;
             localStorage.setItem(name, value);
-          } catch { /* ignore */ }
+          } catch (err) {
+            // Phase 7 P2 — surface a one-time failure event so the
+            // <StorageFailureBanner /> component can warn the user
+            // their progress isn't being saved (private mode, quota
+            // exceeded, browser cache cleared mid-session, etc.).
+            // Used to be silently dropped; live workshops then lost
+            // entire runs on a tab reload.
+            if (typeof window !== "undefined") {
+              try {
+                window.dispatchEvent(new CustomEvent("skyforce:storage-failed", {
+                  detail: { error: err instanceof Error ? err.message : "unknown" },
+                }));
+              } catch { /* ignore — event-dispatch failure is bizarre but non-fatal */ }
+            }
+          }
         },
         removeItem: (name: string) => {
           try { localStorage.removeItem(name); } catch { /* ignore */ }

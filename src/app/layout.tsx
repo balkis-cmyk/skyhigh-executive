@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { ActiveGameRibbon } from "@/components/marketing/ActiveGameRibbon";
+import { StorageFailureBanner } from "@/components/StorageFailureBanner";
 
 export const metadata: Metadata = {
   title: "ICAN Simulations — Executive Industry Simulations",
@@ -33,6 +34,7 @@ export default function RootLayout({
       <body className="h-full flex flex-col bg-bg text-ink antialiased overflow-hidden">
         <AuthProvider>
           <ActiveGameRibbon />
+          <StorageFailureBanner />
           {children}
         </AuthProvider>
       </body>
