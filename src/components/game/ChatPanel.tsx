@@ -192,7 +192,8 @@ export function ChatPanel({ open, onClose, onUnreadCountChange }: Props) {
     setDraft("");
 
     try {
-      const res = await fetch("/api/games/chat/send", {
+      const { fetchWithRetry } = await import("@/lib/games/fetch-with-retry");
+      const res = await fetchWithRetry("/api/games/chat/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -200,6 +201,11 @@ export function ChatPanel({ open, onClose, onUnreadCountChange }: Props) {
           body,
           asFacilitatorBroadcast: broadcastMode && isFacilitator,
         }),
+        // Don't retry 422 (profanity) or 429 (rate-limit) — those
+        // are user-side and should be surfaced immediately. The
+        // helper already skips 4xx by default, so chat-send only
+        // retries on 5xx + network failures.
+        maxAttempts: 3,
       });
       const json = await res.json();
       if (!res.ok) {

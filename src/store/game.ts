@@ -86,6 +86,7 @@ import {
 } from "@/lib/hub-pricing";
 import { createInitializedTeamFromOnboarding } from "@/lib/games/team-factory";
 import { pickNextAvailableColor, type AirlineColorId } from "@/lib/games/airline-colors";
+import { fetchWithRetry } from "@/lib/games/fetch-with-retry";
 import type {
   AirportBid,
   AirportLease,
@@ -5558,7 +5559,7 @@ export const useGame = create<GameStore>()(
         // and hydrate locally — the user gets a clear toast that
         // their last action was overridden by the cohort's lead and
         // a hint to retry.
-        return fetch("/api/games/state-update", {
+        return fetchWithRetry("/api/games/state-update", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -5573,6 +5574,11 @@ export const useGame = create<GameStore>()(
             eventType,
             eventPayload,
           }),
+          // Phase 6 P1 — retry on 5xx and network errors so a single
+          // transient Supabase fault doesn't desync the local store
+          // from the server. 4xx errors (auth, validation, 409 CAS
+          // conflict) bypass retry and surface immediately.
+          maxAttempts: 3,
         })
           .then(async (res) => {
             if (res.ok) {

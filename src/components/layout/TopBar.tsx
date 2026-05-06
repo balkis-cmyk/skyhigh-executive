@@ -714,10 +714,12 @@ function GameMenu() {
     }
 
     try {
-      const res = await fetch("/api/games/forfeit", {
+      const { fetchWithRetry } = await import("@/lib/games/fetch-with-retry");
+      const res = await fetchWithRetry("/api/games/forfeit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gameId: sessionGameId }),
+        maxAttempts: 3,
       });
       const json = await res.json().catch(() => ({}));
 

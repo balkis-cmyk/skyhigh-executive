@@ -65,6 +65,12 @@
   --info: #2b6b88;
   --info-soft: rgba(43, 107, 136, 0.1);
 
+  /* Phase 7 P2 — semantic gold for podium / trophy / 1st-place
+     accents on the leaderboard + endgame screens. Replaces the
+     hardcoded #E0A93B that was scattered across components. */
+  --gold: #d4a017;
+  --gold-soft: rgba(212, 160, 23, 0.12);
+
   /* Map — clean modern feel, slate water + warm land for legibility. */
   --map-ocean: #cfe1ec;          /* slate-leaning ocean */
   --map-ocean-deep: #b8d2e0;     /* depth accents */
