@@ -33,7 +33,7 @@ import { MapCommandHud } from "@/components/game/MapCommandHud";
 import { QuarterTimerDriver } from "@/components/game/QuarterTimer";
 import { Toaster } from "@/components/game/Toaster";
 import { useShallow } from "zustand/react/shallow";
-import { useGame, selectPlayer, selectRivals } from "@/store/game";
+import { useGame, selectPlayer, selectRivals, selectActiveTeam } from "@/store/game";
 import type { City } from "@/types/game";
 import { CITIES } from "@/data/cities";
 import { Button } from "@/components/ui";
@@ -77,16 +77,28 @@ function CanvasInner() {
   const setActiveTeam = useGame((s) => s.setActiveTeam);
   const firstTeamId = useGame((s) => s.teams[0]?.id ?? null);
   const player = useGame(selectPlayer);
+  // isObserver is true for the Game Master (no claimed team). All state
+  // mutations are already blocked in the store; here we use it to keep
+  // the GM's playerTeamId null (so setActiveTeam only sets activeTeamId)
+  // and to hide interactive canvas elements (map click, launch bar, HUD).
+  const isObserver = useGame((s) => s.isObserver);
+  // activeTeam: what is currently displayed. For observers this is the
+  // team they are spectating (set via setActiveTeam). For players it's
+  // the same as player. canvasPlayer is the non-null "display team" used
+  // by the map and panels.
+  const activeTeam = useGame(selectActiveTeam);
+  const canvasPlayer = isObserver ? activeTeam : player;
 
-  // Game Master auto-view: when the GM is in a multiplayer game but has no
-  // claimed team, automatically pin their view to the first available team
-  // so the canvas renders immediately. They can use "Switch view" to hop
-  // between players at any time.
+  // Game Master auto-view: when the GM has no claimed team, pin their
+  // view to the first available team so the map renders immediately.
+  // Because setActiveTeam now sets activeTeamId (not playerTeamId) for
+  // observers, playerTeamId stays null — the GM never accidentally gets
+  // ownership of a player's team.
   useEffect(() => {
-    if (multiplayerGameId && !playerTeamId && firstTeamId) {
+    if (multiplayerGameId && isObserver && !activeTeam && firstTeamId) {
       setActiveTeam(firstTeamId);
     }
-  }, [multiplayerGameId, playerTeamId, firstTeamId, setActiveTeam]);
+  }, [multiplayerGameId, isObserver, activeTeam, firstTeamId, setActiveTeam]);
   // View-only competitor mode (Sprint 7): when set, the map renders
   // the named rival's network instead of the player's. Click handlers
   // are still bound to the player so route creation always targets
@@ -122,6 +134,9 @@ function CanvasInner() {
   const [launchOpen, setLaunchOpen] = useState(false);
 
   function handleCityClick(c: City) {
+    // Observers (GM) cannot create or modify routes — hard block here
+    // so map clicks never start the selection/launch flow.
+    if (isObserver) return;
     // No origin yet: select it (highlighted yellow on the map).
     if (!origin) return setOrigin(c.code);
     // Clicked the same origin: deselect.
@@ -182,35 +197,21 @@ function CanvasInner() {
     );
   }
 
-  // ── Multiplayer: no claimed team (game master or session mismatch) ──────
-  // When we're hydrated from a server game but this browser has no claimed
-  // team, show an observer/waiting screen instead of the solo onboarding CTA.
-  // This covers the game master (facilitator, no team by design) and players
-  // whose session ID changed between joining and starting (anonymous → auth).
-  if (multiplayerGameId && !playerTeamId) {
-    return (
-      <main className="flex-1 flex items-center justify-center px-6 py-12">
-        <div className="max-w-md text-center">
-          <div className="w-14 h-14 rounded-2xl bg-violet-100 text-violet-600 flex items-center justify-center mx-auto mb-5 text-2xl">
-            👁
-          </div>
-          <h2 className="text-xl font-bold text-slate-900 mb-2">Observer mode</h2>
-          <p className="text-sm text-slate-500 mb-6">
-            You are connected to the game as an observer. The leaderboard and team
-            panels update in real time. Use the nav rail to inspect any team.
-          </p>
-          <a
-            href={`/games/${multiplayerGameId}/lobby`}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors"
-          >
-            ← Back to lobby
-          </a>
-        </div>
-      </main>
-    );
-  }
-
-  if (phase === "idle" || !playerTeamId || !player) {
+  // ── Multiplayer observer (Game Master) ──────────────────────────────────
+  // isObserver is true when the GM has no claimed team. We let them reach
+  // the full live canvas — the observer banner and the interaction blocks
+  // below keep everything read-only. If the active team hasn't been set
+  // yet (teams not loaded), show a brief loading state.
+  if (isObserver && multiplayerGameId) {
+    if (!canvasPlayer) {
+      return (
+        <main className="flex-1 flex items-center justify-center text-ink-muted">
+          Loading game…
+        </main>
+      );
+    }
+    // Fall through to the full canvas render below.
+  } else if (phase === "idle" || !playerTeamId || !player) {
     // PRD §13.1 pre-game lobby
     return (
       <main className="flex-1 flex items-center justify-center px-6 py-12">
@@ -285,17 +286,18 @@ function CanvasInner() {
         style={{ left: railExpanded ? "14rem" : "3.5rem" }}
       >
         <WorldMap
+          // canvasPlayer is guaranteed non-null here: observers are
+          // returned early above if canvasPlayer is null; non-observers
+          // are guarded by the idle/!player check before this block.
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           team={
-            // In view-only mode, map paints the named rival's network.
-            // Click handlers and onClearSelection still target the
-            // player so route creation always affects the player only.
             viewingTeamId
-              ? rivals.find((r) => r.id === viewingTeamId) ?? player
-              : player
+              ? rivals.find((r) => r.id === viewingTeamId) ?? canvasPlayer!
+              : canvasPlayer!
           }
           rivals={rivals}
           currentQuarter={currentQuarter}
-          selectedOriginCode={origin}
+          selectedOriginCode={isObserver ? null : origin}
           onCityClick={handleCityClick}
           onCityDoubleClick={(c) => setAirportDetailCode(c.code)}
           onClearSelection={() => { setOrigin(null); setDest(null); }}
@@ -319,32 +321,45 @@ function CanvasInner() {
         </Panel>
       )}
 
+      {/* Observer banner — shown instead of action HUDs so the GM
+          always knows they're in spectate-only mode. */}
+      {isObserver && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[700] pointer-events-none">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/80 backdrop-blur-sm text-white text-xs font-semibold shadow-lg">
+            <span className="text-violet-300">👁</span>
+            Observer · read-only — use the nav rail to switch teams
+          </div>
+        </div>
+      )}
+
       {/* Bottom-right command HUD — scaffolds the route-launch flow and
-          tells the player exactly what to do at each step. Collapses to
-          an explanatory note when a panel is open so they know why map
-          clicks aren't working. */}
-      <MapCommandHud
-        origin={origin}
-        dest={dest}
-        hubCode={player.hubCode}
-        activeRouteCount={
-          player.routes.filter((r) => r.status !== "closed").length
-        }
-        compact={!!currentPanel}
-      />
+          tells the player exactly what to do at each step. Hidden for
+          observers since they cannot create routes. */}
+      {!isObserver && canvasPlayer && (
+        <MapCommandHud
+          origin={origin}
+          dest={dest}
+          hubCode={canvasPlayer.hubCode}
+          activeRouteCount={
+            canvasPlayer.routes.filter((r) => r.status !== "closed").length
+          }
+          compact={!!currentPanel}
+        />
+      )}
 
-      {/* Floating route launch bar — always visible during selection,
-          never blocks the map. Clicking "Launch" opens the detail modal. */}
-      <RouteLaunchBar
-        origin={origin}
-        dest={dest}
-        onCancel={() => { setOrigin(null); setDest(null); setIsCargo(false); }}
-        onLaunch={() => setLaunchOpen(true)}
-      />
+      {/* Floating route launch bar — hidden for observers. */}
+      {!isObserver && (
+        <RouteLaunchBar
+          origin={origin}
+          dest={dest}
+          onCancel={() => { setOrigin(null); setDest(null); setIsCargo(false); }}
+          onLaunch={() => setLaunchOpen(true)}
+        />
+      )}
 
-      {/* Detail modal for route configuration — only opens post-Launch */}
+      {/* Detail modal for route configuration — never opens for observers */}
       <RouteSetupModal
-        open={launchOpen}
+        open={!isObserver && launchOpen}
         origin={origin}
         dest={dest}
         forceCargo={isCargo}

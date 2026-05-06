@@ -4883,7 +4883,15 @@ export const useGame = create<GameStore>()(
       setActiveTeam: (teamId) => {
         const s = get();
         if (!s.teams.some((t) => t.id === teamId)) return;
-        set({ playerTeamId: teamId });
+        if (s.isObserver) {
+          // Observer / Game Master: only update the *viewing* target.
+          // Never touch playerTeamId — that field signals team ownership
+          // and setting it for an observer would bypass the read-only
+          // guards throughout the canvas (map clicks, route creation, etc.).
+          set({ activeTeamId: teamId });
+        } else {
+          set({ playerTeamId: teamId });
+        }
       },
 
       setAirlineColor: (colorId: AirlineColorId) => {
