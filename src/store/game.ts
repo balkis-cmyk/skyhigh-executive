@@ -5355,7 +5355,25 @@ export const useGame = create<GameStore>()(
           const claimed = teams.find(
             (t) => t.claimedBySessionId === mySessionId,
           );
-          const activeTeamId = claimed?.id ?? null;
+          const claimedTeamId = claimed?.id ?? null;
+
+          // For observers (GM/facilitator), preserve the team they are
+          // currently watching across live Realtime re-hydrations. Without
+          // this, every push from a player would reset activeTeamId → null,
+          // making the GM's canvas go blank until the auto-view effect
+          // asynchronously re-sets it — and in the meantime the map shows
+          // stale/empty state instead of the live update that just arrived.
+          // We only preserve the target if the team still exists in the
+          // fresh state (teams can be dropped on forfeit, etc.).
+          const currentState = get();
+          const preservedViewTarget =
+            !claimed && currentState.isObserver && currentState.activeTeamId
+              ? (teams.some((t) => t.id === currentState.activeTeamId)
+                  ? currentState.activeTeamId
+                  : (teams[0]?.id ?? null))
+              : claimedTeamId;
+
+          const activeTeamId = preservedViewTarget;
           // Mirror activeTeamId into playerTeamId so the 75+ panel
           // surfaces that still read selectPlayer (legacy) resolve
           // to the same team. This is safe in multiplayer because

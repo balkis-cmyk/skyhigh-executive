@@ -54,10 +54,16 @@ export default function GamePlayPage({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hydrated, setHydrated] = useState(false);
-  // Ref so the Realtime callback can call the latest hydrateFromServerState
-  // without being stale-closed over an old reference.
+  // Refs so Realtime callbacks always see the latest values without
+  // being stale-closed — avoids tearing when sessionId stabilises
+  // asynchronously after the subscription is first set up.
   const hydrateRef = useRef(hydrateFromServerState);
   useEffect(() => { hydrateRef.current = hydrateFromServerState; }, [hydrateFromServerState]);
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  // Track the last version we applied so duplicate Realtime fires (which
+  // Supabase can occasionally emit) don't trigger a redundant re-hydrate.
+  const lastVersionRef = useRef<number>(-1);
 
   // Step 1 — fetch the server snapshot.
   useEffect(() => {
@@ -140,11 +146,17 @@ export default function GamePlayPage({
         },
         (payload: { new: { state_json: unknown; version: number } }) => {
           // Another player pushed new state. Re-hydrate from the fresh
-          // server snapshot so this browser stays in sync. We skip if
-          // the version hasn't changed (duplicate fire safety).
+          // server snapshot so this browser stays in sync.
           const newState = payload.new?.state_json;
+          const newVersion = payload.new?.version ?? -1;
           if (!newState) return;
-          hydrateRef.current({ stateJson: newState, mySessionId: sessionId });
+          // Skip duplicate fires (Supabase can occasionally re-emit
+          // the same row update on reconnect).
+          if (newVersion !== -1 && newVersion <= lastVersionRef.current) return;
+          lastVersionRef.current = newVersion;
+          const sid = sessionIdRef.current;
+          if (!sid) return;
+          hydrateRef.current({ stateJson: newState, mySessionId: sid });
         },
       )
       .subscribe();
