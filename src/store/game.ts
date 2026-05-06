@@ -87,6 +87,7 @@ import {
 import { createInitializedTeamFromOnboarding } from "@/lib/games/team-factory";
 import { pickNextAvailableColor, type AirlineColorId } from "@/lib/games/airline-colors";
 import { fetchWithRetry } from "@/lib/games/fetch-with-retry";
+import { captureEvent } from "@/lib/telemetry";
 import type {
   AirportBid,
   AirportLease,
@@ -3257,17 +3258,19 @@ export const useGame = create<GameStore>()(
             ? performance.now()
             : Date.now()) - closeStartedAt;
           if (elapsedMs > 60_000) {
-            // eslint-disable-next-line no-console
-            console.warn(
-              "[ican-sims:closeQuarter] slow close",
-              { elapsedMs, quarter: s.currentQuarter, teams: s.teams.length },
-            );
+            // Slow close: warn-level telemetry so the operator's
+            // webhook (if configured) gets a real-time signal.
+            captureEvent("closeQuarter.slow", "warn", {
+              elapsedMs: Math.round(elapsedMs),
+              quarter: s.currentQuarter,
+              teams: s.teams.length,
+            });
           } else if (process.env.NODE_ENV !== "production") {
-            // eslint-disable-next-line no-console
-            console.info(
-              "[ican-sims:closeQuarter] timing",
-              { elapsedMs: Math.round(elapsedMs), quarter: s.currentQuarter, teams: s.teams.length },
-            );
+            captureEvent("closeQuarter.timing", "info", {
+              elapsedMs: Math.round(elapsedMs),
+              quarter: s.currentQuarter,
+              teams: s.teams.length,
+            });
           }
         };
 
