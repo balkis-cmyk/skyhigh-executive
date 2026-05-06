@@ -170,14 +170,21 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Seed bot rivals
+      // Seed bot rivals — difficulty comes from the lobby's seat config
+      // (what the host set for each bot seat). Fall back to "medium" if
+      // the seat didn't carry a difficulty (e.g. old games pre-lobby config).
+      const botPlannedSeats = plannedSeats.filter((s) => s.type === "bot");
       for (let i = 0; i < botsToSeed; i++) {
         const meta = BOT_DEFAULTS[i % BOT_DEFAULTS.length];
         const botDoctrines: DoctrineId[] = [
           "premium-service", "budget-expansion", "cargo-dominance", "global-network",
         ];
         const doctrine = botDoctrines[i % botDoctrines.length];
-        const botDifficulties = ["easy", "medium", "medium", "hard", "medium"];
+        // Read difficulty from lobby config; fall back to "medium" for
+        // seats that didn't specify one (legacy or default-filled seats).
+        const difficulty =
+          (botPlannedSeats[i]?.botDifficulty as "easy" | "medium" | "hard" | undefined) ??
+          "medium";
         const team = createInitializedTeamFromOnboarding({
           airlineName: meta.name,
           code: meta.code,
@@ -192,7 +199,7 @@ export async function POST(req: NextRequest) {
           ...team,
           isPlayer: false,
           controlledBy: "bot" as const,
-          botDifficulty: botDifficulties[i % botDifficulties.length],
+          botDifficulty: difficulty,
           flags: Array.from(team.flags ?? []),
         };
         seededTeams.push(botTeam);

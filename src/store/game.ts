@@ -390,6 +390,13 @@ export interface GameStore extends GameState {
   advanceToNext(): void;
   resetGame(): void;
 
+  /** GM / facilitator fast-forward — runs all bot AI turns and advances
+   *  the quarter without requiring a human player. Only works when
+   *  `isObserver && isMultiplayerSession`. Useful for bot-only simulation
+   *  runs where the Game Master watches bots compete and manually steps
+   *  each round forward. */
+  gmAdvanceQuarter(): void;
+
   /** Toggle this team's ready-for-next-quarter flag. In self-guided
    *  multiplayer the engine auto-advances when every active human
    *  team is ready; in facilitated mode the facilitator still drives
@@ -3225,11 +3232,22 @@ export const useGame = create<GameStore>()(
         // this eagerly at write time, so this should rarely fire —
         // but it covers the offline-forfeit / local-only-mutation
         // path so a degenerate state doesn't loop bots forever.
+        //
+        // GM-sim exception: when `gmAdvanceQuarter` calls closeQuarter
+        // it temporarily assigns a bot team as the synthetic playerTeamId
+        // so the logic runs. Detect this via botDifficulty on the "player"
+        // team and skip the endgame guard — the GM wants to watch bots
+        // compete, not have the game end immediately.
         if (s.session?.gameId) {
           const humanCount = s.teams.filter(
             (t) => t.controlledBy === "human",
           ).length;
-          if (humanCount === 0) {
+          const syntheticPlayer = s.teams.find((t) => t.id === s.playerTeamId);
+          const isGmSimAdvance =
+            syntheticPlayer != null &&
+            (syntheticPlayer.botDifficulty != null ||
+              syntheticPlayer.controlledBy === "bot");
+          if (humanCount === 0 && !isGmSimAdvance) {
             set({ phase: "endgame", lastCloseResult: null });
             toast.warning(
               "All players forfeited",
@@ -4903,6 +4921,54 @@ export const useGame = create<GameStore>()(
           teams: s.teams.map((t) =>
             t.id === meId ? { ...t, airlineColorId: colorId } : t,
           ),
+        });
+      },
+
+      gmAdvanceQuarter: () => {
+        const s = get();
+        // Only for GM/facilitators in a live multiplayer session.
+        if (!s.isObserver || !s.isMultiplayerSession) return;
+        if (s.phase !== "playing") return;
+
+        // We need at least one bot team to simulate. If all teams are
+        // human (none joined a bot-only slot) there's nothing to run.
+        const botTeam =
+          s.teams.find((t) => t.botDifficulty != null) ??
+          s.teams.find((t) => t.controlledBy === "bot");
+        if (!botTeam) {
+          toast.warning(
+            "No bot teams",
+            "All seats are human-controlled — players must advance this round.",
+          );
+          return;
+        }
+
+        // Temporarily lower the observer flag and assign the first bot as
+        // the "synthetic player" so closeQuarter's guards pass. The modified
+        // humanCount guard in closeQuarter detects this pattern (via
+        // botDifficulty on the playerTeamId team) and skips the endgame path.
+        const savedActiveTeamId = s.activeTeamId;
+        set({ isObserver: false, playerTeamId: botTeam.id });
+
+        // closeQuarter runs all bot AI decisions (routes, aircraft, slots),
+        // processes every team through runQuarterClose, resolves slot
+        // auctions, updates fuel / interest rate, and sets phase →
+        // "quarter-closing". It is fully synchronous.
+        get().closeQuarter();
+
+        // advanceToNext transitions phase → "playing", bumps currentQuarter,
+        // saves a snapshot, and pushes the new state to the server so every
+        // other browser re-hydrates.
+        get().advanceToNext();
+
+        // Restore the GM to pure observer mode. lastCloseResult: null
+        // prevents the QuarterCloseModal from appearing (it's a player-only
+        // UI), and playerTeamId: null re-establishes the read-only contract.
+        set({
+          isObserver: true,
+          playerTeamId: null,
+          activeTeamId: savedActiveTeamId,
+          lastCloseResult: null,
         });
       },
 

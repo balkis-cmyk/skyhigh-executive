@@ -75,6 +75,7 @@ function CanvasInner() {
     (s) => ((s.session as Record<string, unknown> | null)?.gameId as string) ?? null,
   );
   const setActiveTeam = useGame((s) => s.setActiveTeam);
+  const gmAdvanceQuarter = useGame((s) => s.gmAdvanceQuarter);
   const firstTeamId = useGame((s) => s.teams[0]?.id ?? null);
   const player = useGame(selectPlayer);
   // isObserver is true for the Game Master (no claimed team). All state
@@ -82,6 +83,12 @@ function CanvasInner() {
   // the GM's playerTeamId null (so setActiveTeam only sets activeTeamId)
   // and to hide interactive canvas elements (map click, launch bar, HUD).
   const isObserver = useGame((s) => s.isObserver);
+  // GM can advance if there is at least one bot team — the button is
+  // hidden when all seats are filled by human players (they control their
+  // own advance via the Close Quarter button).
+  const hasBotTeams = useGame((s) =>
+    s.teams.some((t) => t.botDifficulty != null || t.controlledBy === "bot"),
+  );
   // activeTeam: what is currently displayed. For observers this is the
   // team they are spectating (set via setActiveTeam). For players it's
   // the same as player. canvasPlayer is the non-null "display team" used
@@ -322,13 +329,27 @@ function CanvasInner() {
       )}
 
       {/* Observer banner — shown instead of action HUDs so the GM
-          always knows they're in spectate-only mode. */}
+          always knows they're in spectate-only mode. When bot teams
+          exist, an "Advance Round" button lets the GM step the
+          simulation forward without any human player needing to act. */}
       {isObserver && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[700] pointer-events-none">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/80 backdrop-blur-sm text-white text-xs font-semibold shadow-lg">
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[700] flex items-center gap-3">
+          {/* Status pill — pointer-events-none so map clicks pass through */}
+          <div className="pointer-events-none inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/80 backdrop-blur-sm text-white text-xs font-semibold shadow-lg">
             <span className="text-violet-300">👁</span>
             Observer · read-only — use the nav rail to switch teams
           </div>
+
+          {/* Advance Round — only shown when bot teams exist and game is live */}
+          {hasBotTeams && phase === "playing" && (
+            <button
+              onClick={gmAdvanceQuarter}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-violet-600 hover:bg-violet-500 active:bg-violet-700 text-white text-xs font-semibold shadow-lg transition-colors cursor-pointer select-none"
+              title="Run all bot turns and advance to the next round"
+            >
+              ▶ Advance Round
+            </button>
+          )}
         </div>
       )}
 
